@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RNA One — Rassini NHK Automotive</title>
+  <link rel="icon" href="assets/rassini/logo-rna.jpeg">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="assets/css/rna.css" rel="stylesheet">
+</head>
+<body style="background:var(--rna-graphite)">
+  <!-- Topo institucional -->
+  <header style="position:sticky;top:0;z-index:10;background:rgba(20,22,25,.92);backdrop-filter:blur(8px);border-bottom:1px solid rgba(255,255,255,.07)">
+    <div class="container d-flex align-items-center justify-content-between" style="height:64px">
+      <div class="d-flex align-items-center gap-2">
+        <img src="assets/rassini/logo-rna.jpeg" style="height:34px;border-radius:6px;background:#fff;padding:2px">
+        <div><b style="color:#fff;font-size:16px">RNA One</b><div style="color:var(--rna-yellow);font-size:10px;letter-spacing:1.5px;text-transform:uppercase">Rassini NHK Automotive</div></div>
+      </div>
+      <div class="d-flex align-items-center gap-2">
+        <span id="user-chip" class="rna-badge badge-yellow" style="display:none"></span>
+        <button class="rna-btn rna-btn-ghost rna-btn-sm" id="btn-sair" style="display:none;color:#fff;border-color:rgba(255,255,255,.2);background:rgba(255,255,255,.06)"><i class="bi bi-box-arrow-left"></i> Sair</button>
+        <a href="login.html" class="rna-btn rna-btn-primary rna-btn-sm" id="btn-login"><i class="bi bi-box-arrow-in-right"></i> Entrar</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section style="position:relative;overflow:hidden;color:#fff">
+    <img src="assets/rassini/banner-molas.jpg" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.32">
+    <div style="position:absolute;inset:0;background:linear-gradient(120deg,rgba(20,22,25,.95) 25%,rgba(20,22,25,.5))"></div>
+    <div class="container" style="position:relative;z-index:2;padding:70px 0 60px">
+      <span class="portal-hero__badge"><i class="bi bi-broadcast"></i> Indústria 4.0 · Operações Industriais</span>
+      <h1 style="font-size:40px;font-weight:780;max-width:640px;margin:14px 0 12px;line-height:1.1">RNA One — Plataforma Integrada de Operações Industriais</h1>
+      <p style="max-width:560px;color:#d6dadf;font-size:16px">Monitoramento industrial, auditorias de qualidade, rotinas de plantão e gestão à vista — em um único ambiente corporativo da Rassini NHK Automotive.</p>
+      <div class="d-flex gap-2 mt-4">
+        <a href="login.html" class="rna-btn rna-btn-primary rna-btn-lg"><i class="bi bi-box-arrow-in-right"></i> Acessar a plataforma</a>
+        <a href="#sobre" class="rna-btn rna-btn-ghost rna-btn-lg" style="color:#fff;border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.08)">Saiba mais</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Sobre / institucional -->
+  <section id="sobre" style="background:var(--rna-bg);padding:54px 0">
+    <div class="container">
+      <div class="row g-4 align-items-center">
+        <div class="col-lg-6">
+          <h2 style="font-weight:750;font-size:26px;margin-bottom:10px">Excelência em molas e suspensão automotiva</h2>
+          <p class="text-muted-2" style="font-size:15px">A <b>Rassini NHK Automotive</b> é referência na fabricação de molas, feixes e componentes de suspensão para a indústria automotiva pesada. A plataforma RNA One digitaliza o controle de qualidade e a operação do chão de fábrica.</p>
+          <div class="row g-3 mt-2">
+            <div class="col-6"><div class="rna-card"><div class="rna-card__body"><div class="rna-stat__icon ic-soft-yellow mb-2"><i class="bi bi-clipboard-check"></i></div><b>Auditorias & Rotinas</b><p class="text-muted-2" style="font-size:12.5px;margin:0">Plantão, checklist e diário de bordo digitais.</p></div></div></div>
+            <div class="col-6"><div class="rna-card"><div class="rna-card__body"><div class="rna-stat__icon ic-soft-green mb-2"><i class="bi bi-graph-up-arrow"></i></div><b>Gestão à Vista</b><p class="text-muted-2" style="font-size:12.5px;margin:0">Indicadores e OEE em tempo real.</p></div></div></div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <img src="assets/rassini/banner-main.png" class="w-100 rounded-4 shadow-sm" style="object-fit:cover;max-height:320px">
+        </div>
+      </div>
+
+      <div id="visitante-aviso" class="rna-card mt-4" style="display:none;border-left:4px solid var(--rna-yellow)">
+        <div class="rna-card__body d-flex align-items-center gap-3">
+          <i class="bi bi-info-circle-fill" style="font-size:22px;color:var(--rna-yellow-600)"></i>
+          <div class="flex-fill"><b>Acesso de Visitante</b><div class="text-muted-2" style="font-size:13px">Seu perfil tem acesso somente a esta página institucional. Para operar a plataforma, solicite um perfil de Auditor, Supervisor ou Administrador ao time de Qualidade.</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer style="background:var(--rna-graphite);color:#8b9097;padding:22px 0;text-align:center;font-size:12.5px">
+    © 2026 Rassini NHK Automotive — RNA One · Uso interno.
+  </footer>
+
+  <script type="module">
+    import { auth } from './services/auth.js';
+    const s = auth.current();
+    if (s) {
+      document.getElementById('user-chip').style.display = 'inline-flex';
+      document.getElementById('user-chip').innerHTML = `<i class="bi bi-person-circle"></i> ${s.nome} · ${s.role}`;
+      document.getElementById('btn-sair').style.display = 'inline-flex';
+      document.getElementById('btn-login').style.display = 'none';
+      document.getElementById('btn-sair').addEventListener('click', () => auth.logout());
+      if (s.role === 'visitante') document.getElementById('visitante-aviso').style.display = 'block';
+    }
+  </script>
+</body>
+</html>

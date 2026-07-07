@@ -1,0 +1,71 @@
+{
+  "_INSTRUCOES": "EDITE AQUI os usuários do sistema. Campos: nome, email, senha, perfil, status. Perfis válidos: administrador | supervisor | auditor | visitante. status: ativo | inativo. Campos opcionais (identidade): id, matricula, area, planta. Em produção, migrar para Supabase Auth (ver supabase/README.md).",
+  "usuarios": [
+    {
+      "id": "uADM",
+      "nome": "Administrador",
+      "email": "admin@rassini.com",
+      "senha": "admin123",
+      "perfil": "administrador",
+      "status": "ativo",
+      "matricula": "RNA-ADM",
+      "area": "Qualidade",
+      "planta": "Planta São Bernardo"
+    },
+    {
+      "id": "uSUP",
+      "nome": "Supervisor",
+      "email": "supervisor@rassini.com",
+      "senha": "supervisor123",
+      "perfil": "supervisor",
+      "status": "ativo",
+      "matricula": "RNA-SUP",
+      "area": "Qualidade",
+      "planta": "Planta São Bernardo"
+    },
+    {
+      "id": "uAUD",
+      "nome": "Auditor",
+      "email": "auditor@rassini.com",
+      "senha": "auditor123",
+      "perfil": "auditor",
+      "status": "ativo",
+      "matricula": "RNA-AUD",
+      "area": "Montagem",
+      "planta": "Planta São Bernardo"
+    },
+    {
+      "id": "uVIS",
+      "nome": "Visitante",
+      "email": "visitante@rassini.com",
+      "senha": "visitante123",
+      "perfil": "visitante",
+      "status": "ativo",
+      "matricula": "—",
+      "area": "—",
+      "planta": "Planta São Bernardo"
+    },
+    {
+      "id": "u1",
+      "nome": "Jorge Lucas",
+      "email": "jorgelucaszuim@gmail.com",
+      "senha": "102030@Jlz",
+      "perfil": "administrador",
+      "status": "ativo",
+      "matricula": "RNA-0001",
+      "area": "Qualidade",
+      "planta": "Planta São Bernardo"
+    },
+    {
+      "id": "u2",
+      "nome": "thais silva",
+      "email": "thais.silva@rassininhk.com.br",
+      "senha": "thais123",
+      "perfil": "administrador",
+      "status": "ativo",
+      "matricula": "RNA-0002",
+      "area": "Qualidade",
+      "planta": "Planta São Bernardo"
+    }
+  ]
+}
