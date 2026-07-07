@@ -287,9 +287,17 @@ exception when duplicate_object then null; end $$;
 -- Estratégia: helper current_role() lê o perfil do usuário autenticado.
 -- =============================================================================
 
--- Função utilitária: retorna o perfil (role) do usuário autenticado
+-- Helper: e-mail do usuário autenticado, extraído do JWT
+create or replace function auth_email() returns text as $$
+  select nullif(lower(auth.jwt() ->> 'email'), '');
+$$ language sql stable;
+
+-- Função utilitária: retorna o perfil (role) do usuário autenticado.
+-- Casa por auth_id OU e-mail (funciona mesmo com auth_id ainda não vinculado).
 create or replace function current_perfil() returns text as $$
-  select role::text from usuarios where auth_id = auth.uid();
+  select role::text from usuarios
+  where auth_id = auth.uid() or lower(email) = auth_email()
+  limit 1;
 $$ language sql stable security definer;
 
 -- Habilita RLS nas tabelas
@@ -355,13 +363,29 @@ drop policy if exists "delete_nc" on nao_conformidades;
 create policy "delete_nc" on nao_conformidades for delete to authenticated
   using (current_perfil() in ('admin','supervisor'));
 
--- Usuários: cada um lê o próprio; admin lê/gerencia todos
+-- Usuários: cada um lê/atualiza o próprio (por auth_id OU e-mail); admin gerencia todos
 drop policy if exists "user_self_read" on usuarios;
 create policy "user_self_read" on usuarios for select to authenticated
-  using (auth_id = auth.uid() or current_perfil() = 'admin');
+  using (auth_id = auth.uid() or lower(email) = auth_email() or current_perfil() = 'admin');
+drop policy if exists "user_self_update" on usuarios;
+create policy "user_self_update" on usuarios for update to authenticated
+  using (auth_id = auth.uid() or lower(email) = auth_email())
+  with check (auth_id = auth.uid() or lower(email) = auth_email());
 drop policy if exists "user_admin_all" on usuarios;
 create policy "user_admin_all" on usuarios for all to authenticated
   using (current_perfil() = 'admin') with check (current_perfil() = 'admin');
+
+-- Vincula auth_id automaticamente ao criar/confirmar usuários no Auth
+create or replace function fn_link_usuario_auth() returns trigger as $$
+begin
+  update usuarios set auth_id = new.id
+  where auth_id is null and lower(email) = lower(new.email);
+  return new;
+end $$ language plpgsql security definer;
+drop trigger if exists trg_link_usuario_auth on auth.users;
+create trigger trg_link_usuario_auth
+  after insert or update of email, email_confirmed_at on auth.users
+  for each row execute function fn_link_usuario_auth();
 
 -- Notificações: o destinatário lê/atualiza as suas
 drop policy if exists "notif_own" on notificacoes;

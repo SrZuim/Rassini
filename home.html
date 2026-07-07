@@ -73,13 +73,24 @@
 
   <script type="module">
     import { auth } from './services/auth.js';
+    import { ROLES } from './services/config.js';
+
     const s = auth.current();
+    console.log('%c[RNA-HOME] 4) Dados recuperados na Home:', 'color:#e0a500;font-weight:bold', s);
+
     if (s) {
+      // Nome do usuário (nunca "undefined") + cargo por extenso (ex.: "Administrador").
+      const nome  = s.nome || s.email || 'Usuário';
+      const cargo = ROLES[s.role]?.label || (s.role ? s.role : 'Perfil não carregado');
+      console.log('%c[RNA-HOME] 5) Role final utilizada:', 'color:#e0a500;font-weight:bold', s.role, '→', cargo);
+
       document.getElementById('user-chip').style.display = 'inline-flex';
-      document.getElementById('user-chip').innerHTML = `<i class="bi bi-person-circle"></i> ${s.nome} · ${s.role}`;
+      document.getElementById('user-chip').innerHTML = `<i class="bi bi-person-circle"></i> ${nome} · ${cargo}`;
       document.getElementById('btn-sair').style.display = 'inline-flex';
       document.getElementById('btn-login').style.display = 'none';
       document.getElementById('btn-sair').addEventListener('click', () => auth.logout());
+
+      // Aviso institucional apenas para visitante de verdade.
       if (s.role === 'visitante') document.getElementById('visitante-aviso').style.display = 'block';
     }
   </script>

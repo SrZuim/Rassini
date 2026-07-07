@@ -13,6 +13,11 @@ const SESSION_KEY = 'rna_session';
 const ACESSOS_KEY = 'rna_acessos';
 const SESSAO_HORAS = 8;                       // expiração automática da sessão
 
+/* Logs temporários de depuração do fluxo de autenticação.
+   Deixe true enquanto investiga o perfil; troque para false em produção. */
+const AUTH_DEBUG = true;
+const dbg = (...a) => { if (AUTH_DEBUG) console.log('%c[RNA-AUTH]', 'color:#e0a500;font-weight:bold', ...a); };
+
 /* Mapeia o "perfil" do users.json para o papel interno usado no RBAC */
 const PERFIL_PARA_ROLE = {
   administrador: 'admin', admin: 'admin',
@@ -71,9 +76,43 @@ export const auth = {
       const sb = await getSupabase();
       const { data, error } = await sb.auth.signInWithPassword({ email, password });
       if (error) { this._logAcesso({ email, evento: 'falha' }); throw new Error('E-mail ou senha inválidos.'); }
-      const { data: prof } = await sb.from('usuarios').select('*').eq('email', email).single();
-      const role = PERFIL_PARA_ROLE[prof?.role] || prof?.role || 'visitante';
-      return this._abrirSessao({ ...prof, id: prof?.id || data.user.id, email, role }, remember);
+
+      const authUser = data.user;
+      dbg('1) Usuário autenticado pelo Auth:', { id: authUser?.id, email: authUser?.email });
+
+      // Carrega o perfil real na tabela "usuarios" (por e-mail e, se preciso, por auth_id).
+      const { prof, diag } = await this._carregarPerfil(sb, authUser);
+      dbg('2) Resultado da consulta em usuarios:', prof, '| diagnóstico:', diag);
+
+      // Só rebaixa para "visitante" se realmente NÃO existir cadastro (consulta OK e vazia).
+      // Se a consulta falhou (RLS/rede), preserva um perfil mínimo e sinaliza o problema — nunca "visitante" silencioso.
+      let role;
+      if (prof) {
+        role = PERFIL_PARA_ROLE[prof.role] || prof.role || 'visitante';
+      } else if (diag.encontrado === false) {
+        role = 'visitante';                       // usuário autenticado sem registro em "usuarios"
+        console.warn('[RNA-AUTH] Nenhum registro em "usuarios" para', email, '→ perfil visitante.');
+      } else {
+        // Consulta com erro (ex.: RLS bloqueando SELECT). Não sabemos o papel: NÃO forçar visitante.
+        role = null;
+        console.error('[RNA-AUTH] Falha ao ler "usuarios" (verifique RLS/policies):', diag.erro);
+      }
+
+      const sessao = this._abrirSessao({
+        ...(prof || {}),
+        id: prof?.id || authUser.id,
+        auth_id: authUser.id,
+        nome: prof?.nome || authUser.user_metadata?.nome || authUser.user_metadata?.full_name || email.split('@')[0],
+        email: prof?.email || email,
+        matricula: prof?.matricula ?? null,
+        area: prof?.area ?? null,
+        role
+      }, remember);
+
+      dbg('3) Dados gravados na sessão/localStorage:', sessao);
+      dbg('5) Role final utilizada pelo sistema:', sessao.role);
+      if (!prof) dbg('8) DIVERGÊNCIA: Auth OK, mas perfil em "usuarios" não foi carregado. Origem:', diag);
+      return sessao;
     }
 
     const users = await loadUsers();
@@ -85,6 +124,34 @@ export const auth = {
     const role = PERFIL_PARA_ROLE[u.perfil] || u.perfil;
     const { senha, perfil, ...rest } = u;       // nunca guardar a senha na sessão
     return this._abrirSessao({ ...rest, perfil, role }, remember);
+  },
+
+  /**
+   * Busca o registro do usuário na tabela "usuarios".
+   * Estratégia: 1) por e-mail (case-insensitive) → 2) por auth_id → 3) por id = uuid do Auth.
+   * Retorna { prof, diag } onde diag informa exatamente onde/como a busca terminou.
+   */
+  async _carregarPerfil(sb, authUser) {
+    const email = String(authUser?.email || '').trim();
+
+    // 1) Por e-mail (ilike = ignora maiúsc/minúsc; evita divergência de caixa no banco).
+    let r = await sb.from('usuarios').select('*').ilike('email', email).limit(1);
+    if (r.error) return { prof: null, diag: { etapa: 'email', encontrado: null, erro: r.error.message } };
+    if (r.data?.length) return { prof: r.data[0], diag: { etapa: 'email', encontrado: true } };
+
+    // 2) Por auth_id (quando o registro foi vinculado ao UID do Supabase Auth).
+    if (authUser?.id) {
+      r = await sb.from('usuarios').select('*').eq('auth_id', authUser.id).limit(1);
+      if (!r.error && r.data?.length) return { prof: r.data[0], diag: { etapa: 'auth_id', encontrado: true } };
+
+      // 3) Por id = uuid do Auth (caso a PK da tabela seja o próprio UID).
+      const r3 = await sb.from('usuarios').select('*').eq('id', authUser.id).limit(1);
+      if (!r3.error && r3.data?.length) return { prof: r3.data[0], diag: { etapa: 'id', encontrado: true } };
+      if (r.error && r3.error) return { prof: null, diag: { etapa: 'auth_id', encontrado: null, erro: r.error.message } };
+    }
+
+    // Consulta executou sem erro, mas não há linha correspondente → usuário realmente não cadastrado.
+    return { prof: null, diag: { etapa: 'nenhuma', encontrado: false } };
   },
 
   /** Acesso rápido de demonstração — entra com as credenciais do users.json. */
