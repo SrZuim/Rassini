@@ -94,6 +94,7 @@
     // Mensagens via querystring (sessão expirada / acesso protegido).
     const qs = new URLSearchParams(location.search);
     if (qs.get('expired')) { info.textContent = 'Sua sessão expirou. Faça login novamente.'; info.style.display = 'inline-flex'; }
+    else if (qs.get('perfil') === '0') { info.textContent = 'Perfil não encontrado. Verifique o cadastro do usuário.'; info.style.display = 'inline-flex'; }
     else if (qs.get('next')) { info.textContent = 'Faça login para acessar essa página.'; info.style.display = 'inline-flex'; }
 
     document.getElementById('toggle-pw').addEventListener('click', (e) => {

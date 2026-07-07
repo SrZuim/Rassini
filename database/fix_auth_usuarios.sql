@@ -18,7 +18,15 @@
 -- Depois: faça login novamente. O console mostrará [RNA-AUTH] 2) ... encontrado:true
 -- =============================================================================
 
--- 0) Helper: e-mail do usuário autenticado, extraído do JWT ---------------------
+-- 0a) GRANTs: sem privilégio de tabela, o SELECT retorna ERRO ("permission denied
+--     for table usuarios") — foi o que deixou a role = null. RLS ainda governa as linhas.
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant select on all tables in schema public to anon;
+alter default privileges in schema public
+  grant select, insert, update, delete on tables to authenticated;
+
+-- 0b) Helper: e-mail do usuário autenticado, extraído do JWT ---------------------
 create or replace function auth_email() returns text as $$
   select nullif(lower(auth.jwt() ->> 'email'), '');
 $$ language sql stable;

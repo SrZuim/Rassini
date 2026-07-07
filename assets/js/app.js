@@ -18,6 +18,11 @@ export async function mountShell() {
   const user = auth.guard();
   if (!user) return null;
 
+  console.log('[RNA-SHELL] usuário da sessão:', user, '| role:', user.role);
+
+  // Papel inválido/ausente → volta ao login com aviso (não renderiza shell quebrado).
+  if (!ROLES[user.role]) { location.href = 'login.html?perfil=0'; return null; }
+
   // Visitante não acessa a plataforma interna — apenas a tela institucional.
   if (user.role === 'visitante') { location.href = 'home.html'; return null; }
 
@@ -32,8 +37,10 @@ export async function mountShell() {
   }
 
   // ---- monta grupos de navegação respeitando RBAC ----
+  const liberados = MODULES.filter(m => can(user.role, m.id, 'view'));
+  console.log('[RNA-SHELL] menus liberados para', user.role, ':', ['home (Portal)', ...liberados.map(m => m.id)]);
   const groups = {};
-  MODULES.filter(m => can(user.role, m.id, 'view')).forEach(m => {
+  liberados.forEach(m => {
     (groups[m.group] = groups[m.group] || []).push(m);
   });
 

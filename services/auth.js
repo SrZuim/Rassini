@@ -6,7 +6,7 @@
    • Logs de acesso (login/logout/falha) em localStorage ('rna_acessos')
    • Pronto para migrar para Supabase Auth (basta configurar services/config.js)
    ========================================================================== */
-import { SUPABASE } from './config.js';
+import { SUPABASE, ROLES } from './config.js';
 import { getSupabase } from './supabaseClient.js';
 
 const SESSION_KEY = 'rna_session';
@@ -82,37 +82,33 @@ export const auth = {
 
       // Carrega o perfil real na tabela "usuarios" (por e-mail e, se preciso, por auth_id).
       const { prof, diag } = await this._carregarPerfil(sb, authUser);
-      dbg('2) Resultado da consulta em usuarios:', prof, '| diagnóstico:', diag);
+      dbg('2) Perfil encontrado na tabela usuarios:', prof, '| diagnóstico:', diag);
 
-      // Só rebaixa para "visitante" se realmente NÃO existir cadastro (consulta OK e vazia).
-      // Se a consulta falhou (RLS/rede), preserva um perfil mínimo e sinaliza o problema — nunca "visitante" silencioso.
-      let role;
-      if (prof) {
-        role = PERFIL_PARA_ROLE[prof.role] || prof.role || 'visitante';
-      } else if (diag.encontrado === false) {
-        role = 'visitante';                       // usuário autenticado sem registro em "usuarios"
-        console.warn('[RNA-AUTH] Nenhum registro em "usuarios" para', email, '→ perfil visitante.');
-      } else {
-        // Consulta com erro (ex.: RLS bloqueando SELECT). Não sabemos o papel: NÃO forçar visitante.
-        role = null;
-        console.error('[RNA-AUTH] Falha ao ler "usuarios" (verifique RLS/policies):', diag.erro);
+      // Papel padronizado do projeto (o sistema usa 'admin', não 'administrador').
+      const role = PERFIL_PARA_ROLE[prof?.role] || prof?.role || null;
+
+      // Sem perfil válido → NÃO cria sessão quebrada (visitante/null). Bloqueia (requisito #8).
+      if (!prof || !role) {
+        try { await sb.auth.signOut(); } catch {}
+        this._logAcesso({ email, evento: 'falha', motivo: prof ? 'role_invalida' : 'sem_perfil' });
+        console.error('[RNA-AUTH] Perfil não carregado. Diagnóstico:', diag);
+        throw new Error('Perfil não encontrado. Verifique o cadastro do usuário.');
       }
 
-      const sessao = this._abrirSessao({
-        ...(prof || {}),
-        id: prof?.id || authUser.id,
-        auth_id: authUser.id,
-        nome: prof?.nome || authUser.user_metadata?.nome || authUser.user_metadata?.full_name || email.split('@')[0],
-        email: prof?.email || email,
-        matricula: prof?.matricula ?? null,
-        area: prof?.area ?? null,
-        role
-      }, remember);
+      // Objeto do usuário NORMALIZADO — sempre com os mesmos campos.
+      const usuario = {
+        id:        prof.id || authUser.id,
+        auth_id:   authUser.id,
+        nome:      prof.nome || email.split('@')[0],
+        email:     prof.email || email,
+        role,                                   // 'admin' | 'supervisor' | 'auditor' | 'visitante'
+        matricula: prof.matricula ?? null,
+        area:      prof.area ?? null,
+        planta:    prof.planta ?? null
+      };
 
-      dbg('3) Dados gravados na sessão/localStorage:', sessao);
-      dbg('5) Role final utilizada pelo sistema:', sessao.role);
-      if (!prof) dbg('8) DIVERGÊNCIA: Auth OK, mas perfil em "usuarios" não foi carregado. Origem:', diag);
-      return sessao;
+      dbg('5) Role final utilizada pelo sistema:', role);
+      return this._abrirSessao(usuario, remember);
     }
 
     const users = await loadUsers();
@@ -206,6 +202,12 @@ export const auth = {
       return null;
     }
     if (!raw) { location.href = 'login.html?next=' + encodeURIComponent(location.pathname.split('/').pop() || ''); return null; }
+    // Sessão sem papel válido (ex.: sessão antiga/quebrada) → não deixa entrar sem perfil.
+    if (!raw.role || !ROLES[raw.role]) {
+      this._clear();
+      location.href = 'login.html?perfil=0';
+      return null;
+    }
     return raw;
   },
 
