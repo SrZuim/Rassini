@@ -32,6 +32,41 @@ export function emailCorporativoValido(email) {
   return DOMINIO_RE.test(String(email || '').trim());
 }
 
+/* [MÓDULO USUÁRIOS] Traduz erros do Supabase (Auth/PostgREST/RPC) em mensagens
+   reais e amigáveis. NUNCA usar JSON.stringify(error) — objetos de erro do
+   Supabase têm propriedades não-enumeráveis e serializam para "{}". */
+export function traduzErroSupabase(error, contexto = '') {
+  if (!error) return new Error('Erro desconhecido.');
+  const msg    = String(error.message || '');
+  const det    = String(error.details || '');
+  const hint   = String(error.hint || '');
+  const code   = String(error.code || error.status || '');
+  const full   = `${msg} ${det} ${hint}`.toLowerCase();
+
+  // Casos conhecidos → mensagem clara
+  if (/already registered|already been registered|user already exists/.test(full))
+    return new Error('E-mail já cadastrado.');
+  if (code === '23505' || /duplicate key|unique constraint/.test(full))
+    return new Error('E-mail já cadastrado.');
+  if (/rassini|corporativo/.test(full))
+    return new Error('Utilize seu e-mail corporativo da Rassini NHK.');
+  if (code === '42501' || /row-level security|permission denied|violates row-level/.test(full))
+    return new Error('Política RLS bloqueou o cadastro. Rode database/fix_cadastro_usuarios.sql no Supabase.');
+  if (/database error saving new user|unexpected_failure/.test(full))
+    return new Error('Erro ao criar usuário no Auth (trigger no banco). Rode database/fix_cadastro_usuarios.sql.');
+  if (code === '23514' || /check constraint|violates check/.test(full))
+    return new Error(msg || 'Campo obrigatório ausente ou inválido.');
+  if (/for security purposes|rate limit|too many/.test(full))
+    return new Error('Muitas tentativas. Aguarde alguns segundos e tente novamente.');
+  if (/invalid|password/.test(full) && contexto === 'auth')
+    return new Error(msg || 'Dados de cadastro inválidos.');
+
+  // Genérico — monta a partir das partes reais disponíveis
+  const partes = [msg, det, hint && `Dica: ${hint}`].filter(Boolean);
+  const texto = partes.join(' · ') || (code ? `Erro ${code}` : 'Falha ao solicitar acesso.');
+  return new Error(contexto === 'perfil' ? `Erro ao salvar perfil: ${texto}` : texto);
+}
+
 /* [MÓDULO USUÁRIOS] Mensagens do gate de status no login. */
 function mensagemStatus(status) {
   return ({
@@ -153,38 +188,58 @@ export const auth = {
   },
 
   /* [MÓDULO USUÁRIOS] ----------------------------------------------------------
-     Cadastro público. Cria a conta no Supabase Auth; o PERFIL em `usuarios` é
-     criado pelo trigger fn_usuario_signup (role travada em auditor/visitante,
-     status = 'pendente', domínio validado no servidor). Não abre sessão. */
+     Cadastro público (solicitarAcesso). Fluxo robusto de ponta a ponta:
+       1) valida nome/domínio/senha/planta
+       2) cria a conta no Supabase Auth (signUp) → usa data.user.id
+       3) cria o PERFIL via RPC solicitar_acesso (SECURITY DEFINER):
+          status='pendente', ativo=false, role travada em auditor|visitante
+       4) encerra a sessão (usuário aguarda aprovação)
+     Erros SEMPRE com mensagem real (message/details/hint/code); nunca "{}". */
   async signup({ nome, email, password, planta, cargo } = {}) {
     email = String(email || '').trim().toLowerCase();
     nome  = String(nome || '').trim();
 
-    if (!nome)                        throw new Error('Informe seu nome completo.');
-    if (!emailCorporativoValido(email)) throw new Error('Utilize seu e-mail corporativo da Rassini NHK.');
+    if (!nome)                             throw new Error('Informe seu nome completo.');
+    if (!emailCorporativoValido(email))    throw new Error('Utilize seu e-mail corporativo da Rassini NHK.');
     if (String(password || '').length < 6) throw new Error('A senha deve ter ao menos 6 caracteres.');
-    if (!planta)                      throw new Error('Selecione a sua planta.');
+    if (!planta)                           throw new Error('Selecione a sua planta.');
 
     // Clamp de front (o servidor também força): só auditor/visitante.
     const cargoOk = ['auditor', 'visitante'].includes(cargo) ? cargo : 'visitante';
-
     if (!SUPABASE.enabled) throw new Error('Cadastro indisponível: backend não configurado.');
     const sb = await getSupabase();
-    const { error } = await sb.auth.signUp({
+
+    // --- Logs temporários de depuração (remova em produção estável) ----------
+    console.log('%c[CADASTRO] 1) dados enviados', 'color:#e0a500;font-weight:bold', { nome, email, planta, cargo: cargoOk });
+
+    // (2) Cria a conta no Auth
+    const { data, error: authErr } = await sb.auth.signUp({
       email, password,
       options: { data: { nome, planta, cargo_desejado: cargoOk } }
     });
-    if (error) {
-      const m = String(error.message || '');
-      if (/rassini|corporativo|check/i.test(m))      throw new Error('Utilize seu e-mail corporativo da Rassini NHK.');
-      if (/already registered|already been/i.test(m)) throw new Error('Este e-mail já possui cadastro.');
-      throw new Error(m || 'Falha ao solicitar acesso.');
-    }
-    // Garante que nenhuma sessão fique aberta: o usuário aguarda aprovação.
+    console.log('%c[CADASTRO] 2) resultado signUp', 'color:#e0a500;font-weight:bold',
+      { userId: data?.user?.id || null, temSessao: !!data?.session, authErr });
+    if (authErr) { console.error('[CADASTRO] erro Auth completo:', authErr); throw traduzErroSupabase(authErr, 'auth'); }
+
+    const authId = data?.user?.id || null;   // usa data.user.id (funciona com confirm-email ON/OFF)
+    if (!authId) console.warn('[CADASTRO] signUp não retornou user.id (confirm-email?). A RPC seguirá por e-mail.');
+
+    // (3) Cria o perfil pendente via RPC segura
+    const { data: rpc, error: rpcErr } = await sb.rpc('solicitar_acesso', {
+      p_nome: nome, p_email: email, p_planta: planta, p_cargo: cargoOk, p_auth_id: authId
+    });
+    console.log('%c[CADASTRO] 3) resultado solicitar_acesso', 'color:#e0a500;font-weight:bold', { rpc, rpcErr });
+    if (rpcErr) { console.error('[CADASTRO] erro RPC completo:', rpcErr); throw traduzErroSupabase(rpcErr, 'perfil'); }
+
+    // (4) Não deixa sessão aberta — usuário aguarda aprovação.
     try { await sb.auth.signOut(); } catch {}
     this._logAcesso({ nome, email, evento: 'cadastro' });
+    console.log('%c[CADASTRO] 4) concluído — perfil pendente criado', 'color:#1c8c4a;font-weight:bold');
     return { email, nome, status: 'pendente' };
   },
+
+  /** Alias explícito exigido pelo fluxo de cadastro. */
+  solicitarAcesso(payload) { return this.signup(payload); },
 
   /**
    * Busca o registro do usuário na tabela "usuarios".

@@ -19,10 +19,14 @@ export const STATUS_META = {
 };
 
 export const usuariosSvc = {
-  /** Lista todos os usuários (mais recentes primeiro). */
+  /** Lista todos os usuários (mais recentes primeiro).
+      Normaliza status/role para minúsculo para exibir pendentes mesmo que o
+      banco tenha gravado em caixa diferente (requisitos #11/#12/#13). */
   async list() {
     const rows = await db.list('usuarios').catch(() => []);
-    return [...rows].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    return rows
+      .map(u => ({ ...u, status: String(u.status || 'aprovado').toLowerCase(), role: String(u.role || 'visitante').toLowerCase() }))
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
   },
 
   /** Trilha de auditoria (usuarios_logs). */
