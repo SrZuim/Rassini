@@ -55,12 +55,21 @@ export const usuariosSvc = {
   bloquear(u)           { return this._acao('fn_bloquear_usuario', { p_alvo: u.id, p_bloquear: true },  u, { status:'bloqueado', ativo:false }, 'bloqueio', 'Usuário bloqueado'); },
   desbloquear(u)        { return this._acao('fn_bloquear_usuario', { p_alvo: u.id, p_bloquear: false }, u, { status:'aprovado', ativo:true }, 'desbloqueio', 'Usuário desbloqueado'); },
   alterarCargo(u, role) { return this._acao('fn_alterar_cargo',    { p_alvo: u.id, p_role: role }, u, { role }, 'alteracao_dados', 'Cargo alterado para ' + role); },
-  async excluir(u) {
-    try { await this._rpc('fn_excluir_usuario', { p_alvo: u.id }); }
+  /** Exclusão FÍSICA: remove dependências (via RPC) e apaga a linha em usuarios.
+      A RPC fn_excluir_usuario faz DELETE real no servidor (limpa notificacoes/
+      logs e anula vínculos operacionais antes). */
+  async excluir(u, motivo) {
+    try { await this._rpc('fn_excluir_usuario', { p_alvo: u.id, p_motivo: motivo || null }); }
     catch (e) {
       if (e.message !== '__DEMO__') throw e;
+      // Fallback demo (localStorage): apaga vínculos e o usuário.
+      try {
+        const notifs = await db.list('notificacoes');
+        for (const n of notifs.filter(n => n.destinatario === u.id)) await db.remove('notificacoes', n.id);
+        const logs = await db.list('usuarios_logs');
+        for (const l of logs.filter(l => l.afetado_id === u.id || l.executor_id === u.id)) await db.remove('usuarios_logs', l.id);
+      } catch {}
       await db.remove('usuarios', u.id);
-      await this._logDemo(u, 'exclusao', 'Usuário excluído');
     }
   },
 
@@ -68,9 +77,16 @@ export const usuariosSvc = {
   async _rpc(fn, args) {
     if (!SUPABASE.enabled) throw new Error('__DEMO__');
     const sb = await getSupabase();
-    const { error } = await sb.rpc(fn, args);
-    if (error) throw new Error(error.message || 'Falha na operação.');
-    return true;
+    const { data, error } = await sb.rpc(fn, args);
+    if (error) {
+      // Log completo (message/details/hint/code) — nunca só o objeto (req #4/#8).
+      console.error(`[USUARIOS] RPC ${fn} falhou:`, {
+        message: error.message, details: error.details, hint: error.hint, code: error.code
+      });
+      const partes = [error.message, error.details, error.hint && `Dica: ${error.hint}`].filter(Boolean);
+      throw new Error(partes.join(' · ') || (error.code ? `Erro ${error.code}` : 'Falha na operação.'));
+    }
+    return data ?? true;
   },
 
   /** Executa via RPC (produção) ou replica no demo (offline). */

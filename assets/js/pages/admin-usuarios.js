@@ -101,7 +101,7 @@ function renderCards() {
 function renderChips() {
   const s = usuariosSvc.stats(ALL);
   const chips = [
-    ['todos', 'Todos', ALL.length], ['pendente', 'Pendentes', s.pendentes],
+    ['todos', 'Todos', s.total], ['pendente', 'Pendentes', s.pendentes],
     ['aprovado', 'Aprovados', s.aprovados], ['recusado', 'Recusados', s.recusados],
     ['bloqueado', 'Bloqueados', s.bloqueados]
   ];
@@ -251,7 +251,11 @@ function onAction(act, u, close) {
   if (act === 'aprovar')     return runAction('Aprovar acesso', () => usuariosSvc.aprovar(u), `${u.nome} aprovado.`, close);
   if (act === 'desbloquear') return runAction('Desbloquear', () => usuariosSvc.desbloquear(u), `${u.nome} desbloqueado.`, close);
   if (act === 'bloquear')    return confirmDialog(`Bloquear o acesso de <b>${u.nome}</b>?`, () => runAction('Bloquear', () => usuariosSvc.bloquear(u), `${u.nome} bloqueado.`, close), { title:'Bloquear usuário', okLabel:'Bloquear', danger:true });
-  if (act === 'excluir')     return confirmDialog(`Excluir permanentemente <b>${u.nome}</b>? Esta ação não pode ser desfeita.`, () => runAction('Excluir', () => usuariosSvc.excluir(u), `${u.nome} excluído.`, close), { title:'Excluir usuário', okLabel:'Excluir', danger:true });
+  if (act === 'excluir')     return confirmDialog(
+    'Tem certeza que deseja excluir este usuário? Essa ação apagará o usuário do banco de dados.',
+    () => runAction('Excluir usuário', () => usuariosSvc.excluir(u),
+      'Usuário excluído do banco de dados com sucesso.', close),
+    { title: 'Excluir usuário', okLabel: 'Excluir', danger: true });
   if (act === 'recusar')     return recusarModal(u, close);
   if (act === 'cargo')       return cargoModal(u, close);
 }
