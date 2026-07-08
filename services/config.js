@@ -55,6 +55,8 @@ export const MODULES = [
   { id:'documentos',    label:'Documentos',           short:'Documentos',          page:'documentos.html',    icon:'bi-folder2-open',      group:'Gestão',      color:'gray',   desc:'Procedimentos, normas e instruções.' },
   { id:'treinamentos',  label:'Treinamentos',         short:'Treinamentos',        page:'treinamentos.html',  icon:'bi-mortarboard',       group:'Gestão',      color:'green',  desc:'Trilhas e capacitações da equipe.' },
   { id:'admin',         label:'Administração',        short:'Admin',               page:'admin.html',         icon:'bi-sliders',           group:'Gestão',      color:'red',    desc:'Cadastros editáveis: rotinas, checklist, peças e listas.' },
+  /* [MÓDULO USUÁRIOS] Administração de Usuários — cadastro, aprovação e gestão (só admin). */
+  { id:'usuarios',      label:'Administração de Usuários', short:'Usuários',        page:'admin-usuarios.html',icon:'bi-people',            group:'Administração', color:'red', desc:'Solicitações de acesso, aprovação, cargos e bloqueios.' },
   { id:'perfil',        label:'Meu Perfil',           short:'Perfil',              page:'perfil.html',        icon:'bi-person-circle',     group:'Gestão',      color:'gray',   desc:'Seus dados, plantões e produtividade.' }
 ];
 
@@ -73,7 +75,7 @@ export const RBAC = {
     rotinas:['view'], diario:['view'], auditoria:RO, auditorias:RO,
     checklist:['view'], ocorrencias:RO, planos:['view','export'],
     powerbi:['view'], comunicados:['view'], documentos:['view','export'],
-    treinamentos:['view'], admin:[], perfil:['view','edit']
+    treinamentos:['view'], admin:[], usuarios:[], perfil:['view','edit']
   },
 
   /* Auditor: apenas operação — plantão, rotina, checklist, auditoria, diário. */
@@ -82,14 +84,14 @@ export const RBAC = {
     rotinas:['view','edit'], diario:['view','create','edit'],
     auditoria:['view','create','edit'], auditorias:[],
     checklist:['view','create','edit'], ocorrencias:[], planos:[],
-    powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], perfil:['view','edit']
+    powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },
 
   /* Visitante: somente a tela institucional (home.html). Sem acesso à plataforma. */
   visitante: {
     dashboard:[], monitoramento:[], checkin:[], rotinas:[], diario:[], auditoria:[],
     auditorias:[], checklist:[], ocorrencias:[], planos:[], powerbi:[], comunicados:[],
-    documentos:[], treinamentos:[], admin:[], perfil:['view']
+    documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view']
   }
 };
 

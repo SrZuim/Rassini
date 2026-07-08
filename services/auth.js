@@ -24,6 +24,23 @@ const PERFIL_PARA_ROLE = {
   supervisor: 'supervisor', auditor: 'auditor', visitante: 'visitante'
 };
 
+/* [MÓDULO USUÁRIOS] Domínio corporativo obrigatório em cadastros novos.
+   1ª camada (front). O back-end revalida no trigger fn_usuario_signup. */
+export const DOMINIO_CORP = 'rassininhk.com.br';
+const DOMINIO_RE = /@rassininhk\.com\.br$/i;
+export function emailCorporativoValido(email) {
+  return DOMINIO_RE.test(String(email || '').trim());
+}
+
+/* [MÓDULO USUÁRIOS] Mensagens do gate de status no login. */
+function mensagemStatus(status) {
+  return ({
+    pendente:  'Seu cadastro foi recebido e está aguardando aprovação do administrador.',
+    recusado:  'Seu acesso foi recusado. Procure seu supervisor ou administrador.',
+    bloqueado: 'Seu acesso está bloqueado. Procure o administrador.'
+  })[status] || 'Seu acesso está inativo. Procure o administrador.';
+}
+
 /* Fallback embutido (caso o fetch de users.json falhe, ex.: file://).
    Mantenha sincronizado com services/users.json. */
 const USERS_FALLBACK = [
@@ -95,6 +112,17 @@ export const auth = {
         throw new Error('Perfil não encontrado. Verifique o cadastro do usuário.');
       }
 
+      // [MÓDULO USUÁRIOS] Gate de status corporativo (requisito #4).
+      // Registros anteriores ao módulo não têm status → tratados como 'aprovado'.
+      const status = prof.status || 'aprovado';
+      const ativo  = prof.ativo !== false;
+      if (status !== 'aprovado' || !ativo) {
+        try { await sb.auth.signOut(); } catch {}
+        this._logAcesso({ email, evento: 'falha', motivo: 'status_' + status });
+        dbg('Acesso bloqueado por status:', status, '| ativo:', ativo);
+        throw new Error(mensagemStatus(status));
+      }
+
       // Objeto do usuário NORMALIZADO — sempre com os mesmos campos.
       const usuario = {
         id:        prof.id || authUser.id,
@@ -108,6 +136,8 @@ export const auth = {
       };
 
       dbg('5) Role final utilizada pelo sistema:', role);
+      // [MÓDULO USUÁRIOS] Carimba o último login (best-effort; não bloqueia o acesso).
+      try { await sb.rpc('fn_registrar_login'); } catch (e) { dbg('fn_registrar_login falhou:', e?.message); }
       return this._abrirSessao(usuario, remember);
     }
 
@@ -120,6 +150,40 @@ export const auth = {
     const role = PERFIL_PARA_ROLE[u.perfil] || u.perfil;
     const { senha, perfil, ...rest } = u;       // nunca guardar a senha na sessão
     return this._abrirSessao({ ...rest, perfil, role }, remember);
+  },
+
+  /* [MÓDULO USUÁRIOS] ----------------------------------------------------------
+     Cadastro público. Cria a conta no Supabase Auth; o PERFIL em `usuarios` é
+     criado pelo trigger fn_usuario_signup (role travada em auditor/visitante,
+     status = 'pendente', domínio validado no servidor). Não abre sessão. */
+  async signup({ nome, email, password, planta, cargo } = {}) {
+    email = String(email || '').trim().toLowerCase();
+    nome  = String(nome || '').trim();
+
+    if (!nome)                        throw new Error('Informe seu nome completo.');
+    if (!emailCorporativoValido(email)) throw new Error('Utilize seu e-mail corporativo da Rassini NHK.');
+    if (String(password || '').length < 6) throw new Error('A senha deve ter ao menos 6 caracteres.');
+    if (!planta)                      throw new Error('Selecione a sua planta.');
+
+    // Clamp de front (o servidor também força): só auditor/visitante.
+    const cargoOk = ['auditor', 'visitante'].includes(cargo) ? cargo : 'visitante';
+
+    if (!SUPABASE.enabled) throw new Error('Cadastro indisponível: backend não configurado.');
+    const sb = await getSupabase();
+    const { error } = await sb.auth.signUp({
+      email, password,
+      options: { data: { nome, planta, cargo_desejado: cargoOk } }
+    });
+    if (error) {
+      const m = String(error.message || '');
+      if (/rassini|corporativo|check/i.test(m))      throw new Error('Utilize seu e-mail corporativo da Rassini NHK.');
+      if (/already registered|already been/i.test(m)) throw new Error('Este e-mail já possui cadastro.');
+      throw new Error(m || 'Falha ao solicitar acesso.');
+    }
+    // Garante que nenhuma sessão fique aberta: o usuário aguarda aprovação.
+    try { await sb.auth.signOut(); } catch {}
+    this._logAcesso({ nome, email, evento: 'cadastro' });
+    return { email, nome, status: 'pendente' };
   },
 
   /**

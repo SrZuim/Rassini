@@ -2,9 +2,10 @@
 import { mountShell } from '../app.js';
 import { db } from '../../../services/db.js';
 import { auth } from '../../../services/auth.js';
-import { ROLES, RBAC, MODULES } from '../../../services/config.js';
+import { ROLES, RBAC, MODULES, SUPABASE } from '../../../services/config.js';
+import { getSupabase } from '../../../services/supabaseClient.js';
 import { charts, PALETTE } from '../charts.js';
-import { $, $$, toast, initials, confirmDialog } from '../ui.js';
+import { $, $$, toast, initials, confirmDialog, modal } from '../ui.js';
 
 const ctx = await mountShell();
 let USER;
@@ -67,6 +68,15 @@ async function render() {
               <td><span class="rna-badge badge-na">${l.antes}</span> → <span class="rna-badge badge-ok">${l.depois}</span></td><td class="cell-sub">${l.dispositivo}</td></tr>`).join('')}
           </tbody></table></div></div>
 
+        <div class="rna-card mt-3"><div class="rna-card__head"><h3><i class="bi bi-shield-lock"></i> Conta & Segurança</h3></div>
+          <div class="rna-card__body">
+            <div class="d-flex flex-wrap gap-2">
+              <button class="rna-btn rna-btn-primary" id="btn-foto"><i class="bi bi-camera"></i> Alterar foto</button>
+              <button class="rna-btn rna-btn-ghost" id="btn-senha"><i class="bi bi-key"></i> Alterar senha</button>
+            </div>
+            <p class="text-muted-2 mt-2 mb-0" style="font-size:11.5px"><i class="bi bi-info-circle"></i> Cargo, permissões, status e planta são gerenciados pelo administrador e não podem ser alterados aqui.</p>
+          </div></div>
+
         <div class="rna-card mt-3"><div class="rna-card__head"><h3><i class="bi bi-gear"></i> Preferências & dados</h3></div>
           <div class="rna-card__body d-flex flex-wrap gap-2">
             <button class="rna-btn rna-btn-ghost" id="btn-reset"><i class="bi bi-arrow-counterclockwise"></i> Restaurar dados demo</button>
@@ -83,5 +93,70 @@ async function render() {
   $('#btn-reset').addEventListener('click',()=>confirmDialog('Restaurar os dados de demonstração ao estado inicial? Suas alterações locais serão perdidas.', ()=>{
     db.resetDemo(); toast('Dados de demonstração restaurados.', { type:'ok' }); setTimeout(()=>location.reload(),700);
   }, { title:'Restaurar dados', okLabel:'Restaurar', danger:true }));
+
+  // [MÓDULO USUÁRIOS] Alterar foto / senha (única coisa editável pelo próprio usuário).
+  $('#btn-foto').addEventListener('click', alterarFotoModal);
+  $('#btn-senha').addEventListener('click', alterarSenhaModal);
 }
 const mini=(v,l,ic,icon)=>`<div class="col-6 col-md-3"><div class="rna-stat"><div class="rna-stat__icon ${ic}"><i class="bi ${icon}"></i></div><div class="rna-stat__val" style="font-size:22px">${v}</div><div class="rna-stat__label">${l}</div></div></div>`;
+
+/* -------------------------------------------------- [MÓDULO USUÁRIOS] foto/senha */
+function alterarSenhaModal() {
+  const m = modal({
+    title: 'Alterar senha',
+    content: `<label class="form-label">Nova senha</label>
+      <input type="password" id="np1" class="form-control" placeholder="Mínimo 6 caracteres" autocomplete="new-password">
+      <label class="form-label mt-2">Confirmar nova senha</label>
+      <input type="password" id="np2" class="form-control" autocomplete="new-password">`,
+    footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Cancelar</button>
+             <button class="rna-btn rna-btn-primary" id="sv-pw">Salvar senha</button>`
+  });
+  $('#sv-pw', m.host).addEventListener('click', async () => {
+    const a = $('#np1', m.host).value, b = $('#np2', m.host).value;
+    if (a.length < 6) return toast('A senha deve ter ao menos 6 caracteres.', { type:'warn' });
+    if (a !== b)      return toast('As senhas não coincidem.', { type:'warn' });
+    if (!SUPABASE.enabled) { m.close(); return toast('Troca de senha disponível apenas com backend Supabase.', { type:'warn' }); }
+    try {
+      const sb = await getSupabase();
+      const { error } = await sb.auth.updateUser({ password: a });
+      if (error) throw error;
+      m.close(); toast('Senha alterada com sucesso.', { type:'ok' });
+    } catch (e) { toast(e.message || 'Falha ao alterar senha.', { type:'crit' }); }
+  });
+}
+
+function alterarFotoModal() {
+  const m = modal({
+    title: 'Alterar foto',
+    content: `<p class="text-muted-2" style="font-size:12.5px">JPG, PNG ou WEBP. A imagem é redimensionada automaticamente.</p>
+      <input type="file" id="ph-file" class="form-control" accept="image/*">
+      <div id="ph-prev" class="mt-3 text-center"></div>`,
+    footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Cancelar</button>
+             <button class="rna-btn rna-btn-primary" id="sv-ph" disabled>Salvar foto</button>`
+  });
+  let dataUrl = null;
+  $('#ph-file', m.host).addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      dataUrl = await comprimirImagem(f);
+      $('#ph-prev', m.host).innerHTML = `<img src="${dataUrl}" style="width:104px;height:104px;border-radius:16px;object-fit:cover;border:3px solid var(--rna-border)">`;
+      $('#sv-ph', m.host).disabled = false;
+    } catch { toast('Não foi possível ler a imagem.', { type:'crit' }); }
+  });
+  $('#sv-ph', m.host).addEventListener('click', async () => {
+    if (!dataUrl) return;
+    try {
+      await db.update('usuarios', USER.id, { avatar: dataUrl });
+      m.close(); toast('Foto atualizada.', { type:'ok' }); setTimeout(() => location.reload(), 700);
+    } catch (e) { toast(e.message || 'Falha ao salvar foto.', { type:'crit' }); }
+  });
+}
+
+async function comprimirImagem(file) {
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
+  const MAX = 256; let w = img.width, h = img.height;
+  const sc = Math.min(1, MAX / Math.max(w, h)); w = Math.round(w * sc); h = Math.round(h * sc);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  c.getContext('2d').drawImage(img, 0, 0, w, h);
+  return c.toDataURL('image/jpeg', 0.8);
+}

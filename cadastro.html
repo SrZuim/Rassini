@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Solicitar acesso · RNA One — Rassini NHK Automotive</title>
+  <link rel="icon" href="assets/rassini/logo-rna.jpeg">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="assets/css/rna.css" rel="stylesheet">
+</head>
+<body>
+  <div class="login-wrap">
+    <aside class="login-aside">
+      <img class="bg" src="assets/rassini/banner-molas.jpg" alt="">
+      <div>
+        <span class="portal-hero__badge"><i class="bi bi-person-badge"></i> Acesso corporativo · Rassini NHK</span>
+        <h1>RNA <span>One</span><br>Solicite seu acesso<br>à plataforma.</h1>
+      </div>
+      <div>
+        <div class="login-feature"><i class="bi bi-shield-check"></i><div><b>Cadastro seguro</b><small>Somente e-mails @rassininhk.com.br.</small></div></div>
+        <div class="login-feature"><i class="bi bi-person-check"></i><div><b>Aprovação do administrador</b><small>Seu acesso é liberado após análise.</small></div></div>
+        <div class="login-feature"><i class="bi bi-clipboard-check"></i><div><b>Perfil conforme sua função</b><small>Auditor ou Visitante.</small></div></div>
+      </div>
+      <small style="color:#8b9097">© 2026 Rassini NHK Automotive — Uso interno.</small>
+    </aside>
+
+    <section class="login-form">
+      <div class="login-form__inner">
+        <img class="login-logo" src="assets/rassini/logo-rna.jpeg" alt="RNA">
+        <h2 style="font-weight:750;font-size:23px;margin-bottom:4px">Solicitar acesso</h2>
+        <p class="text-muted-2" style="margin-bottom:18px">Preencha seus dados. O acesso é liberado após aprovação do administrador.</p>
+
+        <div id="cad-info" class="rna-badge badge-warn mb-3" style="display:none;width:100%"></div>
+
+        <!-- Formulário -->
+        <form id="cad-form">
+          <div class="mb-3">
+            <label class="form-label">Nome completo</label>
+            <input type="text" class="form-control" id="nome" placeholder="Seu nome completo" autocomplete="name" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">E-mail corporativo</label>
+            <input type="email" class="form-control" id="email" placeholder="nome@rassininhk.com.br" autocomplete="username" required>
+            <small id="email-hint" class="text-muted-2" style="font-size:11.5px">Utilize seu e-mail <b>@rassininhk.com.br</b>.</small>
+          </div>
+          <div class="row g-2">
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Senha</label>
+              <div class="position-relative">
+                <input type="password" class="form-control" id="senha" placeholder="Mínimo 6 caracteres" autocomplete="new-password" required>
+                <i class="bi bi-eye position-absolute" id="toggle-pw" style="right:14px;top:11px;cursor:pointer;color:var(--rna-gray)"></i>
+              </div>
+            </div>
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Confirmar senha</label>
+              <input type="password" class="form-control" id="senha2" placeholder="Repita a senha" autocomplete="new-password" required>
+            </div>
+          </div>
+          <div class="row g-2">
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Planta</label>
+              <select class="form-control" id="planta" required></select>
+            </div>
+            <div class="col-md-6 mb-3">
+              <label class="form-label">Cargo desejado</label>
+              <select class="form-control" id="cargo" required>
+                <option value="auditor">Auditor</option>
+                <option value="visitante">Visitante</option>
+              </select>
+            </div>
+          </div>
+
+          <button class="rna-btn rna-btn-primary w-100 justify-content-center" type="submit" id="btn-cad">
+            <i class="bi bi-send-check"></i> Solicitar acesso
+          </button>
+          <div id="cad-error" class="text-danger mt-2" style="font-size:12.5px;display:none"></div>
+        </form>
+
+        <!-- Sucesso (exibido após enviar) -->
+        <div id="cad-ok" style="display:none;text-align:center;padding:10px 0">
+          <div class="rna-stat__icon ic-soft-green mx-auto" style="width:56px;height:56px;font-size:26px"><i class="bi bi-check2-circle"></i></div>
+          <h3 style="margin:14px 0 6px;font-size:19px">Solicitação enviada!</h3>
+          <p class="text-muted-2" style="font-size:14px;max-width:340px;margin:0 auto 16px">
+            Seu cadastro foi recebido e está <b>aguardando aprovação</b> do administrador.
+            Você poderá acessar assim que for aprovado.
+          </p>
+          <a href="login.html" class="rna-btn rna-btn-primary"><i class="bi bi-box-arrow-in-right"></i> Ir para o login</a>
+        </div>
+
+        <div class="divider"></div>
+        <p class="text-muted-2" style="font-size:12.5px;text-align:center;margin:0">
+          Já possui acesso? <a href="login.html" style="color:var(--rna-yellow-600);font-weight:600">Entrar na plataforma</a>
+        </p>
+      </div>
+    </section>
+  </div>
+
+  <script type="module">
+    import { auth, emailCorporativoValido, DOMINIO_CORP } from './services/auth.js';
+    import { PLANTAS } from './services/config.js';
+
+    const err  = document.getElementById('cad-error');
+    const info = document.getElementById('cad-info');
+    const form = document.getElementById('cad-form');
+    const okBox = document.getElementById('cad-ok');
+    const showErr = (m) => { err.textContent = m; err.style.display = 'block'; };
+
+    // Se já houver sessão válida, não faz sentido cadastrar — vai para a home do perfil.
+    const sessao = auth.current();
+    if (sessao) location.href = auth.homeFor(sessao.role);
+
+    // Popula plantas a partir da config central (fonte única).
+    const selPlanta = document.getElementById('planta');
+    selPlanta.innerHTML = '<option value="" disabled selected>Selecione…</option>' +
+      PLANTAS.map(p => `<option value="${p}">${p}</option>`).join('');
+
+    // Mostrar/ocultar senha.
+    document.getElementById('toggle-pw').addEventListener('click', (e) => {
+      const i = document.getElementById('senha');
+      i.type = i.type === 'password' ? 'text' : 'password';
+      e.target.className = i.type === 'password' ? 'bi bi-eye position-absolute' : 'bi bi-eye-slash position-absolute';
+      e.target.style.cssText = 'right:14px;top:11px;cursor:pointer;color:var(--rna-gray)';
+    });
+
+    // Validação de domínio em tempo real (feedback imediato).
+    const emailEl = document.getElementById('email');
+    const hint = document.getElementById('email-hint');
+    emailEl.addEventListener('input', () => {
+      const v = emailEl.value.trim();
+      if (!v) { hint.className = 'text-muted-2'; hint.style.fontSize='11.5px'; hint.innerHTML = `Utilize seu e-mail <b>@${DOMINIO_CORP}</b>.`; return; }
+      const ok = emailCorporativoValido(v);
+      hint.style.fontSize = '11.5px';
+      hint.className = ok ? 'text-success' : 'text-danger';
+      hint.innerHTML = ok ? '<i class="bi bi-check-circle"></i> E-mail corporativo válido.' : 'Utilize seu e-mail corporativo da Rassini NHK.';
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.style.display = 'none';
+
+      const nome   = document.getElementById('nome').value.trim();
+      const email  = emailEl.value.trim();
+      const senha  = document.getElementById('senha').value;
+      const senha2 = document.getElementById('senha2').value;
+      const planta = document.getElementById('planta').value;
+      const cargo  = document.getElementById('cargo').value;
+
+      if (!emailCorporativoValido(email)) return showErr('Utilize seu e-mail corporativo da Rassini NHK.');
+      if (senha.length < 6)   return showErr('A senha deve ter ao menos 6 caracteres.');
+      if (senha !== senha2)   return showErr('As senhas não coincidem.');
+
+      const btn = document.getElementById('btn-cad');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enviando solicitação...';
+      try {
+        await auth.signup({ nome, email, password: senha, planta, cargo });
+        form.style.display = 'none';
+        info.style.display = 'none';
+        okBox.style.display = 'block';
+      } catch (ex) {
+        showErr(ex.message || 'Falha ao solicitar acesso.');
+        btn.disabled = false; btn.innerHTML = '<i class="bi bi-send-check"></i> Solicitar acesso';
+      }
+    });
+  </script>
+</body>
+</html>

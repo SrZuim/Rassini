@@ -11,6 +11,7 @@ import { auth } from '../../services/auth.js';
 import { db } from '../../services/db.js';
 import { MODULES, ROLES, RBAC, can, BRAND } from '../../services/config.js';
 import { $, $$, el, initials, toast } from './ui.js';
+import { subscribe } from '../../services/integrations/realtime.js';   // [MÓDULO USUÁRIOS]
 
 export async function mountShell() {
   const page = document.getElementById('rna-page');
@@ -151,6 +152,18 @@ function wireShell(user, notifs) {
   $('.rna-topbar__search input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.value.trim()) toast(`Busca por “${e.target.value}” — integração de índice global prevista para a fase 2.`, { type:'info', title:'Busca global' });
   });
+
+  // [MÓDULO USUÁRIOS] Notificações em tempo real (novas solicitações p/ admin etc.)
+  // Assina INSERTs em `notificacoes`; o RLS já limita ao destinatário. Filtramos
+  // também no cliente por segurança. No-op silencioso em modo demo.
+  subscribe('notificacoes', ({ new: n }) => {
+    if (!n) return;
+    if (n.destinatario && user.id && n.destinatario !== user.id) return;
+    notifs.unshift({ titulo: n.titulo, texto: n.texto, tipo: n.tipo || 'info', quando: 'agora', lida: false });
+    const bell = $('#rna-bell');
+    if (bell && !bell.querySelector('.dot')) bell.insertAdjacentHTML('beforeend', '<span class="dot"></span>');
+    toast(n.texto ? `${n.titulo} · ${n.texto}` : n.titulo, { type: n.tipo === 'crit' ? 'crit' : 'info', title: 'Notificação' });
+  }, { event: 'INSERT' }).catch(() => {});
 }
 
 function accessDenied(title) {
