@@ -43,6 +43,16 @@ export function traduzErroSupabase(error, contexto = '') {
   const code   = String(error.code || error.status || '');
   const full   = `${msg} ${det} ${hint}`.toLowerCase();
 
+  // --- Casos de LOGIN (Supabase Auth) → mensagem real ---------------------
+  if (/email not confirmed|not confirmed|email_not_confirmed/.test(full))
+    return new Error('Confirme seu e-mail antes de acessar a plataforma.');
+  if (/invalid login credentials|invalid credentials|invalid_grant/.test(full))
+    return new Error('E-mail ou senha inválidos.');
+  if (/user not found|no user found/.test(full))
+    return new Error('E-mail não cadastrado.');
+  if (/for security purposes|rate limit|too many|over_request_rate/.test(full))
+    return new Error('Muitas tentativas. Aguarde alguns segundos e tente novamente.');
+
   // Casos conhecidos → mensagem clara
   if (/already registered|already been registered|user already exists/.test(full))
     return new Error('E-mail já cadastrado.');
@@ -126,15 +136,22 @@ export const auth = {
 
     if (SUPABASE.enabled) {
       const sb = await getSupabase();
+      console.log('%c[RNA-AUTH] Tentando login:', 'color:#e0a500;font-weight:bold', email);
       const { data, error } = await sb.auth.signInWithPassword({ email, password });
-      if (error) { this._logAcesso({ email, evento: 'falha' }); throw new Error('E-mail ou senha inválidos.'); }
+      console.log('%c[RNA-AUTH] Auth result:', 'color:#e0a500;font-weight:bold', { userId: data?.user?.id || null, temSessao: !!data?.session });
+      if (error) {
+        // [MÓDULO USUÁRIOS] Loga o erro COMPLETO antes de qualquer mensagem (req #11).
+        console.error('[RNA-AUTH] Auth error:', error, '| message:', error?.message, '| status:', error?.status, '| code:', error?.code);
+        this._logAcesso({ email, evento: 'falha', motivo: error?.message || 'auth_error' });
+        throw traduzErroSupabase(error, 'login');   // mensagem real: credenciais / e-mail não confirmado / rate limit
+      }
 
       const authUser = data.user;
       dbg('1) Usuário autenticado pelo Auth:', { id: authUser?.id, email: authUser?.email });
 
       // Carrega o perfil real na tabela "usuarios" (por e-mail e, se preciso, por auth_id).
       const { prof, diag } = await this._carregarPerfil(sb, authUser);
-      dbg('2) Perfil encontrado na tabela usuarios:', prof, '| diagnóstico:', diag);
+      console.log('%c[RNA-AUTH] Perfil encontrado:', 'color:#e0a500;font-weight:bold', prof, '| diagnóstico:', diag);
 
       // Papel padronizado do projeto (o sistema usa 'admin', não 'administrador').
       const role = PERFIL_PARA_ROLE[prof?.role] || prof?.role || null;
