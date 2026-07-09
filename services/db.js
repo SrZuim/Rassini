@@ -9,6 +9,7 @@ import { SEED } from './seed.js';
 import { CATALOGOS } from './auditoria-data.js';
 import { FUNCIONARIOS_DEFAULT } from './funcionarios.js';
 import { BIBLIOTECA } from './biblioteca-data.js';
+import { GESTAO_OP } from './gestao-op-data.js';
 
 const LS_KEY = 'rna_demo_db_v2';
 
@@ -19,6 +20,7 @@ function baseSeed() {
     ...structuredClone(SEED),
     ...structuredClone(CATALOGOS),
     ...structuredClone(BIBLIOTECA),
+    ...structuredClone(GESTAO_OP),
     funcionarios: structuredClone(FUNCIONARIOS_DEFAULT),
     rotina_exec: [],
     checklist_exec: [],

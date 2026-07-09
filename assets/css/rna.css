@@ -532,3 +532,22 @@ body.kiosk .rna-content { padding: 26px; }
 .bib-combo-opt mark { background: var(--rna-yellow); color: var(--rna-graphite); border-radius: 3px; padding: 0 1px; }
 .bib-combo-new { color: var(--rna-yellow-600); font-weight: 600; border-top: 1px solid var(--rna-border); border-radius: 0 0 8px 8px; margin-top: 2px; }
 .bib-combo-empty { padding: 10px 12px; font-size: 12.5px; color: var(--rna-gray); }
+
+/* ==========================================================================
+   Gestão Operacional — hub do plantão, execução de rotinas, editor
+   ========================================================================== */
+.op-timer { font-family: 'Inter', monospace; font-weight: 700; font-size: 22px; letter-spacing: 1px; color: var(--rna-graphite);
+  background: var(--rna-gray-100); border-radius: 10px; padding: 6px 14px; }
+.op-code { font-size: 11.5px; font-weight: 700; letter-spacing: .4px; color: var(--rna-yellow-600); }
+.op-next { display: block; border: 1px solid var(--rna-border); border-radius: 12px; padding: 14px; transition: border-color .15s, box-shadow .15s; }
+.op-next:hover { border-color: var(--rna-yellow); box-shadow: var(--rna-shadow); }
+.op-rot-card { transition: transform .14s, box-shadow .14s; }
+.op-rot-card:hover { transform: translateY(-2px); box-shadow: var(--rna-shadow-lg); }
+.op-rot-card.is-done { opacity: .72; }
+.op-idx { width: 26px; height: 26px; border-radius: 50%; background: var(--rna-graphite); color: #fff; font-size: 12.5px; font-weight: 700;
+  display: grid; place-items: center; flex-shrink: 0; }
+.op-exec-item { border-left: 3px solid transparent; }
+.op-exec-item.op-fora { border-left-color: var(--rna-crit); background: rgba(226,59,59,.04); }
+.op-fora-tag { display: none; color: var(--rna-crit); font-weight: 600; margin-left: 6px; }
+.op-exec-item.op-fora .op-fora-tag { display: inline; }
+.op-foto-thumb { height: 60px; border-radius: 8px; vertical-align: middle; }

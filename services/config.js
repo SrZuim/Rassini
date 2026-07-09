@@ -46,6 +46,13 @@ export const MODULES = [
   { id:'rotinas',       label:'Rotina Obrigatória',   short:'Rotina Obrig.',       page:'rotinas.html',       icon:'bi-list-check',        group:'Fluxo do Auditor', color:'yellow', desc:'Rotinas obrigatórias do dia (planilha 2026).' },
   { id:'checklist',     label:'Checklist Obrigatório',short:'Checklist',           page:'checklist.html',     icon:'bi-ui-checks',         group:'Fluxo do Auditor', color:'orange', desc:'Checklist por categoria (Grampo/Lâminas/Helicoidal).' },
   { id:'auditoria',     label:'Auditoria de Peças',   short:'Auditoria',           page:'auditoria.html',     icon:'bi-search',            group:'Fluxo do Auditor', color:'green',  desc:'Auditoria por peça com cálculo de tempo.' },
+  /* [GESTÃO OPERACIONAL] Novo fluxo do auditor — atividades configuráveis atribuídas automaticamente. */
+  { id:'op_plantao',    label:'Plantão',              short:'Plantão',             page:'op-plantao.html',    icon:'bi-broadcast',         group:'Operações',   color:'green',  desc:'Inicie o plantão e veja as atividades atribuídas a você.' },
+  { id:'op_rotinas',    label:'Minhas Rotinas',       short:'Minhas Rotinas',      page:'op-minhas-rotinas.html', icon:'bi-list-check',    group:'Operações',   color:'yellow', desc:'Execute as rotinas atribuídas a você.' },
+  { id:'op_checklists', label:'Meus Checklists',      short:'Meus Checklists',     page:'op-em-breve.html',   icon:'bi-ui-checks',         group:'Operações',   color:'orange', desc:'Checklists atribuídos (próxima fase).' },
+  { id:'op_auditorias', label:'Minhas Auditorias',    short:'Minhas Auditorias',   page:'op-em-breve.html',   icon:'bi-search',            group:'Operações',   color:'blue',   desc:'Auditorias atribuídas (próxima fase).' },
+  { id:'op_pendencias', label:'Pendências',           short:'Pendências',          page:'op-pendencias.html', icon:'bi-exclamation-circle',group:'Operações',   color:'red',    desc:'Suas pendências abertas.' },
+  { id:'op_historico',  label:'Histórico',            short:'Histórico',           page:'op-historico.html',  icon:'bi-clock-history',     group:'Operações',   color:'gray',   desc:'Histórico das suas atividades.' },
   { id:'diario',        label:'Diário de Bordo',      short:'Diário',              page:'diario.html',        icon:'bi-journal-text',      group:'Operação',    color:'gray',   desc:'Registro cronológico das atividades.' },
   { id:'auditorias',    label:'Auditorias de Processo',short:'Aud. Processo',      page:'auditorias.html',    icon:'bi-clipboard-data',    group:'Qualidade',   color:'blue',   desc:'Auditorias de processo, 5S e LPA.' },
   { id:'biblioteca',    label:'Biblioteca Técnica',   short:'Biblioteca',          page:'biblioteca.html',    icon:'bi-journal-richtext',  group:'Qualidade',   color:'blue',   desc:'Fichas técnicas das peças: medidas, tolerâncias, normas e documentos.' },
@@ -56,6 +63,8 @@ export const MODULES = [
   { id:'documentos',    label:'Documentos',           short:'Documentos',          page:'documentos.html',    icon:'bi-folder2-open',      group:'Gestão',      color:'gray',   desc:'Procedimentos, normas e instruções.' },
   { id:'treinamentos',  label:'Treinamentos',         short:'Treinamentos',        page:'treinamentos.html',  icon:'bi-mortarboard',       group:'Gestão',      color:'green',  desc:'Trilhas e capacitações da equipe.' },
   { id:'admin',         label:'Administração',        short:'Admin',               page:'admin.html',         icon:'bi-sliders',           group:'Gestão',      color:'red',    desc:'Cadastros editáveis: rotinas, checklist, peças e listas.' },
+  /* [GESTÃO OPERACIONAL] Cadastro configurável de atividades (rotinas/checklists/auditorias). */
+  { id:'gestao_op',     label:'Gestão Operacional',   short:'Gestão Op.',          page:'gestao-operacional.html', icon:'bi-diagram-3-fill', group:'Administração', color:'red', desc:'Cadastre rotinas, checklists, auditorias, categorias, atribuições e agenda — sem código.' },
   /* [MÓDULO USUÁRIOS] Administração de Usuários — cadastro, aprovação e gestão (só admin). */
   { id:'usuarios',      label:'Administração de Usuários', short:'Usuários',        page:'admin-usuarios.html',icon:'bi-people',            group:'Administração', color:'red', desc:'Solicitações de acesso, aprovação, cargos e bloqueios.' },
   { id:'perfil',        label:'Meu Perfil',           short:'Perfil',              page:'perfil.html',        icon:'bi-person-circle',     group:'Gestão',      color:'gray',   desc:'Seus dados, plantões e produtividade.' }
@@ -64,7 +73,7 @@ export const MODULES = [
 /* ----------------------------------------------------------------- RBAC ---
    Matriz de permissões por perfil → módulo → ações.
    '*' = todas as ações; [] = sem acesso. Ações: view, create, edit, delete, approve, export */
-const ALL = ['view','create','edit','delete','approve','export'];
+const ALL = ['view','create','edit','delete','approve','export','execute'];
 const RO  = ['view','export'];   // somente consulta (supervisor)
 export const RBAC = {
   /* Administrador: acesso completo a todos os módulos */
@@ -75,6 +84,7 @@ export const RBAC = {
     dashboard:RO, monitoramento:['view'], checkin:[],
     rotinas:['view'], diario:['view'], auditoria:RO, auditorias:RO,
     biblioteca:['view','create','edit','export'],
+    gestao_op:['view'], op_plantao:[], op_rotinas:[], op_checklists:[], op_auditorias:[], op_pendencias:['view'], op_historico:['view'],
     checklist:['view'], ocorrencias:RO, planos:['view','export'],
     powerbi:['view'], comunicados:['view'], documentos:['view','export'],
     treinamentos:['view'], admin:[], usuarios:[], perfil:['view','edit']
@@ -86,6 +96,7 @@ export const RBAC = {
     rotinas:['view','edit'], diario:['view','create','edit'],
     auditoria:['view','create','edit'], auditorias:[],
     biblioteca:['view','export'],
+    gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view'], op_auditorias:['view'], op_pendencias:['view','create'], op_historico:['view'],
     checklist:['view','create','edit'], ocorrencias:[], planos:[],
     powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },
