@@ -13,11 +13,8 @@ if (ctx) { USER = ctx.user; render(); }
 async function render() {
   const st = await estado(USER.id);
 
-  if (!st.plantao || !st.rotinaOk || !st.checklistOk) {
-    const faltam = !st.plantao ? ['checkin.html','Iniciar Plantão','Inicie o plantão para acessar a auditoria.']
-      : !st.rotinaOk ? ['rotinas.html','Ir para Rotina','Conclua a rotina obrigatória antes da auditoria.']
-      : ['checklist.html','Ir para Checklist','Conclua o checklist obrigatório para liberar a auditoria.'];
-    $('#rna-content').innerHTML = head(st) + bloqueio('Auditoria bloqueada', faltam[2], faltam[0], faltam[1]);
+  if (!st.plantao) {
+    $('#rna-content').innerHTML = head(st) + bloqueio('Inicie o plantão primeiro', 'A auditoria é liberada após o check-in do plantão.', 'checkin.html', 'Iniciar Plantão');
     return;
   }
 

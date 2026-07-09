@@ -1,8 +1,13 @@
 /* ==========================================================================
    RNA One — Fluxo do Auditor (máquina de estados)
-   Sequência obrigatória:
-     Plantão → Rotina Obrigatória → Checklist Obrigatório → Auditoria
-   O gating é derivado dos registros de execução (não há como pular etapas).
+   Regra de negócio:
+     1) Plantão é a etapa inicial obrigatória.
+     2) Com o plantão ativo, Rotina, Checklist e Auditoria ficam liberadas
+        simultaneamente — o auditor executa em qualquer ordem (sem bloqueio
+        sequencial entre elas).
+     3) Finalizar o plantão exige Rotina + Checklist concluídos.
+        A Auditoria fica liberada, mas não bloqueia o fechamento.
+   O gating é derivado dos registros de execução.
    ========================================================================== */
 import { db } from './db.js';
 
@@ -66,15 +71,17 @@ export async function checklistProgress(plantaoId, categoria) {
 /** Estado consolidado do fluxo para o usuário. */
 export async function estado(userId) {
   const plantao = await plantaoAtivo(userId);
-  if (!plantao) return { plantao:null, etapa:'plantao', rotinaOk:false, checklistOk:false, auditoriaLiberada:false };
+  if (!plantao) return { plantao:null, etapa:'plantao', rotinaOk:false, checklistOk:false, auditoriaLiberada:false, podeFinalizar:false };
   const rot = await rotinaProgress(plantao.id);
   const chk = await checklistProgress(plantao.id, plantao.categoria_checklist);
+  // Rotina e Checklist são independentes entre si — cada uma conclui sozinha.
   const rotinaOk = rot.completo;
-  const checklistOk = rotinaOk && chk.completo;
-  let etapa = 'rotina';
-  if (rotinaOk) etapa = 'checklist';
-  if (checklistOk) etapa = 'auditoria';
-  return { plantao, rot, chk, etapa, rotinaOk, checklistOk, auditoriaLiberada: checklistOk };
+  const checklistOk = chk.completo;
+  // Com o plantão ativo todas as atividades ficam liberadas (qualquer ordem).
+  const auditoriaLiberada = true;
+  // Fechamento do plantão exige rotina + checklist (auditoria não bloqueia).
+  const podeFinalizar = rotinaOk && checklistOk;
+  return { plantao, rot, chk, etapa:'atividades', rotinaOk, checklistOk, auditoriaLiberada, podeFinalizar };
 }
 
 /** Cálculo de tempo de auditoria + verificação de atraso. */

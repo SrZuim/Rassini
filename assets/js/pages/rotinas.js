@@ -66,8 +66,8 @@ async function render() {
           <div class="rna-progress mt-1"><span style="width:${st.rot.pct}%;background:${st.rotinaOk?'var(--rna-ok)':'var(--rna-yellow)'}"></span></div>
         </div>
         ${st.rotinaOk
-          ? `<a href="checklist.html" class="rna-btn rna-btn-primary rna-btn-lg"><i class="bi bi-arrow-right"></i> Liberar Checklist</a>`
-          : `<span class="rna-badge badge-warn"><i class="bi bi-lock"></i> Conclua tudo para liberar o checklist</span>`}
+          ? `<span class="rna-badge badge-ok"><i class="bi bi-check-lg"></i> Rotina concluída</span>`
+          : `<span class="rna-badge badge-warn"><i class="bi bi-hourglass-split"></i> Conclua todos os itens da rotina</span>`}
       </div>
     </div>
     ${secao('Itens obrigatórios do dia', grupos['Diário']||[], 'badge-crit')}
@@ -82,7 +82,7 @@ async function render() {
 function head(etapa, st) {
   return `<div class="rna-page-head"><div>
     <div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Rotina Obrigatória</div>
-    <h1>Rotina Obrigatória</h1><p>Itens da planilha de rotinas 2026 — conclua todos para avançar.</p></div></div>
+    <h1>Rotina Obrigatória</h1><p>Itens da planilha de rotinas 2026 — conclua todos para liberar o fechamento do plantão.</p></div></div>
     ${stepper(st, 'rotina')}`;
 }
 

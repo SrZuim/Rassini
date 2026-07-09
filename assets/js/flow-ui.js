@@ -2,10 +2,12 @@
    RNA One — UI compartilhada do Fluxo do Auditor (stepper + gating)
    ========================================================================== */
 
-/** Renderiza o stepper das 4 etapas. `current` = etapa atual; `st` = estado do fluxo. */
+/** Renderiza o stepper do fluxo. `current` = etapa atual; `st` = estado do fluxo.
+    Plantão é a etapa inicial obrigatória; Rotina, Checklist e Auditoria são
+    atividades liberadas em paralelo assim que o plantão estiver ativo. */
 export function stepper(st, current) {
   const steps = [
-    { id:'plantao',   n:1, label:'Plantão',   sub:'Iniciar turno',          href:'checkin.html' },
+    { id:'plantao',   n:1, label:'Plantão',   sub:'Etapa inicial',          href:'checkin.html' },
     { id:'rotina',    n:2, label:'Rotina',    sub:'Obrigatória do dia',     href:'rotinas.html' },
     { id:'checklist', n:3, label:'Checklist', sub:'Por categoria',          href:'checklist.html' },
     { id:'auditoria', n:4, label:'Auditoria', sub:'Por peça',               href:'auditoria.html' }
@@ -16,11 +18,13 @@ export function stepper(st, current) {
     checklist:Boolean(st.checklistOk),
     auditoria:false
   };
+  // Com o plantão ativo, as três atividades ficam liberadas juntas (sem cadeado sequencial).
+  const ativo = Boolean(st.plantao);
   const unlocked = {
     plantao:true,
-    rotina:Boolean(st.plantao),
-    checklist:Boolean(st.rotinaOk),
-    auditoria:Boolean(st.auditoriaLiberada)
+    rotina:ativo,
+    checklist:ativo,
+    auditoria:ativo
   };
   return `<div class="rna-stepper mb-3">${steps.map(s => {
     const cls = [done[s.id] ? 'done' : '', s.id === current ? 'active' : '', !unlocked[s.id] ? 'locked' : ''].join(' ').trim();

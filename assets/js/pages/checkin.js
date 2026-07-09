@@ -33,7 +33,7 @@ async function render(user) {
               <div class="col-md-6"><label class="form-label">Dispositivo</label>${sel('f-disp', ['Tablet RNA-T07','Coletor RNA-C12','Desktop SUP-02','Smartphone corporativo'])}</div>
               <div class="col-md-6"><label class="form-label">Status do plantão</label><input class="form-control" value="Em andamento" disabled></div>
               <div class="col-12 pt-2">
-                <button type="submit" class="rna-btn rna-btn-primary rna-btn-xl"><i class="bi bi-play-fill"></i> Iniciar Plantão e liberar Rotina</button>
+                <button type="submit" class="rna-btn rna-btn-primary rna-btn-xl"><i class="bi bi-play-fill"></i> Iniciar Plantão e liberar atividades</button>
               </div>
             </form>
           </div></div>
@@ -44,7 +44,7 @@ async function render(user) {
           <div class="rna-avatar mx-auto mb-2" style="width:54px;height:54px;font-size:18px">${initials(user.nome)}</div>
           <h4 style="font-size:15px;margin:0">${user.nome}</h4><small class="text-muted-2">${user.matricula} · ${user.area}</small>
           <div class="divider"></div>
-          <p class="text-muted-2 text-start" style="font-size:12.5px;margin:0">Ao iniciar o plantão, o sistema libera a <b>Rotina Obrigatória</b> do dia. As etapas seguem ordem fixa e não podem ser puladas.</p>
+          <p class="text-muted-2 text-start" style="font-size:12.5px;margin:0">Ao iniciar o plantão, o sistema libera <b>Rotina Obrigatória</b>, <b>Checklist</b> e <b>Auditoria</b> ao mesmo tempo — você faz na ordem que quiser. Para <b>finalizar o plantão</b>, conclua a Rotina e o Checklist.</p>
         </div></div>
       </div>
     </div>`;
@@ -57,27 +57,29 @@ async function render(user) {
         <div class="flex-fill"><h3 style="margin:0;font-size:16px">Plantão em andamento</h3>
           <small class="text-muted-2">${p.turno} · iniciado ${p.hora} · ${p.planta||''}</small></div>
         <span class="rna-badge badge-ok"><i class="bi bi-circle-fill"></i> Aberto</span>
-        <button class="rna-btn rna-btn-dark" id="btn-encerrar"><i class="bi bi-stop-fill"></i> Encerrar</button>
+        <button class="rna-btn rna-btn-dark" id="btn-encerrar" ${st.podeFinalizar?'':'disabled title="Conclua a Rotina e o Checklist para finalizar"'}><i class="bi bi-stop-fill"></i> Finalizar Plantão</button>
       </div>
     </div>
+    <div class="rna-card mb-3" style="border-left:4px solid var(--rna-yellow)"><div class="rna-card__body">
+      <p class="text-muted-2" style="margin:0;font-size:13px"><i class="bi bi-unlock-fill" style="color:var(--rna-ok)"></i> Rotina, Checklist e Auditoria estão <b>liberados</b> — execute em qualquer ordem. A Auditoria não é obrigatória para finalizar o plantão.</p>
+    </div></div>
     <div class="row g-3 mb-3">
       ${prog('Rotina Obrigatória','bi-list-check', st.rot.pct, `${st.rot.concluidas}/${st.rot.total} itens`, st.rotinaOk, 'rotinas.html')}
       ${prog('Checklist Obrigatório','bi-ui-checks', st.chk.pct, p.categoria_checklist?`${st.chk.respondidos}/${st.chk.total} · ${p.categoria_checklist}`:'Escolher categoria', st.checklistOk, 'checklist.html')}
-      ${prog('Auditoria de Peças','bi-search', st.auditoriaLiberada?100:0, st.auditoriaLiberada?'Liberada':'Bloqueada', false, st.auditoriaLiberada?'auditoria.html':'#')}
+      ${prog('Auditoria de Peças','bi-search', 100, 'Liberada (opcional)', false, 'auditoria.html')}
     </div>
     <div class="rna-card"><div class="rna-card__body text-center" style="padding:26px">
-      ${st.auditoriaLiberada
-        ? `<i class="bi bi-unlock-fill" style="font-size:40px;color:var(--rna-ok)"></i><h3 style="margin:12px 0 4px">Tudo pronto!</h3><p class="text-muted-2">Rotina e checklist concluídos. A página de Auditoria está liberada.</p><a href="auditoria.html" class="rna-btn rna-btn-primary rna-btn-lg"><i class="bi bi-search"></i> Ir para Auditoria</a>`
-        : !st.rotinaOk
-          ? `<i class="bi bi-arrow-right-circle" style="font-size:40px;color:var(--rna-yellow-600)"></i><h3 style="margin:12px 0 4px">Próxima etapa: Rotina</h3><p class="text-muted-2">Conclua a rotina obrigatória do dia para liberar o checklist.</p><a href="rotinas.html" class="rna-btn rna-btn-primary rna-btn-lg"><i class="bi bi-list-check"></i> Realizar Rotina</a>`
-          : `<i class="bi bi-arrow-right-circle" style="font-size:40px;color:var(--rna-yellow-600)"></i><h3 style="margin:12px 0 4px">Próxima etapa: Checklist</h3><p class="text-muted-2">Conclua o checklist obrigatório para liberar a auditoria.</p><a href="checklist.html" class="rna-btn rna-btn-primary rna-btn-lg"><i class="bi bi-ui-checks"></i> Realizar Checklist</a>`}
+      ${st.podeFinalizar
+        ? `<i class="bi bi-check-circle-fill" style="font-size:40px;color:var(--rna-ok)"></i><h3 style="margin:12px 0 4px">Pronto para finalizar</h3><p class="text-muted-2">Rotina e Checklist concluídos. Você já pode finalizar o plantão.</p><button class="rna-btn rna-btn-dark rna-btn-lg" id="btn-finalizar-2"><i class="bi bi-stop-fill"></i> Finalizar Plantão</button>`
+        : `<i class="bi bi-hourglass-split" style="font-size:40px;color:var(--rna-yellow-600)"></i><h3 style="margin:12px 0 4px">Conclua a Rotina e o Checklist</h3><p class="text-muted-2">Para finalizar o plantão, conclua a Rotina Obrigatória${st.rotinaOk?' <i class="bi bi-check-lg" style="color:var(--rna-ok)"></i>':''} e o Checklist${st.checklistOk?' <i class="bi bi-check-lg" style="color:var(--rna-ok)"></i>':''}. A Auditoria fica liberada, mas não é obrigatória.</p>
+           <div class="d-flex gap-2 justify-content-center flex-wrap">${st.rotinaOk?'':'<a href="rotinas.html" class="rna-btn rna-btn-primary"><i class="bi bi-list-check"></i> Rotina</a>'}${st.checklistOk?'':'<a href="checklist.html" class="rna-btn rna-btn-primary"><i class="bi bi-ui-checks"></i> Checklist</a>'}<a href="auditoria.html" class="rna-btn rna-btn-ghost"><i class="bi bi-search"></i> Auditoria</a></div>`}
     </div></div>`;
   }
 
   $('#rna-content').innerHTML = `
     <div class="rna-page-head"><div>
       <div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Fluxo do Auditor</div>
-      <h1>Check-in do Plantão</h1><p>Plantão → Rotina → Checklist → Auditoria</p></div>
+      <h1>Check-in do Plantão</h1><p>Inicie o plantão para liberar Rotina, Checklist e Auditoria em paralelo</p></div>
     </div>
     ${stepper(st, 'plantao')}
     ${body}`;
@@ -89,18 +91,24 @@ async function render(user) {
       dispositivo:$('#f-disp').value, categoria_checklist:null, status:'Aberto', inicio_iso:nowISO() };
     await db.insert('plantoes', reg);
     await db.log({ usuario:user.nome, acao:`Iniciou plantão (${reg.turno})`, entidade:'plantao', antes:'—', depois:'Aberto' });
-    toast('Plantão iniciado! Rotina obrigatória liberada.', { type:'ok', title:'Check-in' });
+    toast('Plantão iniciado! Rotina, Checklist e Auditoria liberados.', { type:'ok', title:'Check-in' });
     render(user);
   });
 
-  $('#btn-encerrar')?.addEventListener('click', async () => {
+  const finalizarPlantao = async () => {
+    if (!st.podeFinalizar) {
+      toast('Para finalizar o plantão, conclua a Rotina Obrigatória e o Checklist.', { type:'warn', title:'Plantão em aberto' });
+      return;
+    }
     const { confirmDialog } = await import('../ui.js');
-    confirmDialog('Encerrar o plantão atual?', async () => {
+    confirmDialog('Finalizar o plantão atual? Rotina e Checklist estão concluídos.', async () => {
       await db.update('plantoes', st.plantao.id, { status:'Encerrado', fim_iso:nowISO() });
-      await db.log({ usuario:user.nome, acao:'Encerrou plantão', entidade:'plantao', antes:'Aberto', depois:'Encerrado' });
-      toast('Plantão encerrado.', { type:'ok' }); render(user);
-    }, { title:'Encerrar plantão', okLabel:'Encerrar', danger:true });
-  });
+      await db.log({ usuario:user.nome, acao:'Finalizou plantão', entidade:'plantao', antes:'Aberto', depois:'Encerrado' });
+      toast('Plantão finalizado.', { type:'ok' }); render(user);
+    }, { title:'Finalizar plantão', okLabel:'Finalizar', danger:true });
+  };
+  $('#btn-encerrar')?.addEventListener('click', finalizarPlantao);
+  $('#btn-finalizar-2')?.addEventListener('click', finalizarPlantao);
 }
 
 const sel = (id, opts) => `<select class="form-select" id="${id}">${opts.map(o=>`<option>${o}</option>`).join('')}</select>`;

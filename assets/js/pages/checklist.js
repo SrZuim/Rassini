@@ -17,10 +17,6 @@ async function render() {
     $('#rna-content').innerHTML = head(st) + bloqueio('Inicie o plantão primeiro', 'O checklist é liberado após o check-in do plantão.', 'checkin.html', 'Iniciar Plantão');
     return;
   }
-  if (!st.rotinaOk) {
-    $('#rna-content').innerHTML = head(st) + bloqueio('Conclua a rotina obrigatória', 'Você precisa concluir todos os itens da rotina do dia antes do checklist.', 'rotinas.html', 'Ir para Rotina');
-    return;
-  }
 
   const p = st.plantao;
   if (!p.categoria_checklist) { renderEscolha(st); return; }
@@ -67,8 +63,8 @@ async function render() {
           <div class="rna-progress mt-1"><span style="width:${st.chk.pct}%;background:${st.checklistOk?'var(--rna-ok)':'var(--rna-yellow)'}"></span></div>
         </div>
         ${st.checklistOk
-          ? `<a href="auditoria.html" class="rna-btn rna-btn-primary rna-btn-lg"><i class="bi bi-search"></i> Liberar Auditoria</a>`
-          : `<span class="rna-badge badge-warn"><i class="bi bi-lock"></i> Responda todos os itens</span>`}
+          ? `<span class="rna-badge badge-ok"><i class="bi bi-check-lg"></i> Checklist concluído</span>`
+          : `<span class="rna-badge badge-warn"><i class="bi bi-hourglass-split"></i> Responda todos os itens</span>`}
       </div>
     </div>
     ${secoes}`;
