@@ -8,6 +8,7 @@ import { getSupabase } from './supabaseClient.js';
 import { SEED } from './seed.js';
 import { CATALOGOS } from './auditoria-data.js';
 import { FUNCIONARIOS_DEFAULT } from './funcionarios.js';
+import { BIBLIOTECA } from './biblioteca-data.js';
 
 const LS_KEY = 'rna_demo_db_v2';
 
@@ -17,6 +18,7 @@ function baseSeed() {
   return {
     ...structuredClone(SEED),
     ...structuredClone(CATALOGOS),
+    ...structuredClone(BIBLIOTECA),
     funcionarios: structuredClone(FUNCIONARIOS_DEFAULT),
     rotina_exec: [],
     checklist_exec: [],

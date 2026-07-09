@@ -48,6 +48,7 @@ export const MODULES = [
   { id:'auditoria',     label:'Auditoria de Peças',   short:'Auditoria',           page:'auditoria.html',     icon:'bi-search',            group:'Fluxo do Auditor', color:'green',  desc:'Auditoria por peça com cálculo de tempo.' },
   { id:'diario',        label:'Diário de Bordo',      short:'Diário',              page:'diario.html',        icon:'bi-journal-text',      group:'Operação',    color:'gray',   desc:'Registro cronológico das atividades.' },
   { id:'auditorias',    label:'Auditorias de Processo',short:'Aud. Processo',      page:'auditorias.html',    icon:'bi-clipboard-data',    group:'Qualidade',   color:'blue',   desc:'Auditorias de processo, 5S e LPA.' },
+  { id:'biblioteca',    label:'Biblioteca Técnica',   short:'Biblioteca',          page:'biblioteca.html',    icon:'bi-journal-richtext',  group:'Qualidade',   color:'blue',   desc:'Fichas técnicas das peças: medidas, tolerâncias, normas e documentos.' },
   { id:'ocorrencias',   label:'Não Conformidades',    short:'Ocorrências',         page:'ocorrencias.html',   icon:'bi-exclamation-octagon',group:'Qualidade',  color:'red',    desc:'Abertura e tratativa de não conformidades.' },
   { id:'planos',        label:'Plano de Ação',        short:'Planos',              page:'planos-acao.html',   icon:'bi-diagram-3',         group:'Qualidade',   color:'yellow', desc:'Ações corretivas 5W2H vinculadas a NCs.' },
   { id:'powerbi',       label:'Power BI',             short:'Power BI',            page:'dashboard.html#bi',  icon:'bi-bar-chart-line',    group:'Gestão',      color:'orange', desc:'Relatórios corporativos embarcados.' },
@@ -73,6 +74,7 @@ export const RBAC = {
   supervisor: {
     dashboard:RO, monitoramento:['view'], checkin:[],
     rotinas:['view'], diario:['view'], auditoria:RO, auditorias:RO,
+    biblioteca:['view','create','edit','export'],
     checklist:['view'], ocorrencias:RO, planos:['view','export'],
     powerbi:['view'], comunicados:['view'], documentos:['view','export'],
     treinamentos:['view'], admin:[], usuarios:[], perfil:['view','edit']
@@ -83,6 +85,7 @@ export const RBAC = {
     dashboard:[], monitoramento:[], checkin:['view','create'],
     rotinas:['view','edit'], diario:['view','create','edit'],
     auditoria:['view','create','edit'], auditorias:[],
+    biblioteca:['view','export'],
     checklist:['view','create','edit'], ocorrencias:[], planos:[],
     powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },
@@ -90,7 +93,7 @@ export const RBAC = {
   /* Visitante: somente a tela institucional (home.html). Sem acesso à plataforma. */
   visitante: {
     dashboard:[], monitoramento:[], checkin:[], rotinas:[], diario:[], auditoria:[],
-    auditorias:[], checklist:[], ocorrencias:[], planos:[], powerbi:[], comunicados:[],
+    auditorias:[], biblioteca:[], checklist:[], ocorrencias:[], planos:[], powerbi:[], comunicados:[],
     documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view']
   }
 };

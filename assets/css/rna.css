@@ -396,3 +396,119 @@ body.kiosk .rna-content { padding: 26px; }
 .rna-skeleton { background: linear-gradient(90deg, var(--rna-gray-100) 25%, #eef1f4 37%, var(--rna-gray-100) 63%);
   background-size: 400% 100%; animation: rna-shimmer 1.3s ease infinite; }
 @keyframes rna-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+
+/* ==========================================================================
+   Biblioteca Técnica — busca, catálogo, ficha, editor
+   Reutiliza tokens e classes existentes; identidade visual inalterada.
+   ========================================================================== */
+
+/* Busca estilo Google */
+.bib-search-wrap { margin-bottom: 14px; }
+.bib-search { position: relative; max-width: 760px; margin: 0 auto; }
+.bib-search > i.bi-search { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); color: var(--rna-gray-300); font-size: 18px; }
+.bib-search input { width: 100%; height: 54px; border: 1px solid var(--rna-border); border-radius: 30px;
+  padding: 0 52px 0 50px; font-size: 15.5px; background: var(--rna-surface); box-shadow: var(--rna-shadow); transition: box-shadow .18s, border-color .18s; }
+.bib-search input:focus { outline: none; border-color: var(--rna-yellow); box-shadow: 0 0 0 4px var(--rna-yellow-soft); }
+.bib-search__clear { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); border: 0; background: var(--rna-gray-100);
+  width: 30px; height: 30px; border-radius: 50%; color: var(--rna-gray); cursor: pointer; }
+.bib-search__clear:hover { background: var(--rna-gray-200); }
+.bib-suggest { position: absolute; top: 60px; left: 0; right: 0; background: var(--rna-surface); border: 1px solid var(--rna-border);
+  border-radius: 16px; box-shadow: var(--rna-shadow-lg); z-index: 1200; overflow: hidden; }
+.bib-suggest__item { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; background: transparent;
+  padding: 10px 16px; cursor: pointer; text-align: left; border-bottom: 1px solid #eef1f4; }
+.bib-suggest__item:last-child { border-bottom: 0; }
+.bib-suggest__item:hover { background: var(--rna-yellow-soft); }
+.bib-suggest__item img { width: 40px; height: 30px; object-fit: cover; border-radius: 6px; background: var(--rna-gray-100); }
+.bib-suggest__item span { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.bib-suggest__item b { font-size: 13.5px; }
+.bib-suggest__item small { color: var(--rna-gray); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bib-suggest__item i { color: var(--rna-gray-300); font-size: 12px; }
+.bib-suggest mark { background: var(--rna-yellow); color: var(--rna-graphite); border-radius: 3px; padding: 0 1px; }
+
+/* Filtros */
+.bib-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+.bib-arch { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--rna-gray); cursor: pointer; margin-left: auto; }
+
+/* Grid de peças */
+.bib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px; }
+.bib-card { position: relative; background: var(--rna-surface); border: 1px solid var(--rna-border); border-radius: 14px;
+  overflow: hidden; cursor: pointer; transition: transform .14s, box-shadow .14s, border-color .14s; }
+.bib-card:hover { transform: translateY(-3px); box-shadow: var(--rna-shadow-lg); border-color: var(--rna-gray-200); }
+.bib-card__img { height: 132px; background: var(--rna-gray-100); overflow: hidden; }
+.bib-card__img img { width: 100%; height: 100%; object-fit: cover; }
+.bib-card__body { padding: 12px 14px 14px; }
+.bib-card__code { font-size: 11.5px; font-weight: 700; letter-spacing: .4px; color: var(--rna-yellow-600); }
+.bib-card__name { display: block; font-size: 14.5px; margin: 1px 0 2px; line-height: 1.25; }
+.bib-card__fav { position: absolute; top: 8px; right: 8px; z-index: 2; width: 34px; height: 34px; border-radius: 50%;
+  border: 0; background: rgba(255,255,255,.92); color: var(--rna-gray-300); box-shadow: var(--rna-shadow); cursor: pointer; }
+.bib-card__fav:hover, .bib-card__fav.is-fav { color: var(--rna-yellow); }
+
+/* Listas e timeline (dashboard) */
+.bib-list__item { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-bottom: 1px solid #eef1f4; cursor: pointer; }
+.bib-list__item:last-child { border-bottom: 0; }
+.bib-list__item:hover { background: var(--rna-gray-100); }
+.bib-list__item img { width: 46px; height: 34px; object-fit: cover; border-radius: 7px; background: var(--rna-gray-100); }
+.bib-timeline { padding: 6px 16px; }
+.bib-timeline__item { display: flex; gap: 12px; padding: 9px 0; position: relative; }
+.bib-timeline__item:not(:last-child)::before { content: ''; position: absolute; left: 5px; top: 20px; bottom: -9px; width: 2px; background: var(--rna-border); }
+.bib-timeline__dot { width: 12px; height: 12px; border-radius: 50%; background: var(--rna-yellow); margin-top: 4px; flex-shrink: 0; box-shadow: 0 0 0 3px var(--rna-yellow-soft); }
+
+/* Ficha técnica */
+.bib-ficha__head { display: grid; grid-template-columns: 320px 1fr auto; gap: 22px; background: var(--rna-surface);
+  border: 1px solid var(--rna-border); border-radius: 16px; padding: 20px; margin-bottom: 16px; }
+.bib-ficha__media img#bib-main-img { width: 100%; height: 220px; object-fit: cover; border-radius: 12px; background: var(--rna-gray-100); }
+.bib-ficha__gallery { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.bib-ficha__gallery img { width: 56px; height: 44px; object-fit: cover; border-radius: 7px; cursor: pointer; border: 2px solid transparent; }
+.bib-ficha__gallery img.active { border-color: var(--rna-yellow); }
+.bib-ficha__code { font-size: 13px; font-weight: 800; letter-spacing: .5px; color: var(--rna-yellow-600); }
+.bib-ficha__info h2 { font-size: 22px; margin: 8px 0 4px; }
+.bib-ficha__meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.bib-meta-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--rna-gray-100); border-radius: 20px;
+  padding: 4px 12px; font-size: 12.5px; color: var(--rna-graphite); }
+.bib-meta-chip i { color: var(--rna-yellow-600); }
+.bib-ficha__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.bib-ficha__qr { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.bib-ficha__qr #bib-qr { padding: 8px; background: #fff; border: 1px solid var(--rna-border); border-radius: 12px; line-height: 0; }
+.bib-ficha__qr small { max-width: 130px; }
+
+/* Abas da ficha */
+.bib-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; border-bottom: 1px solid var(--rna-border); padding-bottom: 2px; }
+.bib-tab { border: 0; background: transparent; padding: 9px 14px; border-radius: 9px 9px 0 0; font-size: 13px; font-weight: 600;
+  color: var(--rna-gray); cursor: pointer; display: inline-flex; align-items: center; gap: 7px; }
+.bib-tab:hover { color: var(--rna-graphite); background: var(--rna-gray-100); }
+.bib-tab.active { color: var(--rna-graphite); box-shadow: inset 0 -3px 0 var(--rna-yellow); }
+.bib-tab .rna-badge { padding: 0 6px; }
+
+/* Tabela chave/valor */
+.bib-kv th { width: 210px; text-align: left; color: var(--rna-gray); font-weight: 600; background: var(--rna-gray-100); }
+.bib-kv td, .bib-kv th { padding: 10px 16px; border-bottom: 1px solid #eef1f4; vertical-align: top; }
+
+/* Métrica fora de padrão */
+.bib-metric--fora { background: rgba(226,59,59,.06); }
+.bib-metric--fora td:first-child { box-shadow: inset 3px 0 0 var(--rna-crit); }
+.bib-alert { display: flex; align-items: center; gap: 9px; background: #fdf2f2; border: 1px solid rgba(226,59,59,.3);
+  color: #b3261e; border-radius: 12px; padding: 11px 15px; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.bib-point-foto { max-width: 160px; border-radius: 8px; }
+
+/* Editor */
+.bib-edit-table th, .bib-edit-table td { padding: 6px 8px; vertical-align: middle; }
+.bib-edit-table input, .bib-edit-table select { min-width: 90px; }
+.bib-doc-drop { border: 1.5px dashed var(--rna-border); border-radius: 12px; padding: 18px; text-align: center;
+  color: var(--rna-gray); cursor: pointer; font-size: 13px; transition: border-color .15s, background .15s; }
+.bib-doc-drop:hover { border-color: var(--rna-yellow); background: var(--rna-yellow-soft); }
+.bib-doc-drop i { font-size: 22px; display: block; margin-bottom: 4px; color: var(--rna-yellow-600); }
+
+/* Responsivo */
+@media (max-width: 900px) {
+  .bib-ficha__head { grid-template-columns: 1fr; }
+  .bib-ficha__qr { flex-direction: row; justify-content: center; }
+}
+
+/* Impressão da ficha */
+@media print {
+  .no-print, .rna-sidebar, .rna-topbar, .rna-sidebar__backdrop { display: none !important; }
+  .rna-main, .rna-content { margin: 0 !important; padding: 0 !important; }
+  .bib-ficha__head { grid-template-columns: 240px 1fr; border: 0; }
+  .bib-tabpane, .bib-ficha { break-inside: avoid; }
+  body { background: #fff; }
+}
