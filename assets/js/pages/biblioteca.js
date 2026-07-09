@@ -18,9 +18,19 @@ const state = { view: 'dashboard', q: '', filtros: {}, incluirArquivadas: false,
 const IMG = DATA.BIB_IMG_PLACEHOLDER;
 const FILTROS_DEF = [
   ['cliente', 'Cliente', 'bib_clientes'], ['planta', 'Planta', 'bib_plantas'],
-  ['familia', 'Família', 'bib_familias'], ['categoria', 'Categoria', 'bib_categorias'],
-  ['processo', 'Processo', 'bib_processos'], ['tipo', 'Tipo', 'bib_tipos']
+  ['familia', 'Família', 'bib_familias'], ['quadrante', 'Quadrante', 'bib_quadrantes']
 ];
+
+/* Catálogos de especificação (Característica / Equipamento / Quem Mede / Quadrante)
+   carregados sob demanda para a ficha e o editor. */
+let CAT = { car: [], eq: [], qm: [], quad: [] };
+let MAP = { car: {}, eq: {}, qm: {} };
+async function loadCatalogos() {
+  const c = await BIB.catalogosEspec();
+  CAT.car = c.car; CAT.eq = c.eq; CAT.qm = c.qm;
+  CAT.quad = (await db.list('bib_quadrantes').catch(() => [])).filter(x => x.ativo !== false).sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+  MAP.car = c.carMap; MAP.eq = c.eqMap; MAP.qm = c.qmMap;
+}
 
 const ctx = await mountShell();
 if (ctx) {
@@ -62,6 +72,7 @@ function pageHead() {
 }
 
 function mount(html) {
+  closeCombo();   // remove qualquer painel de combobox órfão ao trocar de view
   $('#rna-content').innerHTML = pageHead() + html;
   $('#bib-nova')?.addEventListener('click', () => abrirEditor(null));
   $$('[data-nav]').forEach(b => b.addEventListener('click', () => { state.view = b.dataset.nav; state.pecaId = null; render(); }));
@@ -222,15 +233,16 @@ function cardPeca(p, fav) {
 async function renderFicha() {
   const f = await BIB.ficha(state.pecaId);
   if (!f) { state.view = 'catalogo'; toast('Peça não encontrada.', { type: 'warn' }); return render(); }
+  await loadCatalogos();
   BIB.registrarRecente(USER.id, f.peca.id);
   const p = f.peca;
   const fav = await BIB.ehFavorito(USER.id, p.id);
   const alertas = f.metricas.filter(BIB.foraDePadrao).length;
+  if (['metricas', 'material'].includes(state.tab)) state.tab = 'especificacoes';
 
   const tabs = [
     ['geral', 'bi-info-circle', 'Geral'],
-    ['especificacoes', 'bi-file-earmark-text', 'Especificações'],
-    ['metricas', 'bi-rulers', `Métricas${alertas ? ` <span class="rna-badge badge-crit">${alertas}</span>` : ''}`],
+    ['especificacoes', 'bi-rulers', `Especificações${alertas ? ` <span class="rna-badge badge-crit">${alertas}</span>` : ''}`],
     ['pontos', 'bi-crosshair', 'Pontos de Inspeção'],
     ['documentos', 'bi-folder2-open', 'Documentos'],
     ['historico', 'bi-activity', 'Histórico'],
@@ -251,11 +263,10 @@ async function renderFicha() {
             <span class="rna-badge badge-na">Rev ${String(p.revisao || 1).padStart(2, '0')}</span>
           </div>
           <h2>${p.nome}</h2>
-          <p class="text-muted-2">${p.descricao || ''}</p>
           <div class="bib-ficha__meta">
             ${metaChip('bi-buildings', p.cliente)} ${metaChip('bi-diagram-2', p.familia)}
-            ${metaChip('bi-geo-alt', p.planta)} ${metaChip('bi-gear-wide-connected', p.processo)}
-            ${metaChip('bi-person', p.responsavel)}
+            ${metaChip('bi-geo-alt', p.planta)} ${metaChip('bi-grid-3x3-gap', p.quadrante)}
+            ${metaChip('bi-file-earmark-ruled', p.numero_ad)}
           </div>
           <div class="bib-ficha__actions no-print">
             <button class="rna-btn ${fav ? 'rna-btn-primary' : 'rna-btn-ghost'}" id="bib-fav"><i class="bi ${fav ? 'bi-star-fill' : 'bi-star'}"></i> ${fav ? 'Favoritada' : 'Favoritar'}</button>
@@ -300,26 +311,28 @@ async function renderFicha() {
 function tabPane(tab, f) {
   const p = f.peca;
   if (tab === 'geral') return cardTabela([
-    ['Código', p.codigo], ['Nome', p.nome], ['Descrição', p.descricao], ['Cliente', p.cliente],
-    ['Família', p.familia], ['Linha', p.linha], ['Processo', p.processo], ['Tipo', p.tipo],
-    ['Aplicação', p.aplicacao], ['Categoria', p.categoria], ['Peso', p.peso], ['Planta', p.planta],
-    ['Fornecedor', p.fornecedor], ['Responsável', p.responsavel], ['Observações', p.observacoes]
+    ['Código', p.codigo], ['Nome', p.nome], ['Cliente', p.cliente], ['Família', p.familia],
+    ['Quadrante', p.quadrante], ['Planta', p.planta],
+    ['Revisão do Desenho', p.revisao_desenho], ['Data da Revisão do Desenho', fmtDate(p.data_revisao_desenho)],
+    ['Número da AD', p.numero_ad],
+    ['Material', p.material], ['Acabamento', p.acabamento], ['Cor', p.cor], ['Peso', p.peso],
+    ['Norma', p.norma], ['Especificação', p.especificacao],
+    ['Revisão atual', `Rev ${String(p.revisao || 1).padStart(2, '0')}`],
+    ['Criada em', fmtDate(p.created_at)], ['Atualizada em', fmtDate(p.updated_at)],
+    ['Observações', p.observacoes]
   ]);
-  if (tab === 'especificacoes') return cardTabela([
-    ['Material', p.material], ['Acabamento', p.acabamento], ['Cor', p.cor], ['Norma', p.norma],
-    ['Especificação', p.especificacao], ['Revisão atual', `Rev ${String(p.revisao || 1).padStart(2, '0')}`],
-    ['Data da revisão', fmtDate(p.data_revisao)], ['Criada em', fmtDate(p.created_at)], ['Atualizada em', fmtDate(p.updated_at)]
-  ]);
-  if (tab === 'metricas') {
-    if (!f.metricas.length) return emptyState('Nenhuma métrica cadastrada.');
+  if (tab === 'especificacoes') {
+    if (!f.metricas.length) return emptyState('Nenhuma especificação cadastrada.');
     const alertas = f.metricas.filter(BIB.foraDePadrao).length;
-    return `${alertas ? `<div class="bib-alert"><i class="bi bi-exclamation-triangle-fill"></i> ${alertas} métrica(s) com valor nominal fora da faixa de tolerância.</div>` : ''}
+    return `${alertas ? `<div class="bib-alert"><i class="bi bi-exclamation-triangle-fill"></i> ${alertas} especificação(ões) com valor nominal fora da faixa de tolerância.</div>` : ''}
     <div class="rna-card"><div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table"><thead><tr>
-      <th>Medida</th><th>Nominal</th><th>Tol. mín</th><th>Tol. máx</th><th>Un.</th><th>Método</th><th>Equipamento</th><th>Period.</th></tr></thead><tbody>
+      <th>Cota</th><th>Característica</th><th>Referência</th><th>Nominal</th><th>Tol. mín</th><th>Tol. máx</th><th>Un.</th><th>Equipamento de Medição</th><th>Quem Mede</th><th>Observação</th></tr></thead><tbody>
       ${f.metricas.map(m => { const fora = BIB.foraDePadrao(m); return `<tr class="${fora ? 'bib-metric--fora' : ''}">
-        <td class="cell-strong">${m.nome}${fora ? ' <i class="bi bi-exclamation-triangle-fill text-danger" title="Fora do padrão"></i>' : ''}</td>
+        <td class="cell-strong">${fmtVal(m.cota)}</td>
+        <td class="cell-strong">${MAP.car[m.caracteristica_id] || '—'}${fora ? ' <i class="bi bi-exclamation-triangle-fill text-danger" title="Fora do padrão"></i>' : ''}</td>
+        <td class="cell-sub">${m.referencia || '—'}</td>
         <td>${fmtVal(m.nominal)}</td><td>${fmtVal(m.tol_min)}</td><td>${fmtVal(m.tol_max)}</td><td>${m.unidade || '—'}</td>
-        <td class="cell-sub">${m.metodo || '—'}</td><td class="cell-sub">${m.equipamento || '—'}</td><td class="cell-sub">${m.periodicidade || '—'}</td></tr>`; }).join('')}
+        <td class="cell-sub">${MAP.eq[m.equipamento_id] || '—'}</td><td class="cell-sub">${MAP.qm[m.quem_mede_id] || '—'}</td><td class="cell-sub">${m.observacao || '—'}</td></tr>`; }).join('')}
     </tbody></table></div></div>`;
   }
   if (tab === 'pontos') {
@@ -391,14 +404,23 @@ async function renderEditor() {
   let p = { status: 'Em revisão', revisao: 1, ativo: true, galeria: [] };
   let f = null;
   if (!isNew) { f = await BIB.ficha(state.pecaId); if (!f) { state.view = 'catalogo'; return render(); } p = f.peca; }
-  edMetricas = f ? f.metricas.map(clone) : [];
+  await loadCatalogos();
+  // enriquece especificações com nomes resolvidos (para os combos)
+  edMetricas = f ? f.metricas.map(m => ({
+    cota: m.cota ?? '', caracteristica_id: m.caracteristica_id || null, caracteristica_nome: MAP.car[m.caracteristica_id] || '',
+    referencia: m.referencia || '', nominal: m.nominal ?? '', tol_min: m.tol_min ?? '', tol_max: m.tol_max ?? '', unidade: m.unidade || '',
+    equipamento_id: m.equipamento_id || null, equipamento_nome: MAP.eq[m.equipamento_id] || '',
+    quem_mede_id: m.quem_mede_id || null, quem_mede_nome: MAP.qm[m.quem_mede_id] || '', observacao: m.observacao || ''
+  })) : [];
   edPontos = f ? f.pontos.map(clone) : [];
   edDocsNovos = [];
 
-  const [cli, pla, fam, cat, pro, tip] = await Promise.all(['bib_clientes', 'bib_plantas', 'bib_familias', 'bib_categorias', 'bib_processos', 'bib_tipos'].map(t => db.list(t)));
+  const [cli, pla, fam] = await Promise.all(['bib_clientes', 'bib_plantas', 'bib_familias'].map(t => db.list(t)));
   const opt = (arr, val) => `<option value="">—</option>` + arr.filter(o => o.ativo !== false).map(o => `<option ${o.nome === val ? 'selected' : ''}>${o.nome}</option>`).join('');
-  const inp = (campo, label, val, type = 'text') => `<div class="col-md-4"><label class="form-label">${label}</label><input class="form-control" data-p="${campo}" type="${type}" value="${escAttr(val)}"></div>`;
+  const inp = (campo, label, val, type = 'text', req = false) => `<div class="col-md-4"><label class="form-label">${label}${req ? ' *' : ''}</label><input class="form-control" data-p="${campo}" type="${type}" value="${escAttr(val)}"${req ? ' required' : ''}></div>`;
   const selc = (campo, label, arr, val) => `<div class="col-md-4"><label class="form-label">${label}</label><select class="form-select" data-p="${campo}">${opt(arr, val)}</select></div>`;
+  const comboField = (campo, label, kind, val) => `<div class="col-md-4"><label class="form-label">${label}</label>
+    <div class="bib-combo"><input class="form-control bib-combo__input" data-p="${campo}" data-combo="${kind}" value="${escAttr(val)}" autocomplete="off" placeholder="Buscar ou cadastrar..."></div></div>`;
 
   mount(`
     <div class="rna-card mb-3"><div class="rna-card__body d-flex align-items-center gap-2">
@@ -409,21 +431,18 @@ async function renderEditor() {
 
     <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-info-circle"></i> Informações gerais</h3></div>
       <div class="rna-card__body"><div class="row g-3">
-        ${inp('codigo', 'Código *', p.codigo)}${inp('nome', 'Nome *', p.nome)}
+        ${inp('codigo', 'Código', p.codigo, 'text', true)}${inp('nome', 'Nome', p.nome, 'text', true)}
         ${selc('cliente', 'Cliente', cli, p.cliente)}
-        <div class="col-12"><label class="form-label">Descrição</label><textarea class="form-control" data-p="descricao" rows="2">${escHtml(p.descricao)}</textarea></div>
-        ${selc('familia', 'Família', fam, p.familia)}${selc('categoria', 'Categoria', cat, p.categoria)}${selc('processo', 'Processo', pro, p.processo)}
-        ${selc('tipo', 'Tipo', tip, p.tipo)}${selc('planta', 'Planta', pla, p.planta)}${inp('linha', 'Linha', p.linha)}
-        ${inp('aplicacao', 'Aplicação', p.aplicacao)}${inp('responsavel', 'Responsável', p.responsavel)}${inp('fornecedor', 'Fornecedor', p.fornecedor)}
-      </div></div></div>
-
-    <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-file-earmark-text"></i> Especificações</h3></div>
-      <div class="rna-card__body"><div class="row g-3">
+        ${selc('familia', 'Família', fam, p.familia)}${selc('planta', 'Planta', pla, p.planta)}${comboField('quadrante', 'Quadrante', 'quad', p.quadrante)}
+        ${inp('revisao_desenho', 'Revisão do Desenho', p.revisao_desenho, 'number', true)}${inp('data_revisao_desenho', 'Data da Revisão do Desenho', p.data_revisao_desenho, 'date', true)}${inp('numero_ad', 'Número da AD', p.numero_ad)}
         ${inp('material', 'Material', p.material)}${inp('acabamento', 'Acabamento', p.acabamento)}${inp('cor', 'Cor', p.cor)}
         ${inp('peso', 'Peso', p.peso)}${inp('norma', 'Norma', p.norma)}${inp('especificacao', 'Especificação', p.especificacao)}
         <div class="col-md-4"><label class="form-label">Status</label><select class="form-select" data-p="status">${DATA.BIB_STATUS.map(s => `<option ${s === p.status ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
-        ${inp('data_revisao', 'Data da revisão', p.data_revisao, 'date')}
         <div class="col-12"><label class="form-label">Observações</label><textarea class="form-control" data-p="observacoes" rows="2">${escHtml(p.observacoes)}</textarea></div>
+        <div class="col-12"><label class="form-label">Anexos (PDF, DWG, DXF, imagem, Excel, Word)</label>
+          ${f && f.documentos.length ? `<div class="mb-2">${f.documentos.map(d => `<span class="rna-badge badge-info me-1"><i class="bi ${docIcon(d.tipo)}"></i> ${d.nome}</span>`).join('')}</div>` : ''}
+          <div class="bib-doc-drop" id="ed-doc-drop"><i class="bi bi-cloud-arrow-up"></i> Selecionar arquivos <input type="file" id="ed-doc-input" accept=".pdf,.dwg,.dxf,.xls,.xlsx,.doc,.docx,.png,.jpg,.jpeg,.webp,.zip,image/*" multiple hidden></div>
+          <div id="ed-doc-list" class="mt-2"></div></div>
       </div></div></div>
 
     <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-image"></i> Imagem principal</h3></div>
@@ -431,21 +450,14 @@ async function renderEditor() {
         ${p.imagem ? `<div class="mt-2 d-flex align-items-center gap-2"><img src="${p.imagem}" style="height:54px;border-radius:8px"><small class="text-muted-2">Imagem atual — envie uma nova para substituir.</small></div>` : ''}
       </div></div>
 
-    <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-rulers"></i> Métricas</h3>
-      <button class="rna-btn rna-btn-ghost rna-btn-sm" id="ed-add-metrica"><i class="bi bi-plus-lg"></i> Adicionar</button></div>
-      <div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table bib-edit-table" id="ed-metricas"></table></div></div>
+    <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-rulers"></i> Especificações</h3>
+      <div class="d-flex align-items-center gap-2"><small class="text-muted-2 d-none d-lg-block">Enter: nova linha · Tab avança · cole do Excel</small>
+      <button class="rna-btn rna-btn-ghost rna-btn-sm" id="ed-add-metrica"><i class="bi bi-plus-lg"></i> Adicionar</button></div></div>
+      <div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table bib-edit-table bib-espec-table" id="ed-metricas"></table></div></div>
 
     <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-crosshair"></i> Pontos de inspeção</h3>
       <button class="rna-btn rna-btn-ghost rna-btn-sm" id="ed-add-ponto"><i class="bi bi-plus-lg"></i> Adicionar</button></div>
       <div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table bib-edit-table" id="ed-pontos"></table></div></div>
-
-    <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-folder2-open"></i> Documentos</h3></div>
-      <div class="rna-card__body">
-        ${f && f.documentos.length ? `<div class="mb-2">${f.documentos.map(d => `<span class="rna-badge badge-info me-1"><i class="bi ${docIcon(d.tipo)}"></i> ${d.nome}</span>`).join('')}</div>` : ''}
-        <div class="bib-doc-drop" id="ed-doc-drop"><i class="bi bi-cloud-arrow-up"></i> Selecionar arquivos (PDF, Excel, Word, imagem, DWG, DXF, ZIP)
-          <input type="file" id="ed-doc-input" multiple hidden></div>
-        <div id="ed-doc-list" class="mt-2"></div>
-      </div></div>
 
     <div class="d-flex gap-2 justify-content-end mb-4 no-print">
       <button class="rna-btn rna-btn-ghost" id="ed-cancel">Cancelar</button>
@@ -453,9 +465,10 @@ async function renderEditor() {
     </div>`);
 
   const upImg = initEvidenceUpload($('#ed-img'), { label: 'Imagem principal da peça', multiple: false });
-  renderMetricRows(); renderPointRows();
+  renderEspecRows(); renderPointRows();
+  wireCombos(document);   // liga o combo do Quadrante (fora da tabela)
 
-  $('#ed-add-metrica').addEventListener('click', () => { edMetricas.push(blankMetrica()); renderMetricRows(); });
+  $('#ed-add-metrica').addEventListener('click', () => { edMetricas.push(blankSpec()); renderEspecRows(); focusRow(edMetricas.length - 1); });
   $('#ed-add-ponto').addEventListener('click', () => { edPontos.push(blankPonto()); renderPointRows(); });
 
   const dropInput = $('#ed-doc-input');
@@ -466,21 +479,146 @@ async function renderEditor() {
   $('#ed-save').addEventListener('click', () => salvar(isNew, p, f, upImg));
 }
 
-function renderMetricRows() {
-  const head = `<thead><tr><th>Medida</th><th>Nominal</th><th>Tol. mín</th><th>Tol. máx</th><th>Un.</th><th>Método</th><th>Equipamento</th><th>Period.</th><th></th></tr></thead>`;
-  const body = edMetricas.map((m, i) => `<tr data-mrow="${i}">
-    <td><input class="form-control form-control-sm" data-mf="nome" value="${escAttr(m.nome)}"></td>
-    <td><input class="form-control form-control-sm" data-mf="nominal" value="${escAttr(m.nominal)}" style="width:82px"></td>
-    <td><input class="form-control form-control-sm" data-mf="tol_min" value="${escAttr(m.tol_min)}" style="width:82px"></td>
-    <td><input class="form-control form-control-sm" data-mf="tol_max" value="${escAttr(m.tol_max)}" style="width:82px"></td>
-    <td><input class="form-control form-control-sm" data-mf="unidade" value="${escAttr(m.unidade)}" style="width:64px"></td>
-    <td><input class="form-control form-control-sm" data-mf="metodo" value="${escAttr(m.metodo)}"></td>
-    <td><input class="form-control form-control-sm" data-mf="equipamento" value="${escAttr(m.equipamento)}"></td>
-    <td><input class="form-control form-control-sm" data-mf="periodicidade" value="${escAttr(m.periodicidade)}" style="width:110px"></td>
-    <td><button class="rna-btn rna-btn-ghost rna-btn-sm" data-mdel="${i}"><i class="bi bi-trash text-danger"></i></button></td></tr>`).join('');
-  const t = $('#ed-metricas'); t.innerHTML = head + `<tbody>${body || `<tr><td colspan="9" class="cell-sub" style="padding:14px">Nenhuma métrica. Clique em “Adicionar”.</td></tr>`}</tbody>`;
-  syncOnInput(t, edMetricas, 'm');
-  $$('[data-mdel]', t).forEach(b => b.addEventListener('click', () => { edMetricas.splice(+b.dataset.mdel, 1); renderMetricRows(); }));
+/* Tabela de Especificações (estilo planilha industrial) — Características ML. */
+const ESPEC_FIELDS = ['cota', 'caracteristica_nome', 'referencia', 'nominal', 'tol_min', 'tol_max', 'unidade', 'equipamento_nome', 'quem_mede_nome', 'observacao'];
+function renderEspecRows() {
+  const cols = ['Cota', 'Característica', 'Referência', 'Nominal', 'Tol. mín', 'Tol. máx', 'Un.', 'Equipamento de Medição', 'Quem Mede', 'Observação', ''];
+  const head = `<thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>`;
+  const cell = (m, i, field, col, w) => `<input class="form-control form-control-sm bib-cell" data-mf="${field}" data-col="${col}" value="${escAttr(m[field])}"${w ? ` style="width:${w}px"` : ''}${['cota', 'nominal', 'tol_min', 'tol_max'].includes(field) ? ' inputmode="decimal"' : ''}>`;
+  const combo = (m, i, kind, field, col, w) => `<div class="bib-combo"><input class="form-control form-control-sm bib-cell bib-combo__input" data-combo="${kind}" data-row="${i}" data-col="${col}" value="${escAttr(m[field])}" autocomplete="off"${w ? ` style="width:${w}px"` : ''} placeholder="Buscar..."></div>`;
+  const row = (m, i) => `<tr data-mrow="${i}">
+    <td>${cell(m, i, 'cota', 0, 54)}</td>
+    <td>${combo(m, i, 'car', 'caracteristica_nome', 1, 190)}</td>
+    <td>${cell(m, i, 'referencia', 2, 104)}</td>
+    <td>${cell(m, i, 'nominal', 3, 78)}</td>
+    <td>${cell(m, i, 'tol_min', 4, 78)}</td>
+    <td>${cell(m, i, 'tol_max', 5, 78)}</td>
+    <td>${cell(m, i, 'unidade', 6, 58)}</td>
+    <td>${combo(m, i, 'eq', 'equipamento_nome', 7, 190)}</td>
+    <td>${combo(m, i, 'qm', 'quem_mede_nome', 8, 150)}</td>
+    <td>${cell(m, i, 'observacao', 9, 130)}</td>
+    <td class="bib-row-actions">
+      <button class="rna-icon-mini" data-mup="${i}" title="Subir"><i class="bi bi-chevron-up"></i></button>
+      <button class="rna-icon-mini" data-mdown="${i}" title="Descer"><i class="bi bi-chevron-down"></i></button>
+      <button class="rna-icon-mini" data-mdup="${i}" title="Duplicar linha"><i class="bi bi-files"></i></button>
+      <button class="rna-icon-mini" data-mdel="${i}" title="Excluir linha"><i class="bi bi-trash text-danger"></i></button>
+    </td></tr>`;
+  const t = $('#ed-metricas');
+  t.innerHTML = head + `<tbody>${edMetricas.map(row).join('') || `<tr><td colspan="11" class="cell-sub" style="padding:14px">Nenhuma especificação. Clique em “Adicionar”, digite e pressione <b>Enter</b> para novas linhas, ou <b>cole</b> várias do Excel.</td></tr>`}</tbody>`;
+  // campos simples
+  t.querySelectorAll('[data-mrow]').forEach(tr => { const i = +tr.dataset.mrow; tr.querySelectorAll('[data-mf]').forEach(inp => inp.addEventListener('input', () => { edMetricas[i][inp.dataset.mf] = inp.value; })); });
+  wireCombos(t);
+  // ações de linha
+  $$('[data-mup]', t).forEach(b => b.addEventListener('click', () => moveSpec(+b.dataset.mup, -1)));
+  $$('[data-mdown]', t).forEach(b => b.addEventListener('click', () => moveSpec(+b.dataset.mdown, 1)));
+  $$('[data-mdup]', t).forEach(b => b.addEventListener('click', () => { const i = +b.dataset.mdup; edMetricas.splice(i + 1, 0, clone(edMetricas[i])); renderEspecRows(); }));
+  $$('[data-mdel]', t).forEach(b => b.addEventListener('click', () => { edMetricas.splice(+b.dataset.mdel, 1); renderEspecRows(); }));
+  // teclado (Enter/Tab) e colar
+  t.querySelectorAll('.bib-cell').forEach(inp => inp.addEventListener('keydown', e => especKeydown(e, inp)));
+  if (!t._pasteWired) { t._pasteWired = true; t.addEventListener('paste', onEspecPaste); }
+}
+
+function addSpecAfter(i) { edMetricas.splice(i + 1, 0, blankSpec()); renderEspecRows(); focusRow(i + 1, 0); }
+function moveSpec(i, dir) { const j = i + dir; if (j < 0 || j >= edMetricas.length) return; [edMetricas[i], edMetricas[j]] = [edMetricas[j], edMetricas[i]]; renderEspecRows(); focusRow(j, 0); }
+function focusRow(i, col = 0) { const inp = document.querySelector(`#ed-metricas [data-mrow="${i}"] [data-col="${col}"]`); if (inp) { inp.focus(); inp.select?.(); } }
+
+function especKeydown(e, inp) {
+  const tr = inp.closest('[data-mrow]'); if (!tr) return;
+  const i = +tr.dataset.mrow, col = +inp.dataset.col;
+  if (e.key === 'Enter') { e.preventDefault(); addSpecAfter(i); }
+  else if (e.key === 'Tab' && !e.shiftKey && col === 9 && i === edMetricas.length - 1) { e.preventDefault(); addSpecAfter(i); }
+}
+
+function onEspecPaste(e) {
+  const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+  if (!/[\t\n]/.test(text)) return;                 // valor único → cola normal
+  e.preventDefault();
+  const cell = e.target.closest('.bib-cell'); if (!cell) return;
+  const tr = cell.closest('[data-mrow]');
+  const startRow = tr ? +tr.dataset.mrow : Math.max(edMetricas.length - 1, 0);
+  const startCol = +cell.dataset.col || 0;
+  const lines = text.replace(/\r/g, '').split('\n'); if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  lines.forEach((line, r) => {
+    const cells = line.split('\t'); const idx = startRow + r;
+    while (edMetricas.length <= idx) edMetricas.push(blankSpec());
+    cells.forEach((val, c) => { const fi = startCol + c; if (fi < ESPEC_FIELDS.length) edMetricas[idx][ESPEC_FIELDS[fi]] = val.trim(); });
+  });
+  renderEspecRows();
+  toast(`${lines.length} linha(s) coladas.`, { type: 'ok' });
+}
+
+/* -------------------------------------------------- combobox pesquisável ---- */
+let comboState = null;
+const COMBO_FIELD = { car: 'caracteristica_nome', eq: 'equipamento_nome', qm: 'quem_mede_nome' };
+const COMBO_TABLE = { car: 'caracteristicas_ml', eq: 'equipamentos_medicao', qm: 'quem_mede', quad: 'bib_quadrantes' };
+function comboArr(kind) { return CAT[kind] || []; }
+
+function wireCombos(root) {
+  $$('.bib-combo__input', root).forEach(inp => {
+    if (inp._comboWired) return; inp._comboWired = true;
+    inp.addEventListener('focus', () => openCombo(inp));
+    inp.addEventListener('input', () => { if (!comboState || comboState.input !== inp) openCombo(inp); comboState.hi = 0; renderComboOptions(); syncCombo(inp); });
+    inp.addEventListener('keydown', e => comboKeydown(e, inp));
+    inp.addEventListener('blur', () => setTimeout(() => { if (comboState && comboState.input === inp) closeCombo(); }, 160));
+  });
+}
+function openCombo(inp) {
+  if (comboState && comboState.input === inp) return;
+  closeCombo();
+  comboState = { input: inp, kind: inp.dataset.combo, hi: 0, panel: el('<div class="bib-combo-panel"></div>') };
+  document.body.appendChild(comboState.panel);
+  positionCombo(); renderComboOptions();
+  comboState._on = () => positionCombo();
+  window.addEventListener('scroll', comboState._on, true);
+  window.addEventListener('resize', comboState._on);
+}
+function closeCombo() { if (!comboState) return; window.removeEventListener('scroll', comboState._on, true); window.removeEventListener('resize', comboState._on); comboState.panel.remove(); comboState = null; }
+function positionCombo() { if (!comboState) return; const r = comboState.input.getBoundingClientRect(); const p = comboState.panel; p.style.left = r.left + 'px'; p.style.top = (r.bottom + 3) + 'px'; p.style.minWidth = Math.max(r.width, 220) + 'px'; }
+function comboMatches() { const q = BIB.normaliza(comboState.input.value); const arr = comboArr(comboState.kind); return (q ? arr.filter(o => BIB.normaliza(o.nome).includes(q)) : arr.slice()).slice(0, 60); }
+function renderComboOptions() {
+  if (!comboState) return;
+  const val = comboState.input.value.trim();
+  const list = comboMatches();
+  const exists = comboArr(comboState.kind).some(o => BIB.normaliza(o.nome) === BIB.normaliza(val));
+  const canCreate = val && !exists;
+  const total = list.length + (canCreate ? 1 : 0);
+  if (comboState.hi >= total) comboState.hi = 0;
+  comboState.panel.innerHTML =
+    list.map((o, idx) => `<button type="button" class="bib-combo-opt ${idx === comboState.hi ? 'hi' : ''}" data-pick="${escAttr(o.nome)}">${highlightMatch(o.nome, val)}</button>`).join('')
+    + (canCreate ? `<button type="button" class="bib-combo-opt bib-combo-new ${comboState.hi === list.length ? 'hi' : ''}" data-create="1"><i class="bi bi-plus-lg"></i> Cadastrar novo: “${escHtml(val)}”</button>` : '')
+    + (!total ? `<div class="bib-combo-empty">Nenhum resultado</div>` : '');
+  comboState.panel.querySelectorAll('[data-pick]').forEach(b => b.addEventListener('mousedown', e => { e.preventDefault(); pickCombo(b.dataset.pick); }));
+  comboState.panel.querySelector('[data-create]')?.addEventListener('mousedown', e => { e.preventDefault(); createFromCombo(val); });
+}
+function pickCombo(nome) { const inp = comboState.input; inp.value = nome; syncCombo(inp); closeCombo(); }
+async function createFromCombo(nome) {
+  const kind = comboState.kind, inp = comboState.input, tabela = COMBO_TABLE[kind];
+  try {
+    await db.insert(tabela, kind === 'car' ? { nome, ativo: true, criado_em: BIB.hoje() } : { nome, ativo: true });
+    await loadCatalogos();
+    toast(`Cadastrado: ${nome}`, { type: 'ok' });
+  } catch { toast('Não foi possível cadastrar agora (será criado ao salvar).', { type: 'warn' }); }
+  inp.value = nome; syncCombo(inp); closeCombo();
+}
+function syncCombo(inp) { if (inp.dataset.row != null && inp.dataset.combo !== 'quad') { const i = +inp.dataset.row, field = COMBO_FIELD[inp.dataset.combo]; if (edMetricas[i]) edMetricas[i][field] = inp.value; } }
+function comboKeydown(e, inp) {
+  if (!comboState || comboState.input !== inp) { if (e.key === 'ArrowDown') { openCombo(inp); e.preventDefault(); } return; }
+  const list = comboMatches(), val = inp.value.trim();
+  const exists = comboArr(comboState.kind).some(o => BIB.normaliza(o.nome) === BIB.normaliza(val));
+  const canCreate = val && !exists, total = list.length + (canCreate ? 1 : 0);
+  if (e.key === 'ArrowDown') { e.preventDefault(); e.stopImmediatePropagation(); comboState.hi = total ? (comboState.hi + 1) % total : 0; renderComboOptions(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopImmediatePropagation(); comboState.hi = total ? (comboState.hi - 1 + total) % total : 0; renderComboOptions(); }
+  else if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); if (canCreate && comboState.hi === list.length) createFromCombo(val); else if (list[comboState.hi]) pickCombo(list[comboState.hi].nome); else if (canCreate) createFromCombo(val); else closeCombo(); }
+  else if (e.key === 'Escape') { closeCombo(); }
+}
+function highlightMatch(nome, q) { const n = BIB.normaliza(q); if (!n) return escHtml(nome); const idx = BIB.normaliza(nome).indexOf(n); if (idx < 0) return escHtml(nome); return `${escHtml(nome.slice(0, idx))}<mark>${escHtml(nome.slice(idx, idx + q.length))}</mark>${escHtml(nome.slice(idx + q.length))}`; }
+
+async function resolveCat(kind, nome) {
+  nome = (nome || '').trim(); if (!nome) return null;
+  const found = CAT[kind].find(o => BIB.normaliza(o.nome) === BIB.normaliza(nome));
+  if (found) return found.id;
+  const rec = await db.insert(COMBO_TABLE[kind], kind === 'car' ? { nome, ativo: true, criado_em: BIB.hoje() } : { nome, ativo: true });
+  CAT[kind].push(rec); return rec.id;
 }
 
 function renderPointRows() {
@@ -536,9 +674,21 @@ async function salvar(isNew, p, f, upImg) {
       peca = await BIB.salvarRevisao(p.id, { ...patch, imagem: imagemUrl, ativo: patch.status !== 'Arquivado' }, USER);
     }
 
-    // métricas e pontos: substitui o conjunto (simples e consistente)
-    await substituir('bib_metricas', peca.id, edMetricas.filter(m => (m.nome || '').trim()), (m, ord) => ({ peca_id: peca.id, nome: m.nome, nominal: numOrNull(m.nominal), tol_min: numOrNull(m.tol_min), tol_max: numOrNull(m.tol_max), unidade: m.unidade, metodo: m.metodo, equipamento: m.equipamento, periodicidade: m.periodicidade, observacao: m.observacao || '', ordem: ord }));
-    await substituir('bib_pontos_inspecao', peca.id, edPontos.filter(pt => (pt.descricao || '').trim()), (pt, ord) => ({ peca_id: peca.id, descricao: pt.descricao, criticidade: pt.criticidade, metodo: pt.metodo, periodicidade: pt.periodicidade, equipamento: pt.equipamento, foto: pt.foto || null, ordem: ord }));
+    // especificações: resolve catálogos (cria se necessário) e substitui o conjunto
+    const specsRows = [];
+    let ord = 1;
+    for (const m of edMetricas) {
+      if (!(m.caracteristica_nome || '').trim() && !String(m.cota ?? '').trim() && numOrNull(m.nominal) == null) continue; // linha vazia
+      specsRows.push({
+        peca_id: peca.id, cota: numOrNull(m.cota),
+        caracteristica_id: await resolveCat('car', m.caracteristica_nome),
+        referencia: m.referencia || '', nominal: numOrNull(m.nominal), tol_min: numOrNull(m.tol_min), tol_max: numOrNull(m.tol_max),
+        unidade: m.unidade || '', equipamento_id: await resolveCat('eq', m.equipamento_nome), quem_mede_id: await resolveCat('qm', m.quem_mede_nome),
+        observacao: m.observacao || '', ordem: ord++
+      });
+    }
+    await substituir('bib_metricas', peca.id, specsRows, r => r);
+    await substituir('bib_pontos_inspecao', peca.id, edPontos.filter(pt => (pt.descricao || '').trim()), (pt, o) => ({ peca_id: peca.id, descricao: pt.descricao, criticidade: pt.criticidade, metodo: pt.metodo, periodicidade: pt.periodicidade, equipamento: pt.equipamento, foto: pt.foto || null, ordem: o }));
 
     // documentos novos
     for (const file of edDocsNovos) {
@@ -629,5 +779,5 @@ function escAttr(s) { return String(s ?? '').replace(/"/g, '&quot;').replace(/</
 function destacar(txt) { const q = BIB.normaliza(state.q); const t = String(txt); const i = BIB.normaliza(t).indexOf(q); if (i < 0 || !q) return t; return `${t.slice(0, i)}<mark>${t.slice(i, i + q.length)}</mark>${t.slice(i + q.length)}`; }
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function numOrNull(v) { if (v === '' || v == null) return null; const n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? null : n; }
-function blankMetrica() { return { nome: '', nominal: '', tol_min: '', tol_max: '', unidade: '', metodo: '', equipamento: '', periodicidade: '' }; }
+function blankSpec() { return { cota: '', caracteristica_nome: '', referencia: '', nominal: '', tol_min: '', tol_max: '', unidade: '', equipamento_nome: '', quem_mede_nome: '', observacao: '' }; }
 function blankPonto() { return { descricao: '', criticidade: 'Média', metodo: '', periodicidade: '', equipamento: '' }; }

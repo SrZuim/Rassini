@@ -2,6 +2,10 @@
    RNA One — Biblioteca Técnica · Dados semente (modo demo)
    Espelham as tabelas bib_* do Supabase. Em produção, o db.js busca do backend
    (rode database/biblioteca_tecnica.sql). Peças reais de suspensão automotiva.
+
+   Cadastro reestruturado conforme processo Rassini (documento "Características ML"):
+   especificações = Cota · Característica · Referência · Valor Nominal ·
+   Tol. Mín · Tol. Máx · Unidade · Equipamento de Medição · Quem Mede · Observação.
    ========================================================================== */
 
 /* ------------------------------------------------------------- catálogos --- */
@@ -33,35 +37,55 @@ export const BIB_FAMILIAS = [
   { id:'fm7', nome:'Tirante',               ativo:true }
 ];
 
-export const BIB_CATEGORIAS = [
-  { id:'ct1', nome:'Suspensão',   ativo:true },
-  { id:'ct2', nome:'Estrutural',  ativo:true },
-  { id:'ct3', nome:'Fixação',     ativo:true },
-  { id:'ct4', nome:'Funcional',   ativo:true }
-];
+/* Quadrante — preparado para cadastro futuro (inicia vazio; permite criar na tela). */
+export const BIB_QUADRANTES = [];
 
-export const BIB_PROCESSOS = [
-  { id:'pr1', nome:'Estampagem',          ativo:true },
-  { id:'pr2', nome:'Tratamento Térmico',  ativo:true },
-  { id:'pr3', nome:'Usinagem',            ativo:true },
-  { id:'pr4', nome:'Montagem',            ativo:true },
-  { id:'pr5', nome:'Pintura',             ativo:true },
-  { id:'pr6', nome:'Jateamento (Shot Peening)', ativo:true }
-];
+/* CARACTERÍSTICAS ML — lista base do documento de referência da Rassini. */
+export const BIB_CARACTERISTICAS_ML = [
+  'Abertura','Altura','Altura Livre','Altura Livre Feixe Principal','Altura Livre Feixe Auxiliar',
+  'Altura da braçadeira','Altura da cabeça do espigão','Altura da carga de Checagem','Altura do Gancho',
+  'Altura do Pacote','Altura do Pacote do Feixe Principal','Altura do Pacote do Feixe Auxiliar',
+  'Altura do contra feixe (feixe auxiliar)','Altura do contra feixe Lado Y','Altura do Ressalto','Altura do Rebaixo',
+  'Altura na Carga de GVW (normal)','Altura na Carga de Vazio','Ângulo','Carbono (C)',
+  'Carga de extração da Bucha','Carga na altura de Checagem','Carga na altura de Design (carga normal ou GVW)',
+  'Carga na altura de Jounce','Carga na altura de Rebound','Circularidade','Classe do Material',
+  'Cobertura (Shot Peening)','Código do fornecedor','Composição Química','Comprimento','Comprimento Total nos apoios',
+  'Comprimento da parte plana','Comprimento do Chanfro','Comprimento do Laminado','Comprimento sobre carga',
+  'Comprimento do Ressalto','Comprimento do Rebaixo','Concentricidade','Descarbonetação','Descarbonetação Parcial',
+  'Descarbonetação Total','Desfolhamento','Deslocamento','Detalhe do Chanfro (desponte)','Detalhe do Laminado',
+  'Detalhe do Olhete','Distância','Distância entre Centro','Distância até o centro do olhete','Dureza',
+  'Espalhamento lateral','Espessura','Espessura da ponta','Esquadro','Esquadro e Torção','Forma e posição',
+  'Fósforo (P)','Gráfico e Tabela de Cargas e Alturas','Identificação','Identificação de altura',
+  'Identificação part number','Identificação logo marca do cliente','Identificação logo marca do fabricante',
+  'Largura','Largura da lâmina','Largura da Bucha','Largura do chanfro','Largura do Olhete','Largura do cordão de solda',
+  'Logomarca','Manganês (Mn)','Matéria Prima','Microestrutura - Martensita temperada','Mínima redução de área',
+  'Mínimo alongamento após fratura','Montagem','Névoa salina','Oblongo (altura)','Oblongo (comprimento)','Observações',
+  'ØDiâmetro do furo','ØDiâmetro da cabeça do espigão','ØDiâmetro interno da bucha','ØDiâmetro externo da bucha',
+  'ØDiâmetro interno do olhete','ØDiâmetro externo do olhete','Paralelismo','Paralelo','Perpendicularidade',
+  'Pintar após montagem','Planicidade','Processo de Soldagem','Propriedades Mecânicas','Proteção Superficial',
+  'Raio','Rate K1','Rate K2','Rate Kt','Resistência a corrosão com Salt Spray 5%','Retilineidade','Revisão de desenho',
+  'Rugosidade','Semi-comprimento','Semi-comprimento sobre carga','Silício (Si)','Simetria','Enxofre (S)',
+  'Tabela de Carga/Altura/Rate','Tamanho de Grão','Tensão mínima de escoamento','Tensão mínima de tração (ruptura)',
+  'Tensão Residual','Teste Almen (Shot Peening)','Teste de Fadiga','Torção','Torque','Tratamento superficial',
+  'Vanádio (V)','Vista'
+].map((nome, i) => ({ id:'car' + String(i + 1).padStart(3, '0'), nome, ativo:true, criado_em:'2026-01-01' }));
 
-export const BIB_TIPOS = [
-  { id:'tp1', nome:'Componente',    ativo:true },
-  { id:'tp2', nome:'Conjunto',      ativo:true },
-  { id:'tp3', nome:'Submontagem',   ativo:true }
-];
+/* EQUIPAMENTO DE MEDIÇÃO — valores distintos do documento de referência. */
+export const BIB_EQUIPAMENTOS_MEDICAO = [
+  'Visual','Paquímetro','Micrômetro','Trena','Traçador de Altura','Máquina de Carga','Braço Faro',
+  'Durômetro','Rugosímetro','Goniômetro','Torquímetro','Espectrômetro (certificado)','Laboratório / Certificado',
+  'Certificado','Marcação','Gravação a quente','Embuchadeira','Calibrador de Raio','Calibrador de Folga','OK/NOK'
+].map((nome, i) => ({ id:'eq' + String(i + 1).padStart(2, '0'), nome, ativo:true }));
+
+/* QUEM MEDE — perfis responsáveis pela medição (permite cadastro futuro). */
+export const BIB_QUEM_MEDE = [
+  'G. DA QUALIDADE','ENG. DE PROCESSO','LABORATÓRIO','TODOS'
+].map((nome, i) => ({ id:'qm' + (i + 1), nome, ativo:true }));
 
 /* Status possíveis de uma peça (ciclo de vida da ficha). */
 export const BIB_STATUS = ['Ativo', 'Em revisão', 'Arquivado', 'Obsoleto'];
-
-/* Categorias de documento e periodicidades reaproveitadas nos selects. */
 export const BIB_DOC_CATEGORIAS = ['Desenho', 'Especificação', 'Norma', 'Instrução de Trabalho', 'Plano de Controle', 'Relatório', 'Certificado', 'Outro'];
-export const BIB_PERIODICIDADES  = ['Por peça', 'Por hora', 'Por turno', 'Diária', 'Semanal', 'Setup', 'Amostral'];
-export const BIB_CRITICIDADES    = ['Crítico', 'Alta', 'Média', 'Baixa', 'Visual', '100%'];
+export const BIB_CRITICIDADES = ['Crítico', 'Alta', 'Média', 'Baixa', 'Visual', '100%'];
 
 /* Imagem placeholder (SVG data-uri) usada quando a peça não tem foto. */
 export const BIB_IMG_PLACEHOLDER =
@@ -73,116 +97,96 @@ export const BIB_IMG_PLACEHOLDER =
        <text x="300" y="360" font-family="Inter,Arial" font-size="22" fill="#9aa4b0" text-anchor="middle">Sem imagem</text>
      </svg>`);
 
+/* helpers de lookup para montar o seed de especificações por nome */
+const _car = n => (BIB_CARACTERISTICAS_ML.find(c => c.nome === n) || {}).id || null;
+const _eq  = n => (BIB_EQUIPAMENTOS_MEDICAO.find(c => c.nome === n) || {}).id || null;
+const _qm  = n => (BIB_QUEM_MEDE.find(c => c.nome === n) || {}).id || null;
+
 /* -------------------------------------------------------------- peças ------ */
 export const BIB_PECAS_DEFAULT = [
   {
     id:'bp01', codigo:'RCE-001', nome:'Feixe de Mola Traseiro',
-    descricao:'Feixe de molas parabólico traseiro para caminhão pesado, 3 lâminas, olhal fechado.',
-    cliente:'Volvo', familia:'Feixe de Molas', linha:'Linha 02 — Feixes', processo:'Montagem',
-    tipo:'Conjunto', aplicacao:'Eixo traseiro — Volvo FH', categoria:'Suspensão',
+    cliente:'Volvo', familia:'Feixe de Molas', quadrante:'',
     peso:'62,4 kg', material:'SAE 5160H', acabamento:'Pintura eletrostática', cor:'Preto',
-    status:'Ativo', planta:'Planta Jarinu', fornecedor:'Aço Villares',
-    norma:'ABNT NBR 6329', especificacao:'ET-RCE-001 Rev.C', responsavel:'Ana Beatriz',
-    data_revisao:'2026-05-18', revisao:3,
-    observacoes:'Conferir torque dos grampos em U conforme plano de controle PC-001.',
-    imagem:null, galeria:[], ativo:true,
-    created_at:'2025-11-02', updated_at:'2026-05-18', created_by:'u1'
+    status:'Ativo', planta:'Planta Jarinu', norma:'ABNT NBR 6329', especificacao:'ET-RCE-001 Rev.C',
+    revisao_desenho:3, data_revisao_desenho:'2026-05-18', numero_ad:'AD-2026-0158',
+    revisao:3, observacoes:'Conferir torque dos grampos em U conforme PC-001.',
+    imagem:null, galeria:[], ativo:true, created_at:'2025-11-02', updated_at:'2026-05-18', created_by:'u1'
   },
   {
     id:'bp02', codigo:'RCE-014', nome:'Mola Parabólica Dianteira',
-    descricao:'Mola parabólica dianteira de 2 lâminas, alta flexibilidade, para eixo direcional.',
-    cliente:'Scania', familia:'Mola Parabólica', linha:'Linha 02 — Feixes', processo:'Tratamento Térmico',
-    tipo:'Componente', aplicacao:'Eixo dianteiro — Scania R450', categoria:'Suspensão',
+    cliente:'Scania', familia:'Mola Parabólica', quadrante:'',
     peso:'28,1 kg', material:'SAE 51B60', acabamento:'Shot peening + pintura', cor:'Cinza grafite',
-    status:'Ativo', planta:'Planta Jarinu', fornecedor:'Gerdau',
-    norma:'DIN 17221', especificacao:'ET-RCE-014 Rev.B', responsavel:'Carlos Mendes',
-    data_revisao:'2026-04-30', revisao:2,
-    observacoes:'Dureza pós-têmpera crítica para durabilidade.',
-    imagem:null, galeria:[], ativo:true,
-    created_at:'2025-12-10', updated_at:'2026-04-30', created_by:'u1'
+    status:'Ativo', planta:'Planta Jarinu', norma:'DIN 17221', especificacao:'ET-RCE-014 Rev.B',
+    revisao_desenho:2, data_revisao_desenho:'2026-04-30', numero_ad:'AD-2026-0092',
+    revisao:2, observacoes:'Dureza pós-têmpera crítica.',
+    imagem:null, galeria:[], ativo:true, created_at:'2025-12-10', updated_at:'2026-04-30', created_by:'u1'
   },
   {
     id:'bp03', codigo:'LM-206', nome:'Lâmina Principal 2ª',
-    descricao:'Lâmina principal (2ª posição) do feixe traseiro, com furação central para pino.',
-    cliente:'Mercedes-Benz', familia:'Lâmina', linha:'Linha 01 — Molas', processo:'Estampagem',
-    tipo:'Componente', aplicacao:'Feixe traseiro — MB Axor', categoria:'Estrutural',
+    cliente:'Mercedes-Benz', familia:'Lâmina', quadrante:'',
     peso:'11,7 kg', material:'SAE 5160', acabamento:'Jateado', cor:'Natural',
-    status:'Em revisão', planta:'Planta Rio Nova Iguaçu', fornecedor:'ArcelorMittal',
-    norma:'ABNT NBR 6329', especificacao:'ET-LM-206 Rev.A', responsavel:'Ana Beatriz',
-    data_revisao:'2026-06-22', revisao:1,
-    observacoes:'Revisão em andamento — validar novo raio de dobra.',
-    imagem:null, galeria:[], ativo:true,
-    created_at:'2026-06-22', updated_at:'2026-06-22', created_by:'u1'
+    status:'Em revisão', planta:'Planta Rio Nova Iguaçu', norma:'ABNT NBR 6329', especificacao:'ET-LM-206 Rev.A',
+    revisao_desenho:1, data_revisao_desenho:'2026-06-22', numero_ad:'AD-2026-0203',
+    revisao:1, observacoes:'Validar novo raio de dobra.',
+    imagem:null, galeria:[], ativo:true, created_at:'2026-06-22', updated_at:'2026-06-22', created_by:'u1'
   },
   {
     id:'bp04', codigo:'GR-330', nome:'Grampo em U M20',
-    descricao:'Grampo em U rosca M20 para fixação do feixe ao eixo, com porcas e arruelas.',
-    cliente:'Randon', familia:'Grampo', linha:'Linha 04 — Usinagem CNC', processo:'Usinagem',
-    tipo:'Submontagem', aplicacao:'Fixação de feixe — Suspensão Randon', categoria:'Fixação',
+    cliente:'Randon', familia:'Grampo', quadrante:'',
     peso:'3,2 kg', material:'SAE 1045', acabamento:'Zincado', cor:'Prata',
-    status:'Ativo', planta:'Planta SP 01', fornecedor:'Ciser',
-    norma:'ISO 898-1', especificacao:'ET-GR-330 Rev.D', responsavel:'Carlos Mendes',
-    data_revisao:'2026-03-14', revisao:4,
-    observacoes:'Torque de aperto 320 N·m ±5%.',
-    imagem:null, galeria:[], ativo:true,
-    created_at:'2025-09-01', updated_at:'2026-03-14', created_by:'u1'
+    status:'Ativo', planta:'Planta SP 01', norma:'ISO 898-1', especificacao:'ET-GR-330 Rev.D',
+    revisao_desenho:4, data_revisao_desenho:'2026-03-14', numero_ad:'AD-2025-0451',
+    revisao:4, observacoes:'Torque 320 N·m ±5%.',
+    imagem:null, galeria:[], ativo:true, created_at:'2025-09-01', updated_at:'2026-03-14', created_by:'u1'
   },
   {
     id:'bp05', codigo:'HC-118', nome:'Mola Helicoidal Traseira',
-    descricao:'Mola helicoidal de compressão para suspensão traseira de utilitário leve.',
-    cliente:'Volkswagen', familia:'Mola Helicoidal', linha:'Linha 03 — Têmpera', processo:'Tratamento Térmico',
-    tipo:'Componente', aplicacao:'Suspensão traseira — VW Delivery', categoria:'Suspensão',
+    cliente:'Volkswagen', familia:'Mola Helicoidal', quadrante:'',
     peso:'4,8 kg', material:'SAE 9254', acabamento:'Pintura epóxi', cor:'Preto fosco',
-    status:'Ativo', planta:'Planta SP 02', fornecedor:'Gerdau',
-    norma:'SAE J157', especificacao:'ET-HC-118 Rev.A', responsavel:'Ana Beatriz',
-    data_revisao:'2026-02-05', revisao:1,
-    observacoes:'',
-    imagem:null, galeria:[], ativo:true,
-    created_at:'2026-02-05', updated_at:'2026-02-05', created_by:'u1'
+    status:'Ativo', planta:'Planta SP 02', norma:'SAE J157', especificacao:'ET-HC-118 Rev.A',
+    revisao_desenho:1, data_revisao_desenho:'2026-02-05', numero_ad:'AD-2026-0031',
+    revisao:1, observacoes:'',
+    imagem:null, galeria:[], ativo:true, created_at:'2026-02-05', updated_at:'2026-02-05', created_by:'u1'
   },
   {
     id:'bp06', codigo:'BE-402', nome:'Barra Estabilizadora Dianteira',
-    descricao:'Barra estabilizadora tubular dianteira com buchas e abraçadeiras.',
-    cliente:'Ford', familia:'Barra Estabilizadora', linha:'Linha 04 — Usinagem CNC', processo:'Usinagem',
-    tipo:'Conjunto', aplicacao:'Eixo dianteiro — Ford Cargo', categoria:'Estrutural',
+    cliente:'Ford', familia:'Barra Estabilizadora', quadrante:'',
     peso:'9,6 kg', material:'SAE 26MnB5', acabamento:'Fosfatizado + pintura', cor:'Preto',
-    status:'Arquivado', planta:'Planta Jarinu', fornecedor:'Vallourec',
-    norma:'ASTM A513', especificacao:'ET-BE-402 Rev.B', responsavel:'Carlos Mendes',
-    data_revisao:'2025-10-19', revisao:2,
-    observacoes:'Peça arquivada — substituída pela BE-410.',
-    imagem:null, galeria:[], ativo:false,
-    created_at:'2025-06-11', updated_at:'2025-10-19', created_by:'u1'
+    status:'Arquivado', planta:'Planta Jarinu', norma:'ASTM A513', especificacao:'ET-BE-402 Rev.B',
+    revisao_desenho:2, data_revisao_desenho:'2025-10-19', numero_ad:'AD-2025-0288',
+    revisao:2, observacoes:'Substituída pela BE-410.',
+    imagem:null, galeria:[], ativo:false, created_at:'2025-06-11', updated_at:'2025-10-19', created_by:'u1'
   }
 ];
 
-/* ------------------------------------------------------------- métricas ---- */
-/* nominal/tol_min/tol_max numéricos → a peça BP01 tem 1 métrica FORA de padrão
-   (Flecha livre: nominal 205 abaixo do tol_min 206) para demonstrar o alerta. */
+/* -------------------------------------------------- especificações (bib_metricas)
+   Modelo Rassini: cota, característica (id), referência, valor nominal, tolerâncias,
+   unidade, equipamento de medição (id), quem mede (id), observação.
+   A peça RCE-001 tem 1 especificação FORA de tolerância (Altura Livre) p/ demo. */
 export const BIB_METRICAS_DEFAULT = [
   // RCE-001
-  { id:'mt01', peca_id:'bp01', nome:'Comprimento total',   nominal:1520, tol_min:1518, tol_max:1522, unidade:'mm', metodo:'Medição direta', equipamento:'Trena calibrada', periodicidade:'Amostral', observacao:'', ordem:1 },
-  { id:'mt02', peca_id:'bp01', nome:'Largura da lâmina',   nominal:90,   tol_min:89.5, tol_max:90.5, unidade:'mm', metodo:'Medição direta', equipamento:'Paquímetro',      periodicidade:'Por peça',  observacao:'', ordem:2 },
-  { id:'mt03', peca_id:'bp01', nome:'Espessura da lâmina', nominal:16,   tol_min:15.8, tol_max:16.2, unidade:'mm', metodo:'Medição direta', equipamento:'Micrômetro',      periodicidade:'Por peça',  observacao:'', ordem:3 },
-  { id:'mt04', peca_id:'bp01', nome:'Flecha livre',        nominal:205,  tol_min:206,  tol_max:210,  unidade:'mm', metodo:'Dispositivo',    equipamento:'Gabarito de flecha', periodicidade:'Amostral', observacao:'Verificar sob carga zero', ordem:4 },
-  { id:'mt05', peca_id:'bp01', nome:'Dureza',              nominal:44,   tol_min:42,   tol_max:48,   unidade:'HRC', metodo:'Ensaio',        equipamento:'Durômetro Rockwell', periodicidade:'Amostral', observacao:'', ordem:5 },
+  { id:'mt01', peca_id:'bp01', cota:1, caracteristica_id:_car('Comprimento Total nos apoios'), referencia:'Vista A', nominal:1520, tol_min:1518, tol_max:1522, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:1 },
+  { id:'mt02', peca_id:'bp01', cota:2, caracteristica_id:_car('Largura da lâmina'),            referencia:'Vista B', nominal:90,   tol_min:89.5, tol_max:90.5, unidade:'mm', equipamento_id:_eq('Paquímetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:2 },
+  { id:'mt03', peca_id:'bp01', cota:3, caracteristica_id:_car('Espessura'),                    referencia:'Detalhe A', nominal:16, tol_min:15.8, tol_max:16.2, unidade:'mm', equipamento_id:_eq('Micrômetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:3 },
+  { id:'mt04', peca_id:'bp01', cota:4, caracteristica_id:_car('Altura Livre'),                 referencia:'Vista C', nominal:205,  tol_min:206,  tol_max:210,  unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('ENG. DE PROCESSO'), observacao:'Sob carga zero', ordem:4 },
+  { id:'mt05', peca_id:'bp01', cota:5, caracteristica_id:_car('Dureza'),                       referencia:'—',       nominal:44,   tol_min:42,   tol_max:48,   unidade:'HRC', equipamento_id:_eq('Durômetro'), quem_mede_id:_qm('LABORATÓRIO'), observacao:'', ordem:5 },
   // RCE-014
-  { id:'mt06', peca_id:'bp02', nome:'Comprimento total',   nominal:1360, tol_min:1357, tol_max:1363, unidade:'mm', metodo:'Medição direta', equipamento:'Trena calibrada', periodicidade:'Amostral', observacao:'', ordem:1 },
-  { id:'mt07', peca_id:'bp02', nome:'Espessura no centro', nominal:22,   tol_min:21.7, tol_max:22.3, unidade:'mm', metodo:'Medição direta', equipamento:'Micrômetro',      periodicidade:'Por peça',  observacao:'', ordem:2 },
-  { id:'mt08', peca_id:'bp02', nome:'Dureza pós-têmpera',  nominal:46,   tol_min:44,   tol_max:50,   unidade:'HRC', metodo:'Ensaio',        equipamento:'Durômetro Rockwell', periodicidade:'Por hora', observacao:'Característica crítica', ordem:3 },
+  { id:'mt06', peca_id:'bp02', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:1360, tol_min:1357, tol_max:1363, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:1 },
+  { id:'mt07', peca_id:'bp02', cota:2, caracteristica_id:_car('Espessura'),                    referencia:'Vista B', nominal:22,   tol_min:21.7, tol_max:22.3, unidade:'mm', equipamento_id:_eq('Micrômetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:2 },
+  { id:'mt08', peca_id:'bp02', cota:3, caracteristica_id:_car('Dureza'),                       referencia:'—',       nominal:46,   tol_min:44,   tol_max:50,   unidade:'HRC', equipamento_id:_eq('Durômetro'), quem_mede_id:_qm('LABORATÓRIO'), observacao:'Característica crítica', ordem:3 },
   // LM-206
-  { id:'mt09', peca_id:'bp03', nome:'Comprimento',         nominal:1180, tol_min:1178, tol_max:1182, unidade:'mm', metodo:'Medição direta', equipamento:'Trena calibrada', periodicidade:'Amostral', observacao:'', ordem:1 },
-  { id:'mt10', peca_id:'bp03', nome:'Largura',             nominal:90,   tol_min:89.5, tol_max:90.5, unidade:'mm', metodo:'Medição direta', equipamento:'Paquímetro',      periodicidade:'Por peça',  observacao:'', ordem:2 },
-  { id:'mt11', peca_id:'bp03', nome:'Diâmetro do furo',    nominal:16,   tol_min:16,   tol_max:16.2, unidade:'mm', metodo:'Medição direta', equipamento:'Pino passa/não-passa', periodicidade:'Por peça', observacao:'', ordem:3 },
+  { id:'mt09', peca_id:'bp03', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:1180, tol_min:1178, tol_max:1182, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:1 },
+  { id:'mt10', peca_id:'bp03', cota:2, caracteristica_id:_car('Largura'),                      referencia:'Vista B', nominal:90,   tol_min:89.5, tol_max:90.5, unidade:'mm', equipamento_id:_eq('Paquímetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:2 },
+  { id:'mt11', peca_id:'bp03', cota:3, caracteristica_id:_car('ØDiâmetro do furo'),            referencia:'Detalhe A', nominal:16, tol_min:16,   tol_max:16.2, unidade:'mm', equipamento_id:_eq('Micrômetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:3 },
   // GR-330
-  { id:'mt12', peca_id:'bp04', nome:'Rosca',               nominal:20,   tol_min:19.8, tol_max:20,   unidade:'mm', metodo:'Calibrador',     equipamento:'Calibrador de rosca', periodicidade:'Setup', observacao:'M20 x 1,5', ordem:1 },
-  { id:'mt13', peca_id:'bp04', nome:'Abertura interna',    nominal:104,  tol_min:103,  tol_max:105,  unidade:'mm', metodo:'Medição direta', equipamento:'Paquímetro',      periodicidade:'Por peça',  observacao:'', ordem:2 },
+  { id:'mt12', peca_id:'bp04', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:104,  tol_min:103,  tol_max:105,  unidade:'mm', equipamento_id:_eq('Paquímetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'Abertura interna', ordem:1 },
+  { id:'mt13', peca_id:'bp04', cota:2, caracteristica_id:_car('Ângulo'),                       referencia:'Vista B', nominal:90,   tol_min:89,   tol_max:91,   unidade:'°',  equipamento_id:_eq('Goniômetro'), quem_mede_id:_qm('ENG. DE PROCESSO'), observacao:'', ordem:2 },
   // HC-118
-  { id:'mt14', peca_id:'bp05', nome:'Diâmetro do fio',     nominal:12.5, tol_min:12.3, tol_max:12.7, unidade:'mm', metodo:'Medição direta', equipamento:'Micrômetro',      periodicidade:'Por peça',  observacao:'', ordem:1 },
-  { id:'mt15', peca_id:'bp05', nome:'Altura livre',        nominal:385,  tol_min:382,  tol_max:388,  unidade:'mm', metodo:'Dispositivo',    equipamento:'Gabarito',        periodicidade:'Amostral',  observacao:'', ordem:2 },
-  { id:'mt16', peca_id:'bp05', nome:'Constante elástica',  nominal:34,   tol_min:32,   tol_max:36,   unidade:'N/mm', metodo:'Ensaio',       equipamento:'Máquina universal', periodicidade:'Amostral', observacao:'', ordem:3 },
+  { id:'mt14', peca_id:'bp05', cota:1, caracteristica_id:_car('Altura Livre'),                 referencia:'Vista A', nominal:385,  tol_min:382,  tol_max:388,  unidade:'mm', equipamento_id:_eq('Trena'),          quem_mede_id:_qm('ENG. DE PROCESSO'), observacao:'', ordem:1 },
+  { id:'mt15', peca_id:'bp05', cota:2, caracteristica_id:_car('Rate K1'),                      referencia:'—',       nominal:34,   tol_min:32,   tol_max:36,   unidade:'N/mm', equipamento_id:_eq('Máquina de Carga'), quem_mede_id:_qm('ENG. DE PROCESSO'), observacao:'', ordem:2 },
   // BE-402
-  { id:'mt17', peca_id:'bp06', nome:'Diâmetro externo',    nominal:32,   tol_min:31.7, tol_max:32.3, unidade:'mm', metodo:'Medição direta', equipamento:'Paquímetro',      periodicidade:'Por peça',  observacao:'', ordem:1 },
-  { id:'mt18', peca_id:'bp06', nome:'Comprimento',         nominal:1240, tol_min:1237, tol_max:1243, unidade:'mm', metodo:'Medição direta', equipamento:'Trena calibrada', periodicidade:'Amostral',  observacao:'', ordem:2 }
+  { id:'mt16', peca_id:'bp06', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:1240, tol_min:1237, tol_max:1243, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:1 }
 ];
 
 /* --------------------------------------------------------- pontos inspeção - */
@@ -218,7 +222,8 @@ export const BIBLIOTECA = {
   bib_clientes:        BIB_CLIENTES,
   bib_plantas:         BIB_PLANTAS,
   bib_familias:        BIB_FAMILIAS,
-  bib_categorias:      BIB_CATEGORIAS,
-  bib_processos:       BIB_PROCESSOS,
-  bib_tipos:           BIB_TIPOS
+  bib_quadrantes:      BIB_QUADRANTES,
+  caracteristicas_ml:  BIB_CARACTERISTICAS_ML,
+  equipamentos_medicao: BIB_EQUIPAMENTOS_MEDICAO,
+  quem_mede:           BIB_QUEM_MEDE
 };

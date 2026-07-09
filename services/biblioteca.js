@@ -7,7 +7,7 @@
 import { db } from './db.js';
 
 /* Campos da peça indexados pela busca “estilo Google”. */
-const CAMPOS_BUSCA = ['codigo','nome','descricao','cliente','familia','material','aplicacao','norma','especificacao','categoria','processo','tipo','planta','responsavel','observacoes'];
+const CAMPOS_BUSCA = ['codigo','nome','cliente','familia','material','norma','especificacao','planta','quadrante','numero_ad','observacoes'];
 
 /* Remove acentos e baixa a caixa para busca tolerante. */
 export function normaliza(txt) {
@@ -130,7 +130,7 @@ export function registrarRecente(userId, pecaId) {
 
 /* --------------------------------------------------------- versionamento --- */
 /* Campos da peça acompanhados no diff do histórico. */
-const CAMPOS_HIST = ['codigo','nome','descricao','cliente','familia','linha','processo','tipo','aplicacao','categoria','peso','material','acabamento','cor','status','planta','fornecedor','norma','especificacao','responsavel','data_revisao','observacoes'];
+const CAMPOS_HIST = ['codigo','nome','cliente','familia','quadrante','peso','material','acabamento','cor','status','planta','norma','especificacao','revisao_desenho','data_revisao_desenho','numero_ad','observacoes'];
 
 /** Diferença campo-a-campo entre a peça antes e depois (para o histórico). */
 export function diffPeca(antes, depois) {
@@ -264,6 +264,19 @@ export function urlDaFicha(codigo) {
   return `${base}biblioteca.html?codigo=${encodeURIComponent(codigo)}`;
 }
 export function qrPayload(peca) { return urlDaFicha(peca?.codigo || ''); }
+
+/* -------------------------------------------------- catálogos de especificação
+   Característica / Equipamento de Medição / Quem Mede — com mapas id→nome. */
+export async function catalogosEspec() {
+  const [car, eq, qm] = await Promise.all([
+    db.list('caracteristicas_ml').catch(() => []),
+    db.list('equipamentos_medicao').catch(() => []),
+    db.list('quem_mede').catch(() => [])
+  ]);
+  const ativos = arr => arr.filter(x => x.ativo !== false).sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+  const map = arr => Object.fromEntries(arr.map(x => [x.id, x.nome]));
+  return { car: ativos(car), eq: ativos(eq), qm: ativos(qm), carMap: map(car), eqMap: map(eq), qmMap: map(qm) };
+}
 
 /* ---------------------------------------------------------------- utils ---- */
 export function nowISO() { return new Date().toISOString(); }
