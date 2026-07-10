@@ -552,3 +552,21 @@ body.kiosk .rna-content { padding: 26px; }
 .op-exec-item.op-fora .op-fora-tag { display: inline; }
 .op-foto-thumb { height: 60px; border-radius: 8px; vertical-align: middle; }
 .op-sign__pad { border: 1px dashed var(--rna-border); border-radius: 10px; background: #fff; touch-action: none; cursor: crosshair; max-width: 100%; }
+
+/* Construtor Visual — radios de config + prévia em tempo real */
+.op-radios { display: flex; flex-wrap: wrap; gap: 8px; }
+.op-radio { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--rna-border); border-radius: 20px; padding: 5px 13px; font-size: 12.5px; cursor: pointer; }
+.op-radio input { accent-color: var(--rna-yellow-600); }
+.op-radio.active { border-color: var(--rna-yellow); background: var(--rna-yellow-soft); font-weight: 600; }
+.op-radio2 { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 12px; cursor: pointer; }
+.op-cfg-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.op-cfg { border: 1px solid var(--rna-border); border-radius: 12px; padding: 12px; }
+.op-cfg__title { margin-bottom: 8px; }
+.op-preview-wrap { position: sticky; top: 12px; background: var(--rna-gray-100); border: 1px dashed var(--rna-border); border-radius: 16px; padding: 14px; }
+.op-preview__label { font-size: 12px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--rna-gray); margin-bottom: 10px; }
+.op-preview-modal { border: 1px solid var(--rna-border); border-radius: 14px; background: var(--rna-surface); box-shadow: var(--rna-shadow); overflow: hidden; }
+.op-preview-modal__head { background: var(--rna-graphite); color: #fff; padding: 9px 14px; font-size: 13px; font-weight: 650; }
+.op-preview-modal__body { padding: 14px; }
+.op-preview-modal__foot { padding: 10px 14px; border-top: 1px solid var(--rna-border); display: flex; justify-content: flex-end; gap: 8px; }
+.op-ans-block:empty { display: none; }
+@media (max-width: 991px) { .op-preview-wrap { position: static; } .op-cfg-grid { grid-template-columns: 1fr; } }

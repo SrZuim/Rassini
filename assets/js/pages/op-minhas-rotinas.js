@@ -79,6 +79,7 @@ async function renderExec(plantao) {
   if (!exec) { state.view = 'lista'; return render(); }
   const a = await db.get('op_atividades', exec.atividade_id);
   const itens = await ATIV.itens(exec.atividade_id);
+  if (!itens.length) return renderExecUnica(exec, a);        // rotina = ação única
   const resultados = await ATIV.execItens(exec.id);
   const byItem = Object.fromEntries(resultados.map(r => [r.item_id, r]));
   UP = {};
@@ -116,6 +117,49 @@ async function renderExec(plantao) {
   $('#ex-na').addEventListener('click', () => confirmDialog('Marcar esta rotina como Não Aplicável?', async () => { await ATIV.marcarNA(exec.id); toast('Rotina marcada como N/A.', { type: 'info' }); voltarLista(); }, { title: 'Não aplicável', okLabel: 'Confirmar' }));
   $('#ex-pend').addEventListener('click', () => abrirPendencia(exec, a, plantao));
   $('#ex-concluir').addEventListener('click', () => concluir(exec, a, itens, byItem));
+}
+
+/* Rotina de ação única: card + Concluir (modal obs/foto) + N/A */
+function renderExecUnica(exec, a) {
+  $('#rna-content').innerHTML = head() + `
+    <div class="rna-card mb-3"><div class="rna-card__body d-flex flex-wrap align-items-center gap-3">
+      <div class="rna-stat__icon ic-soft-yellow" style="margin:0"><i class="bi bi-list-check"></i></div>
+      <div class="flex-fill"><h3 style="margin:0;font-size:16px">${a?.nome || '—'}</h3><small class="text-muted-2">${a?.descricao || ''}</small></div>
+      ${a?.obrigatoria ? '<span class="rna-badge badge-crit">Obrigatória</span>' : ''}
+      <button class="rna-btn rna-btn-ghost" id="ex-voltar"><i class="bi bi-arrow-left"></i> Voltar</button></div></div>
+    <div class="rna-card"><div class="rna-card__body text-center" style="padding:34px 20px">
+      <i class="bi bi-check2-circle" style="font-size:44px;color:var(--rna-yellow-600)"></i>
+      <h3 style="margin:12px 0 4px">${a?.nome || 'Rotina'}</h3>
+      <p class="text-muted-2">${a?.frequencia || ''}${a?.horario ? ` · ${a.horario}` : ''}</p>
+      <div class="d-flex gap-2 justify-content-center">
+        <button class="rna-btn rna-btn-primary rna-btn-lg" id="ex-concluir"><i class="bi bi-check2"></i> Concluir</button>
+        ${a?.permite_na ? `<button class="rna-btn rna-btn-ghost rna-btn-lg" id="ex-na">N/A</button>` : ''}
+      </div></div></div>`;
+  $('#ex-voltar').addEventListener('click', voltarLista);
+  $('#ex-na')?.addEventListener('click', () => confirmDialog('Marcar esta rotina como Não Aplicável?', async () => { await ATIV.marcarNA(exec.id); toast('Rotina marcada como N/A.', { type: 'info' }); voltarLista(); }, { title: 'Não aplicável', okLabel: 'Confirmar' }));
+  $('#ex-concluir').addEventListener('click', () => modalConcluirUnica(exec, a));
+}
+
+function modalConcluirUnica(exec, a) {
+  const obsMode = a?.exec_observacao || 'opcional', fotoMode = a?.exec_foto || 'opcional';
+  const obsHtml = obsMode === 'nao' ? '' : `<div class="col-12"><label class="form-label">Observação ${obsMode === 'obrigatoria' ? '<span class="text-danger">*</span>' : ''}</label><textarea class="form-control" id="mc-obs" rows="2" placeholder="${obsMode === 'obrigatoria' ? 'Obrigatória' : 'Opcional'}"></textarea></div>`;
+  const fotoHtml = fotoMode === 'nao' ? '' : `<div class="col-12"><label class="form-label">Foto ${fotoMode === 'obrigatoria' ? '<span class="text-danger">*</span>' : ''}</label><div id="mc-foto"></div></div>`;
+  const m = modal({ title: `Concluir · ${a?.nome || ''}`, content: `<div class="row g-3">${obsHtml}${fotoHtml}${!obsHtml && !fotoHtml ? '<div class="col-12 text-muted-2" style="font-size:13px">Confirme a conclusão desta rotina.</div>' : ''}</div>`, footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Cancelar</button><button class="rna-btn rna-btn-primary" id="mc-ok"><i class="bi bi-check2"></i> Concluir</button>` });
+  const up = fotoMode !== 'nao' ? initEvidenceUpload($('#mc-foto', m.host), { label: 'Foto', multiple: false }) : null;
+  $('#mc-ok', m.host).addEventListener('click', async () => {
+    const obs = obsMode === 'nao' ? '' : $('#mc-obs', m.host).value.trim();
+    if (obsMode === 'obrigatoria' && !obs) return toast('Observação obrigatória.', { type: 'warn' });
+    if (fotoMode === 'obrigatoria' && !up?.hasFiles()) return toast('Foto obrigatória.', { type: 'warn' });
+    const btn = $('#mc-ok', m.host); btn.disabled = true;
+    try {
+      let fotoUrl = null;
+      if (up?.hasFiles()) { const evs = await up.commit({ registro_tipo: 'op_rotina', registro_id: exec.id, usuario: USER }); if (evs[0]) fotoUrl = evs[0].url; }
+      if (fotoUrl || obs) await ATIV.salvarItem(exec.id, 'rotina', { valor: '', obs, foto: fotoUrl, ok: true, status: 'ok' });
+      await ATIV.concluirExec(exec.id, obs);
+      await db.log({ usuario: USER.nome, acao: `Concluiu rotina ${a?.codigo || a?.nome || ''}`, entidade: 'op_execucao', antes: 'pendente', depois: 'concluida' });
+      m.close(); toast(`Rotina “${a?.nome || ''}” concluída.`, { type: 'ok', title: 'Rotina' }); voltarLista();
+    } catch (err) { btn.disabled = false; console.error(err); toast('Erro ao concluir. ' + (err?.message || ''), { type: 'crit' }); }
+  });
 }
 
 function itemCard(it, res, i) {

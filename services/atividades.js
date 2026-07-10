@@ -43,6 +43,11 @@ export function matchAtribuicao(a, user, plantao) {
   }
 }
 
+/** Traduz a Frequência (Construtor Visual) para o tipo de agenda do motor. */
+export function agendaDeFrequencia(freq) {
+  return { 'Diária': 'diaria', 'Semanal': 'semanal', 'Mensal': 'mensal', 'Por turno': 'por_turno', 'Sob demanda': 'sob_demanda', 'A cada X horas': 'a_cada_x_horas' }[freq] || 'diaria';
+}
+
 /** Uma atividade "vence hoje" segundo sua agenda de recorrência. */
 export function venceHoje(agenda, dataISO, turno) {
   if (!agenda) return true;                                                 // sem agenda → sempre disponível

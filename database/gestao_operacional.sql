@@ -27,11 +27,17 @@ create table if not exists op_atividades (
   planta text, setor text, linha text, processo text, maquina text, cargo text, turno text,
   frequencia text, data_inicio date, data_fim date, horario text, tempo_estimado numeric,
   obrigatoria boolean default true, prioridade text, status text default 'rascunho',
+  exec_observacao text default 'opcional', exec_foto text default 'opcional', permite_na boolean default true, responsavel text,
   is_template boolean default false, anexos jsonb default '[]',
   created_by text, created_at date default now(), updated_at date default now()
 );
 create index if not exists op_atividades_tipo_idx   on op_atividades (tipo_slug);
 create index if not exists op_atividades_status_idx on op_atividades (status);
+-- Colunas do Construtor Visual (rotina ação-única) para quem já rodou fases anteriores:
+alter table op_atividades add column if not exists exec_observacao text default 'opcional';
+alter table op_atividades add column if not exists exec_foto text default 'opcional';
+alter table op_atividades add column if not exists permite_na boolean default true;
+alter table op_atividades add column if not exists responsavel text;
 
 create table if not exists op_atividade_itens (
   id text primary key default gen_random_uuid()::text,
@@ -42,13 +48,19 @@ create table if not exists op_atividade_itens (
   abrir_pendencia boolean default false, comentario_obrigatorio boolean default false,
   foto_obrigatoria boolean default false, obs_obrigatoria boolean default false, valor_numerico boolean default false,
   limite_min numeric, limite_max numeric, unidade text, peso numeric default 1,
-  qrcode text, codigo_barras text
+  qrcode text, codigo_barras text,
+  respostas jsonb default '["OK","NOK","N/A"]', cfg_ok jsonb, cfg_nok jsonb, cfg_na jsonb
 );
 -- Colunas da Fase 2 (checklists) para quem já rodou a Fase 1:
 alter table op_atividade_itens add column if not exists opcoes jsonb default '[]';
 alter table op_atividade_itens add column if not exists resposta_esperada text;
 alter table op_atividade_itens add column if not exists abrir_pendencia boolean default false;
 alter table op_atividade_itens add column if not exists comentario_obrigatorio boolean default false;
+-- Colunas do Construtor Visual (checklist OK/NOK/N-A com config por resposta):
+alter table op_atividade_itens add column if not exists respostas jsonb default '["OK","NOK","N/A"]';
+alter table op_atividade_itens add column if not exists cfg_ok jsonb;
+alter table op_atividade_itens add column if not exists cfg_nok jsonb;
+alter table op_atividade_itens add column if not exists cfg_na jsonb;
 create index if not exists op_itens_ativ_idx on op_atividade_itens (atividade_id);
 
 create table if not exists op_atribuicoes (
@@ -153,24 +165,16 @@ insert into op_categorias (nome, tipo_slug) values
  ('Segurança','checklist'),('Qualidade','checklist'),('Processo','checklist'),('5S','checklist')
 on conflict do nothing;
 
-insert into op_atividades (id, tipo_slug, nome, codigo, descricao, categoria, planta, cargo, frequencia, horario, tempo_estimado, obrigatoria, prioridade, status, is_template) values
- ('ativ-rot-001','rotina','Inspeção de Início de Turno','ROT-001','Verificações obrigatórias na abertura do turno.','Inspeção Final','Planta Rio Nova Iguaçu','','Diária','06:30',15,true,'Alta','publicada',false),
- ('ativ-rot-002','rotina','Lubrificação de Prensas','ROT-002','Rotina diária de lubrificação das prensas.','Lubrificação','','auditor','Diária','07:00',20,true,'Média','publicada',false),
- ('ativ-rot-003','rotina','Rotina 5S da Célula','ROT-003','Organização e limpeza 5S do posto.','5S','','','Diária','',10,false,'Baixa','publicada',false),
- ('tpl-rot-setup','rotina','Template — Setup de Máquina','TPL-SETUP','Modelo reutilizável de rotina de setup.','Setup','','','Sob demanda','',30,false,'Média','publicada',true)
+-- Rotinas = AÇÃO ÚNICA (config de Concluir). Sem itens.
+insert into op_atividades (id, tipo_slug, nome, codigo, descricao, categoria, planta, setor, responsavel, frequencia, horario, exec_observacao, exec_foto, permite_na, obrigatoria, status, is_template) values
+ ('ativ-rot-001','rotina','Inspeção de Início de Turno','ROT-001','Verificações obrigatórias na abertura do turno.','Inspeção Final','Planta Rio Nova Iguaçu','Estamparia','todos','Diária','06:30','obrigatoria','opcional',true,true,'publicada',false),
+ ('ativ-rot-002','rotina','Lubrificação de Prensas','ROT-002','Rotina diária de lubrificação das prensas.','Lubrificação','','Estamparia','todos','Diária','07:00','opcional','obrigatoria',true,true,'publicada',false),
+ ('ativ-rot-003','rotina','Reunião de Sucata','ROT-003','Alinhamento diário sobre índices de sucata da célula.','5S','','',(select id::text from usuarios where lower(email)='ana@rassini.com' limit 1),'Diária','08:00','opcional','nao',true,false,'publicada',false),
+ ('tpl-rot-setup','rotina','Template — Setup de Máquina','TPL-SETUP','Modelo reutilizável de rotina de setup.','Setup','','','todos','Sob demanda','','opcional','opcional',true,false,'publicada',true)
 on conflict (id) do nothing;
 
-insert into op_atividade_itens (id, atividade_id, ordem, nome, descricao, tipo_resposta, foto_obrigatoria, obs_obrigatoria, valor_numerico, limite_min, limite_max, unidade, peso) values
- ('it-101','ativ-rot-001',1,'Verificar uso de EPIs da equipe','','checkbox',false,true,false,null,null,'',1),
- ('it-102','ativ-rot-001',2,'Pressão da linha de ar','Manômetro do painel central','numero',false,false,true,4,6,'bar',2),
- ('it-103','ativ-rot-001',3,'Foto do painel de indicadores','','foto',true,false,false,null,null,'',1),
- ('it-201','ativ-rot-002',1,'Nível de óleo do reservatório','','numero',false,false,true,20,80,'%',2),
- ('it-202','ativ-rot-002',2,'Aplicar graxa nos pontos marcados','','checkbox',false,false,false,null,null,'',1),
- ('it-203','ativ-rot-002',3,'Foto do reservatório após lubrificação','','foto',true,false,false,null,null,'',1),
- ('it-301','ativ-rot-003',1,'Seiri — descarte do desnecessário','','checkbox',false,false,false,null,null,'',1),
- ('it-302','ativ-rot-003',2,'Seiton — organização do posto','','checkbox',false,false,false,null,null,'',1),
- ('it-303','ativ-rot-003',3,'Seiso — limpeza geral','','checkbox',false,false,false,null,null,'',1)
-on conflict (id) do nothing;
+-- limpa itens legados de rotina (rotina agora é ação única)
+delete from op_atividade_itens where atividade_id in ('ativ-rot-001','ativ-rot-002','ativ-rot-003');
 
 insert into op_atribuicoes (id, atividade_id, alvo_tipo, alvo_valor, planta, turno, prioridade) values
  ('atr-1','ativ-rot-001','planta_turno','','Planta Rio Nova Iguaçu','',10),
@@ -182,18 +186,17 @@ insert into op_agenda (id, atividade_id, tipo, dias) values
  ('ag-1','ativ-rot-001','diaria','[]'),('ag-2','ativ-rot-002','diaria','[]'),('ag-3','ativ-rot-003','diaria','[]')
 on conflict (id) do nothing;
 
--- ---- Fase 2: Checklist de exemplo (CHK-001) ----
-insert into op_atividades (id, tipo_slug, nome, codigo, descricao, categoria, cargo, frequencia, horario, tempo_estimado, obrigatoria, prioridade, status, is_template) values
- ('ativ-chk-001','checklist','Checklist de Segurança da Linha','CHK-001','Verificações de segurança na abertura do turno.','Segurança','auditor','Diária','06:45',12,true,'Alta','publicada',false)
+-- ---- Checklist de exemplo (CHK-001) — itens OK/NOK/N-A com config por resposta ----
+insert into op_atividades (id, tipo_slug, nome, codigo, descricao, categoria, responsavel, frequencia, horario, obrigatoria, status, is_template) values
+ ('ativ-chk-001','checklist','Checklist de Segurança da Linha','CHK-001','Verificações de segurança na abertura do turno.','Segurança','todos','Diária','06:45',true,'publicada',false)
 on conflict (id) do nothing;
 
-insert into op_atividade_itens (id, atividade_id, ordem, nome, tipo_resposta, opcoes, resposta_esperada, abrir_pendencia, comentario_obrigatorio, foto_obrigatoria, valor_numerico, limite_min, limite_max, unidade, peso) values
- ('itc-001','ativ-chk-001',1,'EPIs completos e em bom estado?','sim_nao','[]','Sim',true,false,false,false,null,null,'',2),
- ('itc-002','ativ-chk-001',2,'Temperatura do óleo hidráulico','numero','[]','',true,false,false,true,35,60,'°C',1),
- ('itc-003','ativ-chk-001',3,'Condição geral da célula','lista','["Bom","Regular","Ruim"]','Bom',false,false,false,false,null,null,'',1),
- ('itc-004','ativ-chk-001',4,'Riscos identificados (marque todos)','multipla','["Vazamento","Ruído anormal","Piso escorregadio","Nenhum"]','',false,true,false,false,null,null,'',1),
- ('itc-005','ativ-chk-001',5,'Foto do quadro de gestão à vista','foto','[]','',false,false,true,false,null,null,'',1),
- ('itc-006','ativ-chk-001',6,'Assinatura do responsável','assinatura','[]','',false,false,false,false,null,null,'',1)
+delete from op_atividade_itens where atividade_id='ativ-chk-001';
+insert into op_atividade_itens (id, atividade_id, ordem, nome, tipo_resposta, respostas, cfg_ok, cfg_nok, cfg_na, peso) values
+ ('itc-001','ativ-chk-001',1,'EPIs completos e em bom estado?','oknokna','["OK","NOK","N/A"]','{"observacao":"nao","foto":"nao","criar_pendencia":false}','{"observacao":"obrigatoria","foto":"opcional","criar_pendencia":true}','{"observacao":"opcional","foto":"nao","criar_pendencia":false}',2),
+ ('itc-002','ativ-chk-001',2,'Temperatura do óleo dentro do padrão?','oknokna','["OK","NOK","N/A"]','{"observacao":"nao","foto":"nao","criar_pendencia":false}','{"observacao":"opcional","foto":"nao","criar_pendencia":true}','{"observacao":"opcional","foto":"nao","criar_pendencia":false}',1),
+ ('itc-003','ativ-chk-001',3,'Limpeza e organização (5S) da célula','oknokna','["OK","NOK","N/A"]','{"observacao":"nao","foto":"nao","criar_pendencia":false}','{"observacao":"nao","foto":"obrigatoria","criar_pendencia":true}','{"observacao":"opcional","foto":"nao","criar_pendencia":false}',1),
+ ('itc-004','ativ-chk-001',4,'Registro de não-conforme atualizado?','oknokna','["OK","NOK","N/A"]','{"observacao":"nao","foto":"nao","criar_pendencia":false}','{"observacao":"obrigatoria","foto":"opcional","criar_pendencia":true}','{"observacao":"opcional","foto":"nao","criar_pendencia":false}',1)
 on conflict (id) do nothing;
 
 insert into op_atribuicoes (id, atividade_id, alvo_tipo, alvo_valor, prioridade) values
