@@ -551,3 +551,4 @@ body.kiosk .rna-content { padding: 26px; }
 .op-fora-tag { display: none; color: var(--rna-crit); font-weight: 600; margin-left: 6px; }
 .op-exec-item.op-fora .op-fora-tag { display: inline; }
 .op-foto-thumb { height: 60px; border-radius: 8px; vertical-align: middle; }
+.op-sign__pad { border: 1px dashed var(--rna-border); border-radius: 10px; background: #fff; touch-action: none; cursor: crosshair; max-width: 100%; }

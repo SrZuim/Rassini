@@ -38,10 +38,17 @@ create table if not exists op_atividade_itens (
   atividade_id text references op_atividades(id) on delete cascade,
   ordem int default 0, nome text not null, descricao text,
   tipo_resposta text default 'checkbox',
+  opcoes jsonb default '[]', resposta_esperada text,
+  abrir_pendencia boolean default false, comentario_obrigatorio boolean default false,
   foto_obrigatoria boolean default false, obs_obrigatoria boolean default false, valor_numerico boolean default false,
   limite_min numeric, limite_max numeric, unidade text, peso numeric default 1,
   qrcode text, codigo_barras text
 );
+-- Colunas da Fase 2 (checklists) para quem já rodou a Fase 1:
+alter table op_atividade_itens add column if not exists opcoes jsonb default '[]';
+alter table op_atividade_itens add column if not exists resposta_esperada text;
+alter table op_atividade_itens add column if not exists abrir_pendencia boolean default false;
+alter table op_atividade_itens add column if not exists comentario_obrigatorio boolean default false;
 create index if not exists op_itens_ativ_idx on op_atividade_itens (atividade_id);
 
 create table if not exists op_atribuicoes (
@@ -142,7 +149,8 @@ insert into op_tipos_atividade (slug, nome, cor, icone) values
 on conflict (slug) do nothing;
 
 insert into op_categorias (nome, tipo_slug) values
- ('Inspeção Final','rotina'),('Lubrificação','rotina'),('Setup','rotina'),('Segurança','rotina'),('5S','rotina'),('Qualidade','rotina')
+ ('Inspeção Final','rotina'),('Lubrificação','rotina'),('Setup','rotina'),('Segurança','rotina'),('5S','rotina'),('Qualidade','rotina'),
+ ('Segurança','checklist'),('Qualidade','checklist'),('Processo','checklist'),('5S','checklist')
 on conflict do nothing;
 
 insert into op_atividades (id, tipo_slug, nome, codigo, descricao, categoria, planta, cargo, frequencia, horario, tempo_estimado, obrigatoria, prioridade, status, is_template) values
@@ -172,4 +180,26 @@ on conflict (id) do nothing;
 
 insert into op_agenda (id, atividade_id, tipo, dias) values
  ('ag-1','ativ-rot-001','diaria','[]'),('ag-2','ativ-rot-002','diaria','[]'),('ag-3','ativ-rot-003','diaria','[]')
+on conflict (id) do nothing;
+
+-- ---- Fase 2: Checklist de exemplo (CHK-001) ----
+insert into op_atividades (id, tipo_slug, nome, codigo, descricao, categoria, cargo, frequencia, horario, tempo_estimado, obrigatoria, prioridade, status, is_template) values
+ ('ativ-chk-001','checklist','Checklist de Segurança da Linha','CHK-001','Verificações de segurança na abertura do turno.','Segurança','auditor','Diária','06:45',12,true,'Alta','publicada',false)
+on conflict (id) do nothing;
+
+insert into op_atividade_itens (id, atividade_id, ordem, nome, tipo_resposta, opcoes, resposta_esperada, abrir_pendencia, comentario_obrigatorio, foto_obrigatoria, valor_numerico, limite_min, limite_max, unidade, peso) values
+ ('itc-001','ativ-chk-001',1,'EPIs completos e em bom estado?','sim_nao','[]','Sim',true,false,false,false,null,null,'',2),
+ ('itc-002','ativ-chk-001',2,'Temperatura do óleo hidráulico','numero','[]','',true,false,false,true,35,60,'°C',1),
+ ('itc-003','ativ-chk-001',3,'Condição geral da célula','lista','["Bom","Regular","Ruim"]','Bom',false,false,false,false,null,null,'',1),
+ ('itc-004','ativ-chk-001',4,'Riscos identificados (marque todos)','multipla','["Vazamento","Ruído anormal","Piso escorregadio","Nenhum"]','',false,true,false,false,null,null,'',1),
+ ('itc-005','ativ-chk-001',5,'Foto do quadro de gestão à vista','foto','[]','',false,false,true,false,null,null,'',1),
+ ('itc-006','ativ-chk-001',6,'Assinatura do responsável','assinatura','[]','',false,false,false,false,null,null,'',1)
+on conflict (id) do nothing;
+
+insert into op_atribuicoes (id, atividade_id, alvo_tipo, alvo_valor, prioridade) values
+ ('atr-chk-1','ativ-chk-001','cargo','auditor',50)
+on conflict (id) do nothing;
+
+insert into op_agenda (id, atividade_id, tipo, dias) values
+ ('ag-chk-1','ativ-chk-001','diaria','[]')
 on conflict (id) do nothing;

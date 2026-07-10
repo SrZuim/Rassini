@@ -49,7 +49,7 @@ export const MODULES = [
   /* [GESTÃO OPERACIONAL] Novo fluxo do auditor — atividades configuráveis atribuídas automaticamente. */
   { id:'op_plantao',    label:'Plantão',              short:'Plantão',             page:'op-plantao.html',    icon:'bi-broadcast',         group:'Operações',   color:'green',  desc:'Inicie o plantão e veja as atividades atribuídas a você.' },
   { id:'op_rotinas',    label:'Minhas Rotinas',       short:'Minhas Rotinas',      page:'op-minhas-rotinas.html', icon:'bi-list-check',    group:'Operações',   color:'yellow', desc:'Execute as rotinas atribuídas a você.' },
-  { id:'op_checklists', label:'Meus Checklists',      short:'Meus Checklists',     page:'op-em-breve.html',   icon:'bi-ui-checks',         group:'Operações',   color:'orange', desc:'Checklists atribuídos (próxima fase).' },
+  { id:'op_checklists', label:'Meus Checklists',      short:'Meus Checklists',     page:'op-meus-checklists.html', icon:'bi-ui-checks',     group:'Operações',   color:'orange', desc:'Execute os checklists atribuídos a você.' },
   { id:'op_auditorias', label:'Minhas Auditorias',    short:'Minhas Auditorias',   page:'op-em-breve.html',   icon:'bi-search',            group:'Operações',   color:'blue',   desc:'Auditorias atribuídas (próxima fase).' },
   { id:'op_pendencias', label:'Pendências',           short:'Pendências',          page:'op-pendencias.html', icon:'bi-exclamation-circle',group:'Operações',   color:'red',    desc:'Suas pendências abertas.' },
   { id:'op_historico',  label:'Histórico',            short:'Histórico',           page:'op-historico.html',  icon:'bi-clock-history',     group:'Operações',   color:'gray',   desc:'Histórico das suas atividades.' },
@@ -96,7 +96,7 @@ export const RBAC = {
     rotinas:['view','edit'], diario:['view','create','edit'],
     auditoria:['view','create','edit'], auditorias:[],
     biblioteca:['view','export'],
-    gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view'], op_auditorias:['view'], op_pendencias:['view','create'], op_historico:['view'],
+    gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view'], op_pendencias:['view','create'], op_historico:['view'],
     checklist:['view','create','edit'], ocorrencias:[], planos:[],
     powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },

@@ -24,11 +24,14 @@ async function render() {
   if (!plantao) return renderIniciar();
 
   await ATIV.montarPlantao(USER, plantao, 'rotina');           // idempotente
+  await ATIV.montarPlantao(USER, plantao, 'checklist');
   const execs = await ATIV.execucoesDo(plantao.id, USER, 'rotina');
+  const execsChk = await ATIV.execucoesDo(plantao.id, USER, 'checklist');
   const r = ATIV.resumo(execs);
+  const rChk = ATIV.resumo(execsChk);
   const fin = await ATIV.podeFinalizar(plantao.id, USER);
   const pendAbertas = (await ATIV.pendenciasDe(USER)).filter(p => p.status !== 'resolvida');
-  const proxima = execs.find(e => e.status === 'pendente' || e.status === 'em_andamento');
+  const proxima = [...execs, ...execsChk].find(e => e.status === 'pendente' || e.status === 'em_andamento');
 
   $('#rna-content').innerHTML = head() + `
     <div class="rna-card mb-3" style="border-left:4px solid var(--rna-ok)"><div class="rna-card__body">
@@ -42,21 +45,22 @@ async function render() {
     </div>
     <div class="row g-3 mb-3">
       ${stat('bi-list-check', 'ic-soft-yellow', r.total, 'Rotinas atribuídas')}
-      ${stat('bi-ui-checks', 'ic-soft-orange', '—', 'Checklists · Fase 2')}
+      ${stat('bi-ui-checks', 'ic-soft-orange', rChk.total, 'Checklists atribuídos')}
       ${stat('bi-search', 'ic-soft-blue', '—', 'Auditorias · Fase 3')}
       ${stat('bi-exclamation-circle', 'ic-soft-red', pendAbertas.length, 'Pendências')}
     </div>
     <div class="rna-card mb-3"><div class="rna-card__body">
-      <div class="d-flex justify-content-between mb-1"><b>Progresso do plantão</b><b>${r.concluidas}/${r.total} · ${r.pct}%</b></div>
-      <div class="rna-progress" style="height:12px"><span style="width:${r.pct}%;background:${r.pct === 100 ? 'var(--rna-ok)' : 'var(--rna-yellow)'}"></span></div>
-      ${r.obrigPend ? `<small class="text-muted-2"><i class="bi bi-lock"></i> ${r.obrigPend} rotina(s) obrigatória(s) pendente(s) — fechamento bloqueado</small>` : `<small style="color:var(--rna-ok)"><i class="bi bi-unlock"></i> Todas as obrigatórias concluídas — pode finalizar</small>`}
+      ${(() => { const tot = r.total + rChk.total, con = r.concluidas + rChk.concluidas, pct = tot ? Math.round(con / tot * 100) : 100, obr = fin.totalPend; return `
+      <div class="d-flex justify-content-between mb-1"><b>Progresso do plantão</b><b>${con}/${tot} · ${pct}%</b></div>
+      <div class="rna-progress" style="height:12px"><span style="width:${pct}%;background:${pct === 100 ? 'var(--rna-ok)' : 'var(--rna-yellow)'}"></span></div>
+      ${obr ? `<small class="text-muted-2"><i class="bi bi-lock"></i> ${obr} atividade(s) obrigatória(s) pendente(s) — fechamento bloqueado</small>` : `<small style="color:var(--rna-ok)"><i class="bi bi-unlock"></i> Todas as obrigatórias concluídas — pode finalizar</small>`}`; })()}
     </div></div>
     <div class="row g-3">
       <div class="col-lg-7"><div class="rna-card h-100"><div class="rna-card__head"><h3><i class="bi bi-play-circle"></i> Próxima atividade</h3>
         <a href="op-minhas-rotinas.html" class="rna-btn rna-btn-ghost rna-btn-sm">Ver todas <i class="bi bi-arrow-right"></i></a></div>
         <div class="rna-card__body">${proxima ? proxCard(proxima) : `<div class="empty-state"><i class="bi bi-check2-circle"></i><div>Nenhuma atividade pendente. Bom trabalho!</div></div>`}</div></div></div>
       <div class="col-lg-5"><div class="rna-card h-100"><div class="rna-card__head"><h3><i class="bi bi-clock-history"></i> Últimas atividades</h3></div>
-        <div class="rna-card__body p-0">${ultimas(execs)}</div></div></div>
+        <div class="rna-card__body p-0">${ultimas([...execs, ...execsChk])}</div></div></div>
     </div>`;
 
   const startMs = new Date(plantao.inicio_iso || Date.now()).getTime();
@@ -75,12 +79,14 @@ function stat(icon, cor, val, label) {
 }
 function proxCard(e) {
   const a = e.atividade || {};
-  return `<a href="op-minhas-rotinas.html?exec=${e.id}" class="op-next" style="text-decoration:none;color:inherit">
+  const chk = e.tipo_slug === 'checklist';
+  const href = `${chk ? 'op-meus-checklists' : 'op-minhas-rotinas'}.html?exec=${e.id}`;
+  return `<a href="${href}" class="op-next" style="text-decoration:none;color:inherit">
     <div class="d-flex align-items-center gap-3">
-      <div class="rna-stat__icon ic-soft-yellow" style="margin:0"><i class="bi bi-list-check"></i></div>
+      <div class="rna-stat__icon ${chk ? 'ic-soft-orange' : 'ic-soft-yellow'}" style="margin:0"><i class="bi ${chk ? 'bi-ui-checks' : 'bi-list-check'}"></i></div>
       <div class="flex-fill"><b style="font-size:15px">${a.nome || '—'}</b>
         <div class="op-item__resp"><span>${a.codigo || ''}</span><span><i class="bi bi-tag"></i> ${a.categoria || '—'}</span>${a.horario ? `<span><i class="bi bi-clock"></i> ${a.horario}</span>` : ''}${a.obrigatoria ? '<span class="rna-badge badge-crit">Obrigatória</span>' : ''}</div></div>
-      <span class="rna-btn rna-btn-primary"><i class="bi bi-play-fill"></i> Executar</span>
+      <span class="rna-btn rna-btn-primary"><i class="bi bi-play-fill"></i> ${chk ? 'Responder' : 'Executar'}</span>
     </div></a>`;
 }
 function ultimas(execs) {

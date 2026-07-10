@@ -158,6 +158,14 @@ export function foraDoLimite(item, valor) {
   return false;
 }
 
+/** Resposta de um item de checklist está conforme? (limite numérico ou resposta esperada). */
+export function avaliarResposta(item, valor) {
+  if (item.valor_numerico) return !foraDoLimite(item, valor);
+  const esp = String(item.resposta_esperada || '').trim();
+  if (esp) return String(valor ?? '').trim().toLowerCase() === esp.toLowerCase();
+  return true;
+}
+
 /* ---------------------------------------------------------- pendências ----- */
 export async function abrirPendencia({ atividade_id, execucao_id, plantao_id, descricao, aberta_por }) {
   return db.insert('op_pendencias', { atividade_id, execucao_id, plantao_id, descricao, status: 'aberta', aberta_por, responsavel: null, quando: nowISO() });

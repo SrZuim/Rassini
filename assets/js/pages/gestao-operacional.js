@@ -15,9 +15,11 @@ let USER, CAN_EDIT, CAN_DELETE;
 const state = { tab: 'rotinas', view: 'lista', ativId: null };
 const ROLES = ['admin', 'supervisor', 'auditor'];
 const ABAS = [
-  ['rotinas', 'bi-list-check', 'Rotinas'], ['categorias', 'bi-tags', 'Categorias'], ['tipos', 'bi-collection', 'Tipos de Atividades'],
+  ['rotinas', 'bi-list-check', 'Rotinas'], ['checklists', 'bi-ui-checks', 'Checklists'], ['categorias', 'bi-tags', 'Categorias'], ['tipos', 'bi-collection', 'Tipos de Atividades'],
   ['atribuicoes', 'bi-diagram-2', 'Atribuições'], ['agenda', 'bi-calendar-week', 'Agenda'], ['templates', 'bi-files', 'Templates'], ['indicadores', 'bi-bar-chart', 'Indicadores']
 ];
+const TIPO_LABEL = { rotina: { sing: 'rotina', Sing: 'Rotina', plur: 'Rotinas', icon: 'bi-list-check' }, checklist: { sing: 'checklist', Sing: 'Checklist', plur: 'Checklists', icon: 'bi-ui-checks' } };
+function curTipo() { return state.tab === 'checklists' ? 'checklist' : 'rotina'; }
 
 const ctx = await mountShell();
 if (ctx) { USER = ctx.user; CAN_EDIT = can(USER.role, 'gestao_op', 'edit'); CAN_DELETE = can(USER.role, 'gestao_op', 'delete'); render(); }
@@ -35,8 +37,8 @@ function mount(html, extraHead = '') {
 }
 
 function render() {
-  if (state.tab === 'rotinas' && state.view === 'editor') return renderEditor();
-  if (state.tab === 'rotinas') return renderRotinas();
+  if ((state.tab === 'rotinas' || state.tab === 'checklists') && state.view === 'editor') return renderEditor(curTipo());
+  if (state.tab === 'rotinas' || state.tab === 'checklists') return renderLista(curTipo());
   if (state.tab === 'categorias') return renderCategorias();
   if (state.tab === 'tipos') return renderTipos();
   if (state.tab === 'atribuicoes') return renderAtribuicoesOverview();
@@ -45,9 +47,10 @@ function render() {
   if (state.tab === 'indicadores') return renderIndicadores();
 }
 
-/* ------------------------------------------------------------- Rotinas ----- */
-async function renderRotinas() {
-  const ativs = (await db.list('op_atividades')).filter(a => a.tipo_slug === 'rotina' && !a.is_template);
+/* --------------------------------------------------- Rotinas / Checklists -- */
+async function renderLista(tipo) {
+  const L = TIPO_LABEL[tipo];
+  const ativs = (await db.list('op_atividades')).filter(a => a.tipo_slug === tipo && !a.is_template);
   const linha = a => `<tr>
     <td class="cell-strong">${a.nome}<div class="cell-sub">${a.codigo || ''}</div></td>
     <td>${a.categoria || '—'}</td><td class="cell-sub">${a.planta || 'Todas'}</td>
@@ -58,10 +61,10 @@ async function renderRotinas() {
       <button class="rna-btn rna-btn-ghost rna-btn-sm" data-dup="${a.id}" title="Duplicar"><i class="bi bi-files"></i></button>
       <button class="rna-btn rna-btn-ghost rna-btn-sm" data-arch="${a.id}" title="${a.status === 'arquivada' ? 'Publicar' : 'Arquivar'}"><i class="bi ${a.status === 'arquivada' ? 'bi-upload' : 'bi-archive'}"></i></button>
       ${CAN_DELETE ? `<button class="rna-btn rna-btn-ghost rna-btn-sm" data-del="${a.id}"><i class="bi bi-trash text-danger"></i></button>` : ''}` : ''}</td></tr>`;
-  mount(`<div class="rna-card"><div class="rna-card__head"><h3><i class="bi bi-list-check"></i> Rotinas <span class="rna-badge badge-info">${ativs.length}</span></h3></div>
-    <div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table"><thead><tr><th>Rotina</th><th>Categoria</th><th>Planta</th><th>Obrig.</th><th>Status</th><th></th></tr></thead>
-      <tbody>${ativs.length ? ativs.map(linha).join('') : `<tr><td colspan="6"><div class="empty-state"><i class="bi bi-inbox"></i><div>Nenhuma rotina cadastrada. Clique em “Nova rotina”.</div></div></td></tr>`}</tbody></table></div></div>`,
-    CAN_EDIT ? `<button class="rna-btn rna-btn-primary" id="btn-nova"><i class="bi bi-plus-lg"></i> Nova rotina</button>` : '');
+  mount(`<div class="rna-card"><div class="rna-card__head"><h3><i class="bi ${L.icon}"></i> ${L.plur} <span class="rna-badge badge-info">${ativs.length}</span></h3></div>
+    <div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table"><thead><tr><th>${L.Sing}</th><th>Categoria</th><th>Planta</th><th>Obrig.</th><th>Status</th><th></th></tr></thead>
+      <tbody>${ativs.length ? ativs.map(linha).join('') : `<tr><td colspan="6"><div class="empty-state"><i class="bi bi-inbox"></i><div>Nenhum(a) ${L.sing} cadastrado(a). Clique em “Novo(a) ${L.sing}”.</div></div></td></tr>`}</tbody></table></div></div>`,
+    CAN_EDIT ? `<button class="rna-btn rna-btn-primary" id="btn-nova"><i class="bi bi-plus-lg"></i> Novo(a) ${L.sing}</button>` : '');
 
   $('#btn-nova')?.addEventListener('click', () => { state.ativId = null; state.view = 'editor'; render(); });
   $$('[data-edit]').forEach(b => b.addEventListener('click', () => { state.ativId = b.dataset.edit; state.view = 'editor'; render(); }));
@@ -72,11 +75,12 @@ async function renderRotinas() {
 
 let edItens = [], edAtrs = [], edAgenda = { tipo: 'diaria', dias: [], ref: '', intervalo_horas: null };
 
-async function renderEditor() {
+async function renderEditor(tipo = 'rotina') {
+  const L = TIPO_LABEL[tipo];
   const isNew = !state.ativId;
-  let a = { tipo_slug: 'rotina', status: 'rascunho', obrigatoria: true, prioridade: 'Média', frequencia: 'Diária', anexos: [] };
+  let a = { tipo_slug: tipo, status: 'rascunho', obrigatoria: true, prioridade: 'Média', frequencia: 'Diária', anexos: [] };
   if (!isNew) { a = await db.get('op_atividades', state.ativId) || a; }
-  const cats = (await db.list('op_categorias')).filter(c => c.ativo !== false && c.tipo_slug === 'rotina');
+  const cats = (await db.list('op_categorias')).filter(c => c.ativo !== false && c.tipo_slug === tipo);
   edItens = isNew ? [] : (await ATIV.itens(a.id)).map(clone);
   edAtrs = isNew ? [] : (await db.list('op_atribuicoes', { filter: { atividade_id: a.id } })).map(clone);
   const ags = isNew ? [] : (await db.list('op_agenda', { filter: { atividade_id: a.id } }));
@@ -90,7 +94,7 @@ async function renderEditor() {
   mount(`
     <div class="rna-card mb-3"><div class="rna-card__body d-flex align-items-center gap-2">
       <i class="bi bi-pencil-square" style="font-size:20px;color:var(--rna-yellow-600)"></i>
-      <b>${isNew ? 'Nova rotina' : `Editar ${a.codigo || a.nome}`}</b></div></div>
+      <b>${isNew ? `Novo(a) ${L.sing}` : `Editar ${a.codigo || a.nome}`}</b></div></div>
 
     <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-info-circle"></i> Informações gerais</h3></div>
       <div class="rna-card__body"><div class="row g-3">
@@ -108,7 +112,7 @@ async function renderEditor() {
         <div class="col-md-4 d-flex align-items-end"><label class="form-check"><input type="checkbox" class="form-check-input" data-a="obrigatoria" ${a.obrigatoria ? 'checked' : ''}> <span class="ms-1">Obrigatória</span></label></div>
       </div></div></div>
 
-    <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-card-checklist"></i> Itens da rotina</h3>
+    <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-card-checklist"></i> Itens do(a) ${L.sing}</h3>
       <button class="rna-btn rna-btn-ghost rna-btn-sm" id="add-item"><i class="bi bi-plus-lg"></i> Adicionar item</button></div>
       <div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table bib-edit-table" id="ed-itens"></table></div></div>
 
@@ -124,18 +128,18 @@ async function renderEditor() {
       <button class="rna-btn rna-btn-primary rna-btn-lg" id="ed-save"><i class="bi bi-check2"></i> ${isNew ? 'Criar rotina' : 'Salvar'}</button>
     </div>`);
 
-  renderItens(); renderAtrs(); renderAgenda();
-  $('#add-item').addEventListener('click', () => { edItens.push(blankItem()); renderItens(); });
+  renderItens(tipo); renderAtrs(); renderAgenda();
+  $('#add-item').addEventListener('click', () => { edItens.push(blankItem()); renderItens(tipo); });
   $('#add-atr').addEventListener('click', () => { edAtrs.push({ alvo_tipo: 'planta_turno', alvo_valor: '', planta: '', turno: '' }); renderAtrs(); });
-  $('#add-cat').addEventListener('click', novaCategoria);
+  $('#add-cat').addEventListener('click', () => novaCategoria(tipo));
   $('#ed-cancel').addEventListener('click', () => { state.view = 'lista'; render(); });
-  $('#ed-save').addEventListener('click', () => salvar(isNew, a));
+  $('#ed-save').addEventListener('click', () => salvar(isNew, a, tipo));
 }
 
-function renderItens() {
+function renderItens(tipo = 'rotina') {
   const t = $('#ed-itens');
   const chk = (m, f) => `<input type="checkbox" class="form-check-input" data-if="${f}" ${m[f] ? 'checked' : ''}>`;
-  const row = (m, i) => `<tr data-irow="${i}">
+  const rowRot = (m, i) => `<tr data-irow="${i}">
     <td><input class="form-control form-control-sm" data-if="nome" value="${esc(m.nome)}" style="min-width:150px"></td>
     <td><select class="form-select form-select-sm" data-if="tipo_resposta" style="width:110px">${['checkbox', 'numero', 'texto', 'foto'].map(o => `<option ${o === m.tipo_resposta ? 'selected' : ''}>${o}</option>`).join('')}</select></td>
     <td class="text-center">${chk(m, 'valor_numerico')}</td>
@@ -145,20 +149,44 @@ function renderItens() {
     <td class="text-center">${chk(m, 'foto_obrigatoria')}</td>
     <td class="text-center">${chk(m, 'obs_obrigatoria')}</td>
     <td><input class="form-control form-control-sm" data-if="peso" value="${esc(m.peso)}" style="width:56px" inputmode="decimal"></td>
-    <td class="bib-row-actions">
+    ${acoes(i)}</tr>`;
+  const rowChk = (m, i) => `<tr data-irow="${i}">
+    <td><input class="form-control form-control-sm" data-if="nome" value="${esc(m.nome)}" style="min-width:160px"></td>
+    <td><select class="form-select form-select-sm" data-if="tipo_resposta" style="width:130px">${DATA.OP_TIPOS_RESPOSTA.map(o => `<option value="${o.slug}" ${o.slug === m.tipo_resposta ? 'selected' : ''}>${o.nome}</option>`).join('')}</select></td>
+    <td><input class="form-control form-control-sm" data-if="opcoes" value="${esc((m.opcoes || []).join(', '))}" placeholder="A, B, C" style="min-width:130px"></td>
+    <td><input class="form-control form-control-sm" data-if="resposta_esperada" value="${esc(m.resposta_esperada)}" placeholder="ex.: Sim" style="width:100px"></td>
+    <td><input class="form-control form-control-sm" data-if="limite_min" value="${esc(m.limite_min)}" style="width:66px" inputmode="decimal"></td>
+    <td><input class="form-control form-control-sm" data-if="limite_max" value="${esc(m.limite_max)}" style="width:66px" inputmode="decimal"></td>
+    <td><input class="form-control form-control-sm" data-if="unidade" value="${esc(m.unidade)}" style="width:54px"></td>
+    <td class="text-center">${chk(m, 'foto_obrigatoria')}</td>
+    <td class="text-center">${chk(m, 'comentario_obrigatorio')}</td>
+    <td class="text-center">${chk(m, 'abrir_pendencia')}</td>
+    <td><input class="form-control form-control-sm" data-if="peso" value="${esc(m.peso)}" style="width:52px" inputmode="decimal"></td>
+    ${acoes(i)}</tr>`;
+  const acoes = i => `<td class="bib-row-actions">
       <button class="rna-icon-mini" data-iup="${i}"><i class="bi bi-chevron-up"></i></button>
       <button class="rna-icon-mini" data-idown="${i}"><i class="bi bi-chevron-down"></i></button>
       <button class="rna-icon-mini" data-idup="${i}"><i class="bi bi-files"></i></button>
-      <button class="rna-icon-mini" data-idel="${i}"><i class="bi bi-trash text-danger"></i></button></td></tr>`;
-  t.innerHTML = `<thead><tr><th>Item</th><th>Tipo</th><th>Valor nº</th><th>Lim. mín</th><th>Lim. máx</th><th>Un.</th><th>Foto obr.</th><th>Obs obr.</th><th>Peso</th><th></th></tr></thead>
-    <tbody>${edItens.map(row).join('') || `<tr><td colspan="10" class="cell-sub" style="padding:14px">Nenhum item. Clique em “Adicionar item”.</td></tr>`}</tbody>`;
-  t.querySelectorAll('[data-irow]').forEach(tr => { const i = +tr.dataset.irow; tr.querySelectorAll('[data-if]').forEach(inp => inp.addEventListener('change', () => { edItens[i][inp.dataset.if] = inp.type === 'checkbox' ? inp.checked : inp.value; })); });
-  $$('[data-iup]', t).forEach(b => b.addEventListener('click', () => moveItem(+b.dataset.iup, -1)));
-  $$('[data-idown]', t).forEach(b => b.addEventListener('click', () => moveItem(+b.dataset.idown, 1)));
-  $$('[data-idup]', t).forEach(b => b.addEventListener('click', () => { const i = +b.dataset.idup; edItens.splice(i + 1, 0, clone(edItens[i])); renderItens(); }));
-  $$('[data-idel]', t).forEach(b => b.addEventListener('click', () => { edItens.splice(+b.dataset.idel, 1); renderItens(); }));
+      <button class="rna-icon-mini" data-idel="${i}"><i class="bi bi-trash text-danger"></i></button></td>`;
+  const isChk = tipo === 'checklist';
+  const heads = isChk
+    ? ['Item', 'Tipo resposta', 'Opções', 'Resp. esperada', 'Lim. mín', 'Lim. máx', 'Un.', 'Foto obr.', 'Coment. obr.', 'Abrir pend.', 'Peso', '']
+    : ['Item', 'Tipo', 'Valor nº', 'Lim. mín', 'Lim. máx', 'Un.', 'Foto obr.', 'Obs obr.', 'Peso', ''];
+  t.innerHTML = `<thead><tr>${heads.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+    <tbody>${edItens.map(isChk ? rowChk : rowRot).join('') || `<tr><td colspan="${heads.length}" class="cell-sub" style="padding:14px">Nenhum item. Clique em “Adicionar item”.</td></tr>`}</tbody>`;
+  t.querySelectorAll('[data-irow]').forEach(tr => {
+    const i = +tr.dataset.irow;
+    tr.querySelectorAll('[data-if]').forEach(inp => inp.addEventListener('change', () => {
+      const f = inp.dataset.if;
+      edItens[i][f] = f === 'opcoes' ? inp.value.split(',').map(s => s.trim()).filter(Boolean) : inp.type === 'checkbox' ? inp.checked : inp.value;
+    }));
+  });
+  $$('[data-iup]', t).forEach(b => b.addEventListener('click', () => moveItem(+b.dataset.iup, -1, tipo)));
+  $$('[data-idown]', t).forEach(b => b.addEventListener('click', () => moveItem(+b.dataset.idown, 1, tipo)));
+  $$('[data-idup]', t).forEach(b => b.addEventListener('click', () => { const i = +b.dataset.idup; edItens.splice(i + 1, 0, clone(edItens[i])); renderItens(tipo); }));
+  $$('[data-idel]', t).forEach(b => b.addEventListener('click', () => { edItens.splice(+b.dataset.idel, 1); renderItens(tipo); }));
 }
-function moveItem(i, d) { const j = i + d; if (j < 0 || j >= edItens.length) return;[edItens[i], edItens[j]] = [edItens[j], edItens[i]]; renderItens(); }
+function moveItem(i, d, tipo) { const j = i + d; if (j < 0 || j >= edItens.length) return;[edItens[i], edItens[j]] = [edItens[j], edItens[i]]; renderItens(tipo); }
 
 async function renderAtrs() {
   const box = $('#ed-atrs');
@@ -211,23 +239,26 @@ function renderAgendaExtra() {
 }
 function agLabel(t) { return { diaria: 'Diária', dia_semana: 'Dias da semana', semanal: 'Semanal', mensal: 'Mensal', por_turno: 'Por turno', sob_demanda: 'Sob demanda', a_cada_x_horas: 'A cada X horas' }[t] || t; }
 
-async function salvar(isNew, a) {
+async function salvar(isNew, a, tipo = 'rotina') {
   const btn = $('#ed-save'); btn.disabled = true;
   try {
     const patch = {};
     $$('[data-a]').forEach(i => { patch[i.dataset.a] = i.type === 'checkbox' ? i.checked : i.value.trim(); });
     if (!patch.nome) { toast('Nome é obrigatório.', { type: 'warn' }); btn.disabled = false; return; }
     patch.tempo_estimado = ATIV.numOrNull(patch.tempo_estimado);
-    patch.tipo_slug = 'rotina';
+    patch.tipo_slug = tipo;
 
     let ativ;
     if (isNew) ativ = await db.insert('op_atividades', { ...patch, is_template: false, anexos: [], created_by: USER.id, created_at: ATIV.hoje(), updated_at: ATIV.hoje() });
     else ativ = await db.update('op_atividades', a.id, { ...patch, updated_at: ATIV.hoje() });
 
-    // itens (substitui)
+    // itens (substitui) — valor_numerico derivado do tipo de resposta 'numero'
     await substituir('op_atividade_itens', ativ.id, edItens.filter(m => (m.nome || '').trim()), (m, ord) => ({
       atividade_id: ativ.id, ordem: ord, nome: m.nome, descricao: m.descricao || '', tipo_resposta: m.tipo_resposta || 'checkbox',
-      foto_obrigatoria: !!m.foto_obrigatoria, obs_obrigatoria: !!m.obs_obrigatoria, valor_numerico: !!m.valor_numerico,
+      opcoes: Array.isArray(m.opcoes) ? m.opcoes : [], resposta_esperada: m.resposta_esperada || '',
+      abrir_pendencia: !!m.abrir_pendencia, comentario_obrigatorio: !!m.comentario_obrigatorio,
+      foto_obrigatoria: !!m.foto_obrigatoria || m.tipo_resposta === 'foto', obs_obrigatoria: !!m.obs_obrigatoria,
+      valor_numerico: tipo === 'checklist' ? m.tipo_resposta === 'numero' : !!m.valor_numerico,
       limite_min: ATIV.numOrNull(m.limite_min), limite_max: ATIV.numOrNull(m.limite_max), unidade: m.unidade || '', peso: ATIV.numOrNull(m.peso) || 1, qrcode: m.qrcode || '', codigo_barras: m.codigo_barras || ''
     }));
     // atribuições (substitui)
@@ -237,8 +268,8 @@ async function salvar(isNew, a) {
     for (const g of agsOld) await db.remove('op_agenda', g.id);
     await db.insert('op_agenda', { atividade_id: ativ.id, tipo: edAgenda.tipo, dias: edAgenda.dias || [], intervalo_horas: ATIV.numOrNull(edAgenda.intervalo_horas), ref: edAgenda.ref || '' });
 
-    await db.log({ usuario: USER.nome, acao: `${isNew ? 'Criou' : 'Editou'} rotina ${ativ.codigo || ativ.nome}`, entidade: 'op_atividades', antes: isNew ? '—' : a.status, depois: ativ.status });
-    toast(isNew ? 'Rotina criada.' : 'Rotina salva.', { type: 'ok', title: 'Gestão Operacional' });
+    await db.log({ usuario: USER.nome, acao: `${isNew ? 'Criou' : 'Editou'} ${TIPO_LABEL[tipo].sing} ${ativ.codigo || ativ.nome}`, entidade: 'op_atividades', antes: isNew ? '—' : a.status, depois: ativ.status });
+    toast(isNew ? `${TIPO_LABEL[tipo].Sing} criado(a).` : `${TIPO_LABEL[tipo].Sing} salvo(a).`, { type: 'ok', title: 'Gestão Operacional' });
     state.view = 'lista'; render();
   } catch (err) { console.error('[gestao-op] salvar', err); toast('Erro ao salvar. ' + (err?.message || ''), { type: 'crit' }); btn.disabled = false; }
 }
@@ -270,9 +301,9 @@ function excluir(id) {
   }, { title: 'Excluir rotina', okLabel: 'Excluir', danger: true });
 }
 
-function novaCategoria() {
-  const m = modal({ title: 'Nova categoria', content: `<label class="form-label">Nome da categoria</label><input class="form-control" id="nc-nome" placeholder="Ex.: Lubrificação">`, footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Cancelar</button><button class="rna-btn rna-btn-primary" id="nc-ok">Adicionar</button>` });
-  $('#nc-ok', m.host).addEventListener('click', async () => { const nome = $('#nc-nome', m.host).value.trim(); if (!nome) return; await db.insert('op_categorias', { nome, tipo_slug: 'rotina', ativo: true }); m.close(); toast('Categoria adicionada.', { type: 'ok' }); render(); });
+function novaCategoria(tipo = 'rotina') {
+  const m = modal({ title: 'Nova categoria', content: `<label class="form-label">Nome da categoria (${TIPO_LABEL[tipo].sing})</label><input class="form-control" id="nc-nome" placeholder="Ex.: Segurança">`, footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Cancelar</button><button class="rna-btn rna-btn-primary" id="nc-ok">Adicionar</button>` });
+  $('#nc-ok', m.host).addEventListener('click', async () => { const nome = $('#nc-nome', m.host).value.trim(); if (!nome) return; await db.insert('op_categorias', { nome, tipo_slug: tipo, ativo: true }); m.close(); toast('Categoria adicionada.', { type: 'ok' }); render(); });
 }
 
 /* ------------------------------------------------- Categorias / Tipos ------ */
@@ -352,7 +383,7 @@ async function renderIndicadores() {
 }
 
 /* --------------------------------------------------------------- utils ----- */
-function blankItem() { return { nome: '', descricao: '', tipo_resposta: 'checkbox', foto_obrigatoria: false, obs_obrigatoria: false, valor_numerico: false, limite_min: '', limite_max: '', unidade: '', peso: 1, qrcode: '', codigo_barras: '' }; }
+function blankItem() { return { nome: '', descricao: '', tipo_resposta: 'checkbox', opcoes: [], resposta_esperada: '', abrir_pendencia: false, comentario_obrigatorio: false, foto_obrigatoria: false, obs_obrigatoria: false, valor_numerico: false, limite_min: '', limite_max: '', unidade: '', peso: 1, qrcode: '', codigo_barras: '' }; }
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function esc(s) { return String(s ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 function escHtml(s) { return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
