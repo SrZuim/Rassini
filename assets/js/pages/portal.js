@@ -54,7 +54,7 @@ async function render(user) {
         <p>Bem-vindo ao <b>RNA One</b>, o ambiente integrado de monitoramento, qualidade e auditoria da Rassini NHK Automotive.
         ${plantaoAtivo ? 'Seu plantão está <b style="color:var(--rna-yellow)">em andamento</b>.' : 'Você ainda não iniciou o plantão de hoje.'}</p>
         <div class="d-flex gap-2 mt-3">
-          <a href="checkin.html" class="rna-btn rna-btn-primary"><i class="bi bi-box-arrow-in-right"></i> ${plantaoAtivo ? 'Ver plantão' : 'Iniciar plantão'}</a>
+          <a href="op-plantao.html" class="rna-btn rna-btn-primary"><i class="bi bi-box-arrow-in-right"></i> ${plantaoAtivo ? 'Ver plantão' : 'Iniciar plantão'}</a>
           <a href="dashboard.html" class="rna-btn rna-btn-ghost" style="background:rgba(255,255,255,.1);color:#fff;border-color:rgba(255,255,255,.2)"><i class="bi bi-grid-1x2"></i> Indicadores</a>
         </div>
       </div>

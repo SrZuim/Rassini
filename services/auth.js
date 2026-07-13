@@ -115,7 +115,7 @@ export const auth = {
     return ({
       admin: 'index.html',          // painel principal completo
       supervisor: 'dashboard.html', // consulta / dashboards
-      auditor: 'checkin.html',      // início de plantão
+      auditor: 'op-plantao.html',   // início de plantão (Operações)
       visitante: 'home.html'        // tela institucional
     })[role] || 'index.html';
   },

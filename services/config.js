@@ -42,10 +42,8 @@ export const ROLES = {
 export const MODULES = [
   { id:'dashboard',     label:'Dashboard',            short:'Indicadores',         page:'dashboard.html',     icon:'bi-grid-1x2',          group:'Operação',    color:'yellow', desc:'Indicadores e KPIs em tempo real do plantão.' },
   { id:'monitoramento', label:'Monitoramento',        short:'Gestão à Vista',      page:'monitoramento.html', icon:'bi-display',           group:'Operação',    color:'blue',   desc:'Painel Andon e gestão à vista das linhas.' },
-  { id:'checkin',       label:'Check-in do Plantão',  short:'Plantão',             page:'checkin.html',       icon:'bi-box-arrow-in-right',group:'Operação',    color:'green',  desc:'Inicie o plantão e carregue suas rotinas.' },
-  { id:'rotinas',       label:'Rotina Obrigatória',   short:'Rotina Obrig.',       page:'rotinas.html',       icon:'bi-list-check',        group:'Fluxo do Auditor', color:'yellow', desc:'Rotinas obrigatórias do dia (planilha 2026).' },
-  { id:'checklist',     label:'Checklist Obrigatório',short:'Checklist',           page:'checklist.html',     icon:'bi-ui-checks',         group:'Fluxo do Auditor', color:'orange', desc:'Checklist por categoria (Grampo/Lâminas/Helicoidal).' },
-  { id:'auditoria',     label:'Auditoria de Peças',   short:'Auditoria',           page:'auditoria.html',     icon:'bi-search',            group:'Fluxo do Auditor', color:'green',  desc:'Auditoria por peça com cálculo de tempo.' },
+  /* Fluxo fixo antigo (Check-in/Rotina Obrig./Checklist/Auditoria de Peças) aposentado —
+     substituído pelo grupo "Operações" abaixo (Gestão Operacional configurável). */
   /* [GESTÃO OPERACIONAL] Novo fluxo do auditor — atividades configuráveis atribuídas automaticamente. */
   { id:'op_plantao',    label:'Plantão',              short:'Plantão',             page:'op-plantao.html',    icon:'bi-broadcast',         group:'Operações',   color:'green',  desc:'Inicie o plantão e veja as atividades atribuídas a você.' },
   { id:'op_rotinas',    label:'Minhas Rotinas',       short:'Minhas Rotinas',      page:'op-minhas-rotinas.html', icon:'bi-list-check',    group:'Operações',   color:'yellow', desc:'Execute as rotinas atribuídas a você.' },
@@ -81,30 +79,29 @@ export const RBAC = {
 
   /* Supervisor: apenas consulta (ver + exportar). Não cria, edita, aprova ou exclui. */
   supervisor: {
-    dashboard:RO, monitoramento:['view'], checkin:[],
-    rotinas:['view'], diario:['view'], auditoria:RO, auditorias:RO,
+    dashboard:RO, monitoramento:['view'],
+    diario:['view'], auditorias:RO,
     biblioteca:['view','create','edit','export'],
     gestao_op:['view'], op_plantao:[], op_rotinas:[], op_checklists:[], op_auditorias:[], op_pendencias:['view'], op_historico:['view'],
-    checklist:['view'], ocorrencias:RO, planos:['view','export'],
+    ocorrencias:RO, planos:['view','export'],
     powerbi:['view'], comunicados:['view'], documentos:['view','export'],
     treinamentos:['view'], admin:[], usuarios:[], perfil:['view','edit']
   },
 
-  /* Auditor: apenas operação — plantão, rotina, checklist, auditoria, diário. */
+  /* Auditor: operação pelo novo fluxo (Operações) — plantão, rotinas, checklists, auditorias, pendências, histórico, diário. */
   auditor: {
-    dashboard:[], monitoramento:[], checkin:['view','create'],
-    rotinas:['view','edit'], diario:['view','create','edit'],
-    auditoria:['view','create','edit'], auditorias:[],
+    dashboard:[], monitoramento:[],
+    diario:['view','create','edit'], auditorias:[],
     biblioteca:['view','export'],
     gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view'], op_pendencias:['view','create'], op_historico:['view'],
-    checklist:['view','create','edit'], ocorrencias:[], planos:[],
+    ocorrencias:[], planos:[],
     powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },
 
   /* Visitante: somente a tela institucional (home.html). Sem acesso à plataforma. */
   visitante: {
-    dashboard:[], monitoramento:[], checkin:[], rotinas:[], diario:[], auditoria:[],
-    auditorias:[], biblioteca:[], checklist:[], ocorrencias:[], planos:[], powerbi:[], comunicados:[],
+    dashboard:[], monitoramento:[], diario:[],
+    auditorias:[], biblioteca:[], ocorrencias:[], planos:[], powerbi:[], comunicados:[],
     documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view']
   }
 };
