@@ -48,12 +48,13 @@ export const MODULES = [
   { id:'op_plantao',    label:'Plantão',              short:'Plantão',             page:'op-plantao.html',    icon:'bi-broadcast',         group:'Operações',   color:'green',  desc:'Inicie o plantão e veja as atividades atribuídas a você.' },
   { id:'op_rotinas',    label:'Minhas Rotinas',       short:'Minhas Rotinas',      page:'op-minhas-rotinas.html', icon:'bi-list-check',    group:'Operações',   color:'yellow', desc:'Execute as rotinas atribuídas a você.' },
   { id:'op_checklists', label:'Meus Checklists',      short:'Meus Checklists',     page:'op-meus-checklists.html', icon:'bi-ui-checks',     group:'Operações',   color:'orange', desc:'Execute os checklists atribuídos a você.' },
-  { id:'op_auditorias', label:'Minhas Auditorias',    short:'Minhas Auditorias',   page:'op-em-breve.html',   icon:'bi-search',            group:'Operações',   color:'blue',   desc:'Auditorias atribuídas (próxima fase).' },
+  { id:'op_auditorias', label:'Minhas Auditorias',    short:'Minhas Auditorias',   page:'op-minhas-auditorias.html', icon:'bi-rulers',      group:'Operações',   color:'blue',   desc:'Inspeções dimensionais: medições, cálculo automático, classes de defeito e relatório.' },
   { id:'op_pendencias', label:'Pendências',           short:'Pendências',          page:'op-pendencias.html', icon:'bi-exclamation-circle',group:'Operações',   color:'red',    desc:'Suas pendências abertas.' },
   { id:'op_historico',  label:'Histórico',            short:'Histórico',           page:'op-historico.html',  icon:'bi-clock-history',     group:'Operações',   color:'gray',   desc:'Histórico das suas atividades.' },
   { id:'diario',        label:'Diário de Bordo',      short:'Diário',              page:'diario.html',        icon:'bi-journal-text',      group:'Operação',    color:'gray',   desc:'Registro cronológico das atividades.' },
   { id:'auditorias',    label:'Auditorias de Processo',short:'Aud. Processo',      page:'auditorias.html',    icon:'bi-clipboard-data',    group:'Qualidade',   color:'blue',   desc:'Auditorias de processo, 5S e LPA.' },
   { id:'biblioteca',    label:'Biblioteca Técnica',   short:'Biblioteca',          page:'biblioteca.html',    icon:'bi-journal-richtext',  group:'Qualidade',   color:'blue',   desc:'Fichas técnicas das peças: medidas, tolerâncias, normas e documentos.' },
+  { id:'consulta_dim',  label:'Relatórios Dimensionais',short:'Rel. Dimensionais',  page:'consulta-dimensional.html', icon:'bi-clipboard2-data', group:'Qualidade', color:'blue', desc:'Consulta corporativa de relatórios de inspeção dimensional — filtros, impressão e exportação.' },
   { id:'ocorrencias',   label:'Não Conformidades',    short:'Ocorrências',         page:'ocorrencias.html',   icon:'bi-exclamation-octagon',group:'Qualidade',  color:'red',    desc:'Abertura e tratativa de não conformidades.' },
   { id:'planos',        label:'Plano de Ação',        short:'Planos',              page:'planos-acao.html',   icon:'bi-diagram-3',         group:'Qualidade',   color:'yellow', desc:'Ações corretivas 5W2H vinculadas a NCs.' },
   { id:'powerbi',       label:'Power BI',             short:'Power BI',            page:'dashboard.html#bi',  icon:'bi-bar-chart-line',    group:'Gestão',      color:'orange', desc:'Relatórios corporativos embarcados.' },
@@ -63,6 +64,8 @@ export const MODULES = [
   { id:'admin',         label:'Administração',        short:'Admin',               page:'admin.html',         icon:'bi-sliders',           group:'Gestão',      color:'red',    desc:'Cadastros editáveis: rotinas, checklist, peças e listas.' },
   /* [GESTÃO OPERACIONAL] Cadastro configurável de atividades (rotinas/checklists/auditorias). */
   { id:'gestao_op',     label:'Gestão Operacional',   short:'Gestão Op.',          page:'gestao-operacional.html', icon:'bi-diagram-3-fill', group:'Administração', color:'red', desc:'Cadastre rotinas, checklists, auditorias, categorias, atribuições e agenda — sem código.' },
+  /* [AUDITORIAS DIMENSIONAIS] Monitoramento Operacional dos Auditores — exclusivo admin (§40-71). */
+  { id:'admin_monitor', label:'Monitoramento Operacional', short:'Monitoramento',    page:'admin-monitoramento.html', icon:'bi-speedometer2', group:'Administração', color:'red', desc:'Desempenho e execução real dos auditores: tempos, atividades ao vivo, alertas e indicadores. Exclusivo da administração.' },
   /* [MÓDULO USUÁRIOS] Administração de Usuários — cadastro, aprovação e gestão (só admin). */
   { id:'usuarios',      label:'Administração de Usuários', short:'Usuários',        page:'admin-usuarios.html',icon:'bi-people',            group:'Administração', color:'red', desc:'Solicitações de acesso, aprovação, cargos e bloqueios.' },
   { id:'perfil',        label:'Meu Perfil',           short:'Perfil',              page:'perfil.html',        icon:'bi-person-circle',     group:'Gestão',      color:'gray',   desc:'Seus dados, plantões e produtividade.' }
@@ -82,7 +85,8 @@ export const RBAC = {
     dashboard:RO, monitoramento:['view'],
     diario:['view'], auditorias:RO,
     biblioteca:['view','create','edit','export'],
-    gestao_op:['view'], op_plantao:[], op_rotinas:[], op_checklists:[], op_auditorias:[], op_pendencias:['view'], op_historico:['view'],
+    gestao_op:['view'], op_plantao:[], op_rotinas:[], op_checklists:[], op_auditorias:['view','export'], op_pendencias:['view'], op_historico:['view'],
+    consulta_dim:['view','export'], admin_monitor:[],
     ocorrencias:RO, planos:['view','export'],
     powerbi:['view'], comunicados:['view'], documentos:['view','export'],
     treinamentos:['view'], admin:[], usuarios:[], perfil:['view','edit']
@@ -93,7 +97,8 @@ export const RBAC = {
     dashboard:[], monitoramento:[],
     diario:['view','create','edit'], auditorias:[],
     biblioteca:['view','export'],
-    gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view'], op_pendencias:['view','create'], op_historico:['view'],
+    gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view','create','edit','execute','export'], op_pendencias:['view','create'], op_historico:['view'],
+    consulta_dim:['view','export'], admin_monitor:[],
     ocorrencias:[], planos:[],
     powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },
