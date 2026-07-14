@@ -393,16 +393,31 @@ export async function finalizar(relatorioId, user) {
     pct_aprovacao: s.conformidade,
     pct_reprovacao: s.totalCaracteristicas ? Math.round(s.caracteristicasReprovadas / s.totalCaracteristicas * 100) : 0
   };
-  const atualizado = await db.update('insp_relatorios', relatorioId, {
-    status, resultado: geral, completed_iso: nowISO(), duracao_seg: dur, rastreio, updated_iso: nowISO()
-  });
-  await registrarEvento({ relatorio: atualizado, tipo_evento: 'inspection_completed', metadata: { resultado: geral } });
-  await registrarEvento({ relatorio: atualizado, tipo_evento: 'report_generated' });
-  await registrarHistorico(relatorioId, user, 'Finalizou', 'status', 'em andamento', INSP_STATUS[status].label);
-  // §Regra 4/7: reprovação gera pendência automática vinculada ao relatório
-  let pendencia = null;
-  if (geral === 'reprovado') pendencia = await criarPendenciaDoRelatorio(atualizado, user);
-  return { ok: true, relatorio: atualizado, pendencia };
+  /* PASSO 1 — atualizar auditoria → FINALIZADA. O núcleo (status/resultado) é
+     garantido; `rastreio` é best-effort: se a coluna ainda não existe no Supabase
+     (migração não rodada), regrava só o núcleo em vez de falhar silenciosamente. */
+  const nucleo = { status, resultado: geral, completed_iso: nowISO(), duracao_seg: dur, updated_iso: nowISO() };
+  let atualizado;
+  try {
+    atualizado = await db.update('insp_relatorios', relatorioId, { ...nucleo, rastreio });
+  } catch (e) {
+    console.warn('[INSP] Não gravou "rastreio" (coluna ausente?). Regravando o núcleo. Detalhe:', e?.message || e);
+    atualizado = await db.update('insp_relatorios', relatorioId, nucleo);   // se ISTO falhar, propaga (erro real do PASSO 1)
+  }
+  // PASSO 2 — relatório gerado. Telemetria/histórico não podem derrubar a finalização.
+  try {
+    await registrarEvento({ relatorio: atualizado, tipo_evento: 'inspection_completed', metadata: { resultado: geral } });
+    await registrarEvento({ relatorio: atualizado, tipo_evento: 'report_generated' });
+    await registrarHistorico(relatorioId, user, 'Finalizou', 'status', 'em andamento', INSP_STATUS[status].label);
+  } catch (e) { console.warn('[INSP] Evento/histórico da finalização não gravado:', e?.message || e); }
+  // PASSO 3 — reprovação gera pendência automática. Falha aqui NÃO desfaz a
+  // finalização: retorna pendenciaErro para a UI avisar (backfill tenta depois).
+  let pendencia = null, pendenciaErro = null;
+  if (geral === 'reprovado') {
+    try { pendencia = await criarPendenciaDoRelatorio(atualizado, user); }
+    catch (e) { console.error('[INSP] Falha ao criar pendência:', e); pendenciaErro = e?.message || 'Erro ao criar pendência'; }
+  }
+  return { ok: true, relatorio: atualizado, pendencia, pendenciaErro };
 }
 
 /* ============================================ PENDÊNCIA AUTOMÁTICA (§Regra 4-7)
@@ -447,9 +462,13 @@ export async function criarPendenciaDoRelatorio(rel, user) {
     descricao, dados, status: 'aberta', aberta_por: rel.auditor_id || user?.id || null,
     responsavel: null, quando: nowISO()
   });
-  await patchRelatorio(rel.id, { pendencia_id: pend.id, pendencia_numero: numero });
-  await registrarEvento({ relatorio: rel, tipo_evento: 'corrective_action_created', metadata: { pendencia: numero } });
-  await registrarHistorico(rel.id, user, 'Gerou pendência', 'pendencia', '—', numero, 'Pendência automática por reprovação');
+  // vínculo relatório→pendência é best-effort (colunas podem não existir ainda)
+  try { await patchRelatorio(rel.id, { pendencia_id: pend.id, pendencia_numero: numero }); }
+  catch (e) { console.warn('[INSP] Vínculo relatório→pendência não gravado (coluna ausente?):', e?.message || e); }
+  try {
+    await registrarEvento({ relatorio: rel, tipo_evento: 'corrective_action_created', metadata: { pendencia: numero } });
+    await registrarHistorico(rel.id, user, 'Gerou pendência', 'pendencia', '—', numero, 'Pendência automática por reprovação');
+  } catch (e) { console.warn('[INSP] Evento/histórico da pendência não gravado:', e?.message || e); }
   return pend;
 }
 

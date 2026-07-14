@@ -611,22 +611,65 @@ async function stepResultado(host) {
 
   $('#btn-rev')?.addEventListener('click', () => { STEP = 4; renderStep(); });
   $('#btn-goto')?.addEventListener('click', () => { const et = val.faltas[0].etapa; STEP = ETAPAS.indexOf(et) >= 0 ? ETAPAS.indexOf(et) : 3; renderStep(); });
-  $('#btn-fin')?.addEventListener('click', () => finalizarInspecao(r, s));
+  $('#btn-fin')?.addEventListener('click', () => finalizarInspecao(r));
 }
 
-function finalizarInspecao(r, s) {
+/* Finalização com modal controlado: passos explícitos, botão bloqueado durante o
+   processamento, erro por etapa e SEM falha silenciosa (o modal só fecha no sucesso).
+   Fluxo: (1) atualizar auditoria→FINALIZADA + (2) gerar relatório + (3) pendência se
+   reprovado [tudo em INSP.finalizar] → (4) fechar modal → (5) atualizar UI → (6) ir p/ leitura. */
+function finalizarInspecao(r) {
   const reprovado = r.resultado === 'reprovado';
-  confirmDialog(
-    `Deseja finalizar esta inspeção?<br><br><b>Resultado calculado: ${reprovado ? '🔴 REPROVADO' : '✅ APROVADO'}</b><br><br>` +
-    (reprovado
-      ? 'A inspeção será <b>concluída</b>, o relatório gerado e uma <b>pendência criada automaticamente</b> a partir da reprovação. O relatório fica bloqueado para edição comum.'
-      : 'A inspeção será <b>concluída</b> e o relatório gerado. O relatório fica bloqueado para edição comum.'),
-    async () => {
-      const res = await INSP.finalizar(r.id, USER);
-      if (!res.ok) { toast('Ainda há medições ou campos obrigatórios pendentes.', { type: 'warn' }); return; }
-      await reload(); refreshBanner();
-      if (res.pendencia) toast(`Inspeção finalizada como Reprovada. Pendência ${res.pendencia.numero} gerada automaticamente.`, { type: 'ok', title: 'Concluído — pendência criada', timeout: 6000 });
-      else toast('Inspeção finalizada como Aprovada.', { type: 'ok', title: 'Concluído' });
-      VIEWONLY = true; STEP = 5; paintWizard();
-    }, { title: 'Finalizar inspeção', okLabel: 'Confirmar finalização' });
+  const m = modal({
+    title: 'Finalizar inspeção',
+    content: `
+      <p style="margin:0 0 12px;font-size:14px">Deseja finalizar esta inspeção? Após a finalização, o relatório fica bloqueado para edição comum.</p>
+      <div class="insp-result-final ${bannerClass(r.resultado)}" style="padding:12px 16px">
+        <div class="insp-result-final__ic"><i class="bi ${reprovado ? 'bi-x-octagon-fill' : 'bi-check-circle-fill'}"></i></div>
+        <div><div class="insp-result-final__t">RESULTADO CALCULADO</div><div class="insp-result-final__v">${reprovado ? 'REPROVADO' : 'APROVADO'}</div></div>
+      </div>
+      <p class="text-muted-2" style="font-size:13px;margin:10px 0 0">${reprovado
+        ? 'A inspeção será concluída, o relatório gerado e uma <b>pendência criada automaticamente</b> a partir da reprovação.'
+        : 'A inspeção será concluída e o relatório gerado.'}</p>
+      <div id="fin-erro" class="insp-blocker mt-2" style="display:none"></div>`,
+    footer: `<button class="rna-btn rna-btn-ghost" id="fin-cancel" data-bs-dismiss="modal">Cancelar</button>
+             <button class="rna-btn rna-btn-primary" id="fin-ok"><i class="bi bi-check2-circle"></i> Confirmar finalização</button>`
+  });
+  const okBtn = $('#fin-ok', m.host), cancelBtn = $('#fin-cancel', m.host), errBox = $('#fin-erro', m.host);
+  const original = okBtn.innerHTML;
+  const mostrarErro = (etapa, err) => {
+    console.error(`[FINALIZAR] ${etapa}:`, err);
+    errBox.style.display = 'flex';
+    errBox.innerHTML = `<i class="bi bi-exclamation-octagon"></i> <div><b>${etapa}</b><div class="cell-sub">${(err && err.message) || err || 'Erro desconhecido'}</div></div>`;
+    okBtn.disabled = false; okBtn.innerHTML = original; cancelBtn.disabled = false;
+  };
+
+  okBtn.addEventListener('click', async () => {
+    console.log('[FINALIZAR] Botão clicado — relatório', r.id);
+    okBtn.disabled = true; cancelBtn.disabled = true;
+    okBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Confirmando...';
+    errBox.style.display = 'none';
+    try {
+      console.log('[FINALIZAR] Iniciando finalização');
+      const res = await INSP.finalizar(r.id, USER);      // PASSOS 1–3 (auditoria, relatório, pendência)
+      console.log('[FINALIZAR] Resultado:', res);
+      if (!res.ok) {
+        mostrarErro('Não é possível finalizar', new Error(res.faltas?.[0]?.msg || 'Há medições ou campos obrigatórios pendentes.'));
+        return;                                           // mantém o modal aberto p/ correção
+      }
+      m.close();                                          // PASSO 4 — fecha o modal (só no sucesso)
+      await reload(); refreshBanner();                    // PASSO 5 — atualiza a interface
+      if (res.pendenciaErro) {
+        toast('Inspeção finalizada, mas a pendência não pôde ser criada agora. Ela será gerada ao abrir Pendências.', { type: 'warn', title: 'Atenção', timeout: 7000 });
+      } else if (res.pendencia) {
+        toast(`Inspeção finalizada com sucesso. Pendência ${res.pendencia.numero} gerada automaticamente.`, { type: 'ok', title: 'Concluído', timeout: 6000 });
+      } else {
+        toast('Inspeção finalizada com sucesso.', { type: 'ok', title: 'Concluído' });
+      }
+      VIEWONLY = true; STEP = 5; paintWizard();            // PASSO 6 — vai para a visualização (leitura)
+    } catch (err) {
+      // Qualquer erro do PASSO 1 (atualizar auditoria) chega aqui — nunca silencioso.
+      mostrarErro('❌ Erro ao finalizar a inspeção', err);
+    }
+  });
 }

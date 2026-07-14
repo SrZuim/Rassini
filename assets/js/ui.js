@@ -52,9 +52,23 @@ export function modal({ title, content, size = '', footer = '' }) {
   </div>`);
   document.body.appendChild(host);
   const inst = new bootstrap.Modal(host);
-  host.addEventListener('hidden.bs.modal', () => host.remove());
+  // Remove o host + backdrop de forma robusta. A transição de "hide" do Bootstrap
+  // pode ser interrompida por um re-render pesado logo após fechar (deixando o
+  // modal/backdrop presos na tela). Por isso limpamos manualmente, sem depender só
+  // do evento hidden.bs.modal.
+  const cleanup = () => {
+    host.remove();
+    if (!document.querySelector('.modal.show')) {   // não interfere em modais empilhados
+      document.querySelectorAll('.modal-backdrop').forEach(b => b.remove());
+      document.body.classList.remove('modal-open');
+      document.body.style.removeProperty('overflow');
+      document.body.style.removeProperty('padding-right');
+    }
+  };
+  host.addEventListener('hidden.bs.modal', cleanup);
   inst.show();
-  return { host, inst, close: () => inst.hide() };
+  const close = () => { try { inst.hide(); } catch { /* ignora */ } setTimeout(() => { if (document.body.contains(host)) cleanup(); }, 250); };
+  return { host, inst, close };
 }
 
 export function confirmDialog(message, onConfirm, { title = 'Confirmar ação', okLabel = 'Confirmar', danger = false } = {}) {
@@ -63,7 +77,14 @@ export function confirmDialog(message, onConfirm, { title = 'Confirmar ação', 
     footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Cancelar</button>
              <button class="rna-btn ${danger ? 'rna-btn-dark' : 'rna-btn-primary'}" id="rna-confirm-ok">${okLabel}</button>`
   });
-  $('#rna-confirm-ok', m.host).addEventListener('click', () => { m.close(); onConfirm?.(); });
+  $('#rna-confirm-ok', m.host).addEventListener('click', () => {
+    m.close();
+    // onConfirm pode ser async: captura rejeições p/ nunca falhar em silêncio.
+    Promise.resolve().then(() => onConfirm?.()).catch(err => {
+      console.error('[confirmDialog] Ação falhou:', err);
+      toast((err && err.message) || 'Não foi possível concluir a ação.', { type: 'crit' });
+    });
+  });
 }
 
 /** spinner de tela cheia simples */
