@@ -695,6 +695,37 @@ body.kiosk .rna-content { padding: 26px; }
 .insp-rep-footer{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; border-top:1px solid var(--rna-border); padding-top:8px; margin-top:16px; font-size:10.5px; color:var(--rna-gray); }
 @media (max-width:720px){ .insp-rep-grid{ grid-template-columns:repeat(2,1fr); } }
 
+/* --- consulta dimensional: combo pesquisável + resultados responsivos ---
+   O painel do combo reaproveita .bib-combo-panel/.bib-combo-opt/.bib-combo-empty. */
+.rna-combo{ position:relative; }
+.rna-combo__input{ padding-right:58px; cursor:pointer; text-overflow:ellipsis; }
+.rna-combo__caret{ position:absolute; right:12px; top:50%; transform:translateY(-50%); pointer-events:none; color:var(--rna-gray); font-size:12px; }
+.rna-combo__clear{ position:absolute; right:32px; top:50%; transform:translateY(-50%); display:none; border:0; background:transparent; color:var(--rna-gray); width:24px; height:24px; border-radius:7px; cursor:pointer; font-size:11px; line-height:1; padding:0; }
+.rna-combo__clear:hover{ background:var(--rna-gray-100); color:var(--rna-graphite); }
+.rna-combo.has-value .rna-combo__clear{ display:grid; place-items:center; }
+.rna-combo.has-value .rna-combo__input{ font-weight:600; }
+.rna-combo-panel{ overscroll-behavior:contain; }
+.rna-combo-all{ font-weight:650; border-bottom:1px solid var(--rna-border); border-radius:8px 8px 0 0; margin-bottom:2px; }
+.cdim-check{ padding:9px 12px 9px 34px; border:1px solid var(--rna-border); border-radius:9px; width:100%; background:var(--rna-bg); }
+.cdim-check .form-check-label{ font-size:13px; font-weight:600; color:var(--rna-steel); }
+.cdim-actions .rna-btn{ white-space:nowrap; }
+.cdim-export{ border-top:1px solid var(--rna-border); }
+.cdim-table{ overflow-x:auto; }
+.cdim-card{ border:1px solid var(--rna-border); border-radius:12px; padding:13px 14px; background:#fff; }
+.cdim-card__head{ display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px; }
+.cdim-card__num{ font-weight:700; font-size:13.5px; word-break:break-word; }
+.cdim-card__grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; margin-bottom:10px; }
+.cdim-cards{ display:none; }
+@media (max-width:768px){
+  .cdim-table{ display:none; }
+  .cdim-cards{ display:flex; flex-direction:column; gap:10px; padding:12px 14px; }
+}
+@media (max-width:576px){
+  .cdim-actions{ flex-wrap:wrap; }
+  .cdim-actions > .rna-btn{ flex:1 1 46%; justify-content:center; }
+  .cdim-export .rna-btn{ flex:1 1 40%; justify-content:center; }
+}
+
 /* --- monitoramento: linha do tempo (§56) --- */
 .insp-timeline{ position:relative; padding-left:8px; }
 .insp-tl-item{ display:grid; grid-template-columns:64px 18px 1fr; align-items:start; gap:8px; }

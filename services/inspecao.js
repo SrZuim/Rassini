@@ -278,15 +278,16 @@ export async function consultarRelatorios(filtros = {}, escopo = {}) {
 
   const norm = s => String(s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
   const like = (v, q) => norm(v).includes(norm(q));
+  /* revisão tolerante a formato: "01" ≡ "1" ≡ "Rev. 01" ≡ "REV01" */
+  const normRev = v => { const s = String(v ?? '').trim().replace(/^rev\.?\s*/i, ''); return /^\d+$/.test(s) ? String(parseInt(s, 10)) : norm(s).trim(); };
   const f = filtros;
   rows = rows.filter(r => {
     if (f.cliente && !like(r.cliente, f.cliente)) return false;
     if (f.pn && !like(r.peca_codigo, f.pn)) return false;
-    if (f.peca && !like(r.peca_nome, f.peca)) return false;
     if (f.auditor && !like(r.auditor_nome, f.auditor)) return false;
     if (f.lote && !like(r.lote, f.lote)) return false;
     if (f.op && !like(r.op, f.op)) return false;
-    if (f.revisao && String(r.revisao_desenho) !== String(f.revisao)) return false;
+    if (f.revisao && normRev(r.revisao_desenho) !== normRev(f.revisao)) return false;
     if (f.numero && !like(r.numero, f.numero)) return false;
     if (f.tipo && r.tipo_id !== f.tipo) return false;
     if (f.planta && r.planta !== f.planta) return false;
