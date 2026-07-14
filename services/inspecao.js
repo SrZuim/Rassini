@@ -63,25 +63,34 @@ export function plantaSigla(planta) {
   return (t.slice(0, 3) || 'GEN');
 }
 
-export async function proximoNumero(planta) {
-  const ano = anoAtual();
-  const sigla = plantaSigla(planta);
-  const chave = `DIM-${sigla}-${ano}`;
+/* Sequencial atômico por chave (reaproveitado pela numeração do relatório e da
+   pendência). Supabase: RPC next_insp_seq; demo: contador em insp_seq. */
+async function proximoSeq(chave) {
   if (db.mode === 'supabase') {
     try {
       const { getSupabase } = await import('./supabaseClient.js');
       const sb = await getSupabase();
       const { data, error } = await sb.rpc('next_insp_seq', { p_chave: chave });
-      if (!error && data != null) return `${chave}-${String(data).padStart(6, '0')}`;
+      if (!error && data != null) return Number(data);
     } catch { /* cai no fallback abaixo */ }
   }
-  // Fallback / demo: incrementa contador da chave.
   const seqs = await db.list('insp_seq');
   const atual = seqs.find(s => s.chave === chave);
   let valor;
   if (atual) { valor = (atual.valor || 0) + 1; await db.update('insp_seq', atual.id, { valor }); }
   else { valor = 1; await db.insert('insp_seq', { chave, valor }); }
-  return `${chave}-${String(valor).padStart(6, '0')}`;
+  return valor;
+}
+
+export async function proximoNumero(planta) {
+  const chave = `DIM-${plantaSigla(planta)}-${anoAtual()}`;
+  return `${chave}-${String(await proximoSeq(chave)).padStart(6, '0')}`;
+}
+
+/* Numeração única da pendência (§Regra 4/7): PEND-<ANO>-<SEQ 6 dígitos>. */
+export async function proximoNumeroPendencia() {
+  const chave = `PEND-${anoAtual()}`;
+  return `${chave}-${String(await proximoSeq(chave)).padStart(6, '0')}`;
 }
 
 /* ============================================================== CATÁLOGOS -- */
@@ -343,14 +352,14 @@ export async function resumoRelatorio(relatorioId) {
 /* ============================================================ FINALIZAÇÃO (§20)
    Retorna { ok, faltas:[...] }. Bloqueia enquanto houver campo obrigatório. */
 export async function validarFinalizacao(relatorioId) {
-  const { rel, caracteristicas, acoes } = await carregarRelatorio(relatorioId);
+  const { rel, caracteristicas } = await carregarRelatorio(relatorioId);
   const faltas = [];
   if (!rel.tipo_id) faltas.push({ etapa:'Tipo e peça', msg:'Selecione o tipo de inspeção' });
   if (!rel.peca_id) faltas.push({ etapa:'Tipo e peça', msg:'Selecione a peça' });
   if (!rel.quantidade) faltas.push({ etapa:'Amostras', msg:'Selecione a quantidade de peças' });
   if (!String(rel.lote || '').trim()) faltas.push({ etapa:'Identificação', msg:'Informe o lote' });
   if (!String(rel.op || '').trim()) faltas.push({ etapa:'Identificação', msg:'Informe a OP' });
-  // medições obrigatórias
+  // medições obrigatórias — a inspeção só finaliza com todas as amostras medidas
   const qtd = rel.quantidade || 0;
   let semMedicao = 0;
   caracteristicas.forEach(c => {
@@ -360,35 +369,112 @@ export async function validarFinalizacao(relatorioId) {
     }
   });
   if (semMedicao) faltas.push({ etapa:'Medições', msg:`${semMedicao} medição(ões) não preenchida(s)` });
-  // reprovações precisam de classe + campos obrigatórios do tratamento
-  const acaoBy = Object.fromEntries(acoes.map(a => [a.caracteristica_id, a]));
-  const clsList = await classes();
-  const clsBy = Object.fromEntries(clsList.map(c => [c.codigo, c]));
-  for (const c of caracteristicas.filter(c => c.resultado === 'reprovado')) {
-    if (!c.classe_defeito) { faltas.push({ etapa:'Tratamento', msg:`Classifique o defeito de "${c.caracteristica}"` }); continue; }
-    const cls = clsBy[c.classe_defeito]; const ac = acaoBy[c.id] || {};
-    const ob = cls?.obrig || {};
-    if (ob.observacao && !String(c.observacao || ac.observacao || '').trim()) faltas.push({ etapa:'Tratamento', msg:`Observação obrigatória em "${c.caracteristica}" (Classe ${c.classe_defeito})` });
-    if (ob.acao_imediata && !String(ac.acao_imediata || '').trim()) faltas.push({ etapa:'Tratamento', msg:`Ação imediata obrigatória em "${c.caracteristica}" (Classe ${c.classe_defeito})` });
-    if (ob.responsavel && !ac.responsavel_id && !String(ac.responsavel || '').trim()) faltas.push({ etapa:'Tratamento', msg:`Responsável obrigatório em "${c.caracteristica}" (Classe ${c.classe_defeito})` });
-    if (ob.prazo && !ac.prazo) faltas.push({ etapa:'Tratamento', msg:`Prazo obrigatório em "${c.caracteristica}" (Classe ${c.classe_defeito})` });
-  }
+  /* NOVO FLUXO (§Regra 3): a reprovação NÃO bloqueia a finalização. A inspeção
+     sempre conclui e gera relatório; havendo reprovação, o tratamento (classe,
+     observação, ações) é opcional e a pendência é criada automaticamente ao
+     finalizar (ver finalizar → criarPendenciaDoRelatorio). */
   return { ok: faltas.length === 0, faltas };
 }
 
 export async function finalizar(relatorioId, user) {
-  const { ok } = await validarFinalizacao(relatorioId);
-  if (!ok) return { ok: false };
+  const val = await validarFinalizacao(relatorioId);
+  if (!val.ok) return { ok: false, faltas: val.faltas };
   const rel = await db.get('insp_relatorios', relatorioId);
   const geral = await recalcularRelatorio(relatorioId);
   const status = geral === 'reprovado' ? 'finalizada_reprovada' : 'finalizada_aprovada';
   const dur = Math.max(0, Math.round((Date.now() - new Date(rel.started_iso || Date.now()).getTime()) / 1000));
+  // rastreabilidade completa (§Regra 8) — congelada no relatório ao finalizar
+  const s = await resumoRelatorio(relatorioId);
+  const rastreio = {
+    medicoes: s.totalMedicoes,
+    caracteristicas: s.totalCaracteristicas,
+    aprovadas: s.caracteristicasAprovadas,
+    reprovadas: s.caracteristicasReprovadas,
+    pct_aprovacao: s.conformidade,
+    pct_reprovacao: s.totalCaracteristicas ? Math.round(s.caracteristicasReprovadas / s.totalCaracteristicas * 100) : 0
+  };
   const atualizado = await db.update('insp_relatorios', relatorioId, {
-    status, resultado: geral, completed_iso: nowISO(), duracao_seg: dur, updated_iso: nowISO()
+    status, resultado: geral, completed_iso: nowISO(), duracao_seg: dur, rastreio, updated_iso: nowISO()
   });
   await registrarEvento({ relatorio: atualizado, tipo_evento: 'inspection_completed', metadata: { resultado: geral } });
+  await registrarEvento({ relatorio: atualizado, tipo_evento: 'report_generated' });
   await registrarHistorico(relatorioId, user, 'Finalizou', 'status', 'em andamento', INSP_STATUS[status].label);
-  return { ok: true, relatorio: atualizado };
+  // §Regra 4/7: reprovação gera pendência automática vinculada ao relatório
+  let pendencia = null;
+  if (geral === 'reprovado') pendencia = await criarPendenciaDoRelatorio(atualizado, user);
+  return { ok: true, relatorio: atualizado, pendencia };
+}
+
+/* ============================================ PENDÊNCIA AUTOMÁTICA (§Regra 4-7)
+   Uma pendência consolidada por relatório reprovado, com número próprio e
+   vínculo bidirecional (relatório ↔ pendência). Idempotente: não duplica. */
+export async function pendenciaDoRelatorio(relatorioId) {
+  const list = await db.list('op_pendencias').catch(() => []);
+  return list.find(p => p.relatorio_id === relatorioId) || null;
+}
+
+export async function criarPendenciaDoRelatorio(rel, user) {
+  const existente = await pendenciaDoRelatorio(rel.id);
+  if (existente) return existente;                      // não gera duas vezes
+  const { caracteristicas, anexos } = await carregarRelatorio(rel.id);
+  const reprovadas = caracteristicas.filter(c => c.resultado === 'reprovado');
+  if (!reprovadas.length) return null;
+  const o = rel.campos_opcionais || {};
+  const numero = await proximoNumeroPendencia();
+  const ref = rel.completed_iso || rel.started_iso || nowISO();
+  const dataBR = ref.slice(0, 10).split('-').reverse().join('/');
+  const horaBR = ref.slice(11, 16);
+  const val = v => (v == null || v === '') ? '—' : String(v).replace('.', ',');
+  const detalhes = reprovadas.map(c => ({
+    caracteristica: c.caracteristica, cota: c.cota ?? '—', classe: c.classe_defeito || null,
+    limite: `${val(c.minimo)} a ${val(c.maximo)} ${c.unidade || ''}`.trim(),
+    amostras: c.medicoes.filter(m => m.resultado === 'reprovado').map(m => `#${m.amostra}=${val(m.valor)}`).join(', '),
+    observacao: c.observacao || ''
+  }));
+  const descricao = `Reprovação dimensional no relatório ${rel.numero}: ${reprovadas.length} característica(s) reprovada(s) — ` +
+    `${detalhes.map(d => d.caracteristica).join(', ')}. Cliente ${rel.cliente || '—'} · PN ${rel.peca_codigo || '—'} · ` +
+    `Lote ${rel.lote || '—'} · OP ${rel.op || '—'}.`;
+  const dados = {
+    cliente: rel.cliente || '', part_number: rel.peca_codigo || '', revisao: rel.revisao_desenho ?? '',
+    lote: rel.lote || '', op: rel.op || '', auditor: rel.auditor_nome || '', data: dataBR, hora: horaBR,
+    planta: rel.planta || '', maquina: o.maquina || '', operacao: o.operacao || rel.linha || o.linha || '',
+    caracteristicas_reprovadas: detalhes, qtd_reprovadas: reprovadas.length,
+    fotos: anexos.length, observacoes: reprovadas.map(c => c.observacao).filter(Boolean).join(' | ')
+  };
+  const pend = await db.insert('op_pendencias', {
+    numero, relatorio_id: rel.id, relatorio_numero: rel.numero, origem: 'inspecao_dimensional',
+    atividade_id: null, execucao_id: null, plantao_id: rel.plantao_id || null,
+    descricao, dados, status: 'aberta', aberta_por: rel.auditor_id || user?.id || null,
+    responsavel: null, quando: nowISO()
+  });
+  await patchRelatorio(rel.id, { pendencia_id: pend.id, pendencia_numero: numero });
+  await registrarEvento({ relatorio: rel, tipo_evento: 'corrective_action_created', metadata: { pendencia: numero } });
+  await registrarHistorico(rel.id, user, 'Gerou pendência', 'pendencia', '—', numero, 'Pendência automática por reprovação');
+  return pend;
+}
+
+/* Garante a pendência de um relatório reprovado (backfill de relatórios legados). */
+export async function garantirPendencia(rel, user) {
+  if (rel.status !== 'finalizada_reprovada' && rel.resultado !== 'reprovado') return null;
+  return (await pendenciaDoRelatorio(rel.id)) || criarPendenciaDoRelatorio(rel, user);
+}
+
+/* ============================================ INDICADORES (§Regra 9)
+   Consolidado da tela de Minhas Auditorias a partir da lista já carregada. */
+export async function indicadoresAuditorias(rels) {
+  const aprov = rels.filter(r => r.status === 'finalizada_aprovada').length;
+  const reprov = rels.filter(r => r.status === 'finalizada_reprovada').length;
+  const finalizadas = aprov + reprov;
+  const tempos = rels.filter(r => r.duracao_seg != null).map(r => r.duracao_seg);
+  const tempoMedio = tempos.length ? Math.round(tempos.reduce((a, b) => a + b, 0) / tempos.length) : null;
+  const relIds = new Set(rels.map(r => r.id));
+  const pend = (await db.list('op_pendencias').catch(() => []))
+    .filter(p => p.origem === 'inspecao_dimensional' && relIds.has(p.relatorio_id)).length;
+  return {
+    total: rels.length, aprovadas: aprov, reprovadas: reprov, finalizadas, pendencias: pend, tempoMedio,
+    taxaAprovacao: finalizadas ? Math.round(aprov / finalizadas * 100) : 0,
+    taxaReprovacao: finalizadas ? Math.round(reprov / finalizadas * 100) : 0
+  };
 }
 
 /* ============================================= REVISÃO PÓS-FINALIZAÇÃO (§21)

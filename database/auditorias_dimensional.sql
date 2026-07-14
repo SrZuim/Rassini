@@ -45,8 +45,14 @@ create table if not exists insp_relatorios (
   status text default 'rascunho', resultado text default 'pendente', etapa int default 0,
   started_iso timestamptz default now(), updated_iso timestamptz default now(),
   completed_iso timestamptz, duracao_seg int,
+  -- NOVO FLUXO: rastreabilidade congelada na finalização + vínculo com a pendência gerada
+  rastreio jsonb, pendencia_id text, pendencia_numero text,
   created_at date default now()
 );
+-- Compatibilidade: garante as colunas do novo fluxo em bases já existentes.
+alter table insp_relatorios add column if not exists rastreio jsonb;
+alter table insp_relatorios add column if not exists pendencia_id text;
+alter table insp_relatorios add column if not exists pendencia_numero text;
 create index if not exists insp_rel_auditor_idx on insp_relatorios (auditor_id);
 create index if not exists insp_rel_peca_idx    on insp_relatorios (peca_id);
 create index if not exists insp_rel_status_idx  on insp_relatorios (status);

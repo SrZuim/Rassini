@@ -45,6 +45,8 @@ window.addEventListener('popstate', route);
 /* ============================================================== LISTA (§26) */
 async function renderList() {
   const rels = await INSP.meusRelatorios(USER.id);
+  const ind = await INSP.indicadoresAuditorias(rels);
+  const emAndamento = rels.filter(r => r.status === 'em_andamento' || r.status === 'rascunho').length;
   const podeCriar = can(USER.role, 'op_auditorias', 'create');
   const cont = $('#rna-content');
   cont.innerHTML = `
@@ -58,10 +60,14 @@ async function renderList() {
       <span class="flex-fill">Você não tem um <b>plantão ativo</b>. A inspeção dimensional deve ser vinculada a um plantão em andamento.</span>
       <a href="op-plantao.html" class="rna-btn rna-btn-dark rna-btn-sm"><i class="bi bi-broadcast"></i> Iniciar plantão</a></div></div>` : ''}
     <div class="row g-3 mb-3">
-      ${mini(rels.length, 'Inspeções', 'ic-soft-blue', 'bi-rulers')}
-      ${mini(rels.filter(r => r.status === 'em_andamento' || r.status === 'rascunho').length, 'Em andamento', 'ic-soft-yellow', 'bi-hourglass-split')}
-      ${mini(rels.filter(r => r.status === 'finalizada_aprovada').length, 'Aprovadas', 'ic-soft-green', 'bi-check2-circle')}
-      ${mini(rels.filter(r => r.status === 'finalizada_reprovada').length, 'Reprovadas', 'ic-soft-red', 'bi-x-octagon')}
+      ${mini(ind.total, 'Inspeções realizadas', 'ic-soft-blue', 'bi-rulers')}
+      ${mini(ind.aprovadas, 'Aprovadas', 'ic-soft-green', 'bi-check2-circle')}
+      ${mini(ind.reprovadas, 'Reprovadas', 'ic-soft-red', 'bi-x-octagon')}
+      ${mini(ind.pendencias, 'Pendências geradas', 'ic-soft-yellow', 'bi-exclamation-triangle')}
+      ${mini(INSP.fmtDuracao(ind.tempoMedio), 'Tempo médio/insp.', 'ic-soft-blue', 'bi-stopwatch')}
+      ${mini(ind.taxaAprovacao + '%', 'Taxa de aprovação', 'ic-soft-green', 'bi-graph-up-arrow')}
+      ${mini(ind.taxaReprovacao + '%', 'Taxa de reprovação', 'ic-soft-red', 'bi-graph-down-arrow')}
+      ${mini(emAndamento, 'Em andamento', 'ic-soft-yellow', 'bi-hourglass-split')}
     </div>
     <div class="rna-card"><div class="rna-card__head"><h3><i class="bi bi-list-ul"></i> Relatórios de inspeção</h3></div>
       <div class="rna-card__body p-0">${rels.length ? tabela(rels) : `<div class="empty-state" style="padding:40px"><i class="bi bi-rulers"></i><div>Nenhuma inspeção ainda. Clique em <b>Nova inspeção</b> para começar.</div></div>`}</div></div>`;
@@ -88,10 +94,13 @@ function tabela(rels) {
       <td>${r.quantidade || '—'}</td>
       <td><span class="rna-badge ${s.badge}">${s.label}</span></td>
       <td>${resultadoPill(r.resultado)}</td>
-      <td><div class="d-flex gap-1">
-        ${fin ? `<button class="rna-btn rna-btn-ghost rna-btn-sm" data-view="${r.id}"><i class="bi bi-eye"></i></button>`
-              : `<button class="rna-btn rna-btn-primary rna-btn-sm" data-open="${r.id}"><i class="bi bi-pencil-square"></i> Continuar</button>`}
-        ${fin ? `<button class="rna-btn rna-btn-ghost rna-btn-sm" data-view="${r.id}"><i class="bi bi-eye"></i> Ver</button>` : ''}
+      <td><div class="d-flex flex-wrap gap-1">
+        ${fin ? `
+          <button class="rna-btn rna-btn-ghost rna-btn-sm" data-view="${r.id}" title="Ver inspeção"><i class="bi bi-eye"></i> Ver</button>
+          <a class="rna-btn rna-btn-ghost rna-btn-sm" href="consulta-dimensional.html?rel=${r.id}" title="Abrir relatório"><i class="bi bi-file-earmark-text"></i> Relatório</a>
+          <a class="rna-btn rna-btn-ghost rna-btn-sm" href="consulta-dimensional.html?rel=${r.id}&print=1" title="Imprimir relatório"><i class="bi bi-printer"></i> Imprimir</a>
+          ${r.status === 'finalizada_reprovada' ? `<a class="rna-btn rna-btn-dark rna-btn-sm" href="op-pendencias.html?rel=${r.id}" title="Ver pendência vinculada"><i class="bi bi-exclamation-triangle"></i> Ver Pendência</a>` : ''}`
+        : `<button class="rna-btn rna-btn-primary rna-btn-sm" data-open="${r.id}"><i class="bi bi-pencil-square"></i> Continuar</button>`}
       </div></td></tr>`;
     }).join('')}
   </tbody></table></div>`;
@@ -491,7 +500,6 @@ async function abrirTratamento(carId) {
         <div class="col-12"><label class="form-label">Evidências</label><div id="tr-ev"></div></div>
       </div>`,
     footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Cancelar</button>
-      <button class="rna-btn rna-btn-dark" id="tr-pend"><i class="bi bi-exclamation-circle"></i> Gerar pendência</button>
       <button class="rna-btn rna-btn-primary" id="tr-save"><i class="bi bi-save"></i> Salvar tratamento</button>`
   });
   const ev = initEvidenceUpload($('#tr-ev', m.host), { multiple: true, label: 'Anexar evidência', accent: 'crit' });
@@ -521,27 +529,6 @@ async function abrirTratamento(carId) {
     });
     m.close(); toast('Tratamento salvo.', { type: 'ok' }); renderStep();
   });
-
-  $('#tr-pend', m.host).addEventListener('click', async () => {
-    const classe = $('#tr-classe', m.host).value || c.classe_defeito;
-    if (!classe) return toast('Classifique o defeito antes de gerar a pendência.', { type: 'warn' });
-    await gerarPendencia(c, classe, $('#tr-obs', m.host).value);
-    m.close();
-  });
-}
-
-async function gerarPendencia(c, classe, obs) {
-  const r = R.rel;
-  const reprov = c.medicoes.filter(m => m.resultado === 'reprovado').map(m => `#${m.amostra}=${fmt(m.valor)}`).join(', ');
-  const descricao = `[Inspeção ${r.numero}] Reprovação dimensional — ${c.caracteristica} (cota ${c.cota}). ` +
-    `Cliente ${r.cliente || '—'} · PN ${r.peca_codigo} · Lote ${r.lote} · OP ${r.op}. ` +
-    `Nominal ${fmt(c.nominal)} [${fmt(c.minimo)}–${fmt(c.maximo)}] ${c.unidade || ''}. Medido: ${reprov}. Classe ${classe}.${obs ? ' Obs.: ' + obs : ''}`;
-  await autosave(async () => {
-    const pend = await ATIV.abrirPendencia({ atividade_id: null, execucao_id: null, plantao_id: r.plantao_id, descricao, aberta_por: USER.id });
-    await INSP.salvarAcao(r.id, c.id, { defect_class: classe, pendencia_id: pend.id });
-    await INSP.registrarEvento({ relatorio: r, tipo_evento: 'corrective_action_created', caracteristica_id: c.id, metadata: { pendencia: pend.id, classe } });
-  });
-  toast('Pendência gerada a partir da reprovação.', { type: 'ok', title: 'Pendência' });
 }
 
 /* --------------------------------------------------------- ajuda classes (§16) */
@@ -609,8 +596,12 @@ async function stepResultado(host) {
       <div class="cell-sub">${s.caracteristicasAprovadas}/${s.totalCaracteristicas} características aprovadas · conformidade ${s.conformidade}%</div></div>
     </div>
     ${fin ? `<div class="insp-blocker insp-ok-blocker mt-3"><i class="bi bi-lock-fill"></i> Relatório finalizado e bloqueado para edição comum. Correções exigem revisão com justificativa (supervisor/admin).</div>
-      <div class="d-flex gap-2 mt-3"><a class="rna-btn rna-btn-primary" href="consulta-dimensional.html?rel=${r.id}"><i class="bi bi-file-earmark-text"></i> Ver relatório</a></div>`
-    : val.ok ? `<div class="insp-blocker insp-ok-blocker mt-3"><i class="bi bi-check2-all"></i> Todos os campos obrigatórios estão preenchidos. Você pode finalizar a inspeção.</div>
+      ${r.status === 'finalizada_reprovada' && r.pendencia_numero ? `<div class="insp-blocker mt-2"><i class="bi bi-exclamation-triangle"></i> Pendência <b>${r.pendencia_numero}</b> gerada automaticamente a partir da reprovação.</div>` : ''}
+      <div class="d-flex flex-wrap gap-2 mt-3">
+        <a class="rna-btn rna-btn-primary" href="consulta-dimensional.html?rel=${r.id}"><i class="bi bi-file-earmark-text"></i> Ver relatório</a>
+        <a class="rna-btn rna-btn-ghost" href="consulta-dimensional.html?rel=${r.id}&print=1"><i class="bi bi-printer"></i> Imprimir</a>
+        ${r.status === 'finalizada_reprovada' ? `<a class="rna-btn rna-btn-dark" href="op-pendencias.html?rel=${r.id}"><i class="bi bi-exclamation-triangle"></i> Ver pendência</a>` : ''}</div>`
+    : val.ok ? `<div class="insp-blocker insp-ok-blocker mt-3"><i class="bi bi-check2-all"></i> Medições concluídas. ${r.resultado === 'reprovado' ? 'A inspeção pode ser finalizada — como há reprovação, uma <b>pendência será criada automaticamente</b>.' : 'Você pode finalizar a inspeção.'}</div>
       <div class="d-flex gap-2 mt-3">
         <button class="rna-btn rna-btn-ghost" id="btn-rev">Voltar e revisar</button>
         <button class="rna-btn rna-btn-primary rna-btn-xl" id="btn-fin"><i class="bi bi-check2-circle"></i> Finalizar inspeção</button></div>`
@@ -624,13 +615,18 @@ async function stepResultado(host) {
 }
 
 function finalizarInspecao(r, s) {
+  const reprovado = r.resultado === 'reprovado';
   confirmDialog(
-    `Deseja finalizar esta inspeção?<br><br>Após a finalização, o relatório será bloqueado para edição comum.<br><br><b>Resultado calculado: ${r.resultado === 'reprovado' ? 'REPROVADO' : 'APROVADO'}</b>`,
+    `Deseja finalizar esta inspeção?<br><br><b>Resultado calculado: ${reprovado ? '🔴 REPROVADO' : '✅ APROVADO'}</b><br><br>` +
+    (reprovado
+      ? 'A inspeção será <b>concluída</b>, o relatório gerado e uma <b>pendência criada automaticamente</b> a partir da reprovação. O relatório fica bloqueado para edição comum.'
+      : 'A inspeção será <b>concluída</b> e o relatório gerado. O relatório fica bloqueado para edição comum.'),
     async () => {
       const res = await INSP.finalizar(r.id, USER);
-      if (!res.ok) { toast('Ainda há campos obrigatórios pendentes.', { type: 'warn' }); return; }
+      if (!res.ok) { toast('Ainda há medições ou campos obrigatórios pendentes.', { type: 'warn' }); return; }
       await reload(); refreshBanner();
-      toast('Inspeção finalizada.', { type: 'ok', title: 'Concluído' });
+      if (res.pendencia) toast(`Inspeção finalizada como Reprovada. Pendência ${res.pendencia.numero} gerada automaticamente.`, { type: 'ok', title: 'Concluído — pendência criada', timeout: 6000 });
+      else toast('Inspeção finalizada como Aprovada.', { type: 'ok', title: 'Concluído' });
       VIEWONLY = true; STEP = 5; paintWizard();
     }, { title: 'Finalizar inspeção', okLabel: 'Confirmar finalização' });
 }

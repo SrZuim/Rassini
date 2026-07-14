@@ -221,6 +221,7 @@ a { text-decoration: none; color: inherit; }
 .sev-dot { width:9px; height:9px; border-radius:50%; display:inline-block; }
 
 /* ----------------------------------------------------------------- table -- */
+.rna-table-wrap { overflow-x: auto; }   /* tabelas largas rolam no container, nunca na página */
 .rna-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
 .rna-table thead th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--rna-gray); font-weight: 650; padding: 11px 14px; border-bottom: 1px solid var(--rna-border); background: #fafbfc; white-space: nowrap; }
 .rna-table tbody td { padding: 12px 14px; border-bottom: 1px solid #eef1f4; vertical-align: middle; }
@@ -716,6 +717,8 @@ body.kiosk .rna-content { padding: 26px; }
 .cdim-card__num{ font-weight:700; font-size:13.5px; word-break:break-word; }
 .cdim-card__grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px 14px; margin-bottom:10px; }
 .cdim-cards{ display:none; }
+.cdim-highlight{ animation:cdimFlash 2.4s ease; }
+@keyframes cdimFlash{ 0%,100%{ background:transparent; } 15%,60%{ background:var(--rna-yellow-soft); } }
 @media (max-width:768px){
   .cdim-table{ display:none; }
   .cdim-cards{ display:flex; flex-direction:column; gap:10px; padding:12px 14px; }

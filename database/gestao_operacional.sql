@@ -100,9 +100,18 @@ create index if not exists op_exec_itens_idx on op_execucao_itens (execucao_id);
 create table if not exists op_pendencias (
   id text primary key default gen_random_uuid()::text,
   atividade_id text, execucao_id text, plantao_id text,
-  descricao text, status text default 'aberta', aberta_por text, responsavel text, quando timestamptz default now()
+  descricao text, status text default 'aberta', aberta_por text, responsavel text, quando timestamptz default now(),
+  -- NOVO FLUXO de Auditorias: pendência automática vinculada ao relatório reprovado
+  numero text, relatorio_id text, relatorio_numero text, origem text, dados jsonb
 );
 create index if not exists op_pend_user_idx on op_pendencias (aberta_por);
+create index if not exists op_pend_rel_idx  on op_pendencias (relatorio_id);
+-- Compatibilidade: garante as colunas do novo fluxo em bases já existentes.
+alter table op_pendencias add column if not exists numero text;
+alter table op_pendencias add column if not exists relatorio_id text;
+alter table op_pendencias add column if not exists relatorio_numero text;
+alter table op_pendencias add column if not exists origem text;
+alter table op_pendencias add column if not exists dados jsonb;
 
 -- =============================================================================
 -- RLS

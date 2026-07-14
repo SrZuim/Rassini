@@ -26,8 +26,9 @@ if (ctx) {
 }
 
 function route() {
-  const rel = new URLSearchParams(location.search).get('rel');
-  if (rel) return abrirRelatorio(rel);
+  const params = new URLSearchParams(location.search);
+  const rel = params.get('rel');
+  if (rel) return abrirRelatorio(rel, params.get('print') === '1');
   renderConsulta();
 }
 function go(url) { history.pushState({}, '', url); route(); }
@@ -250,7 +251,7 @@ function exportar(fmt) {
 }
 
 /* ============================================================ RELATÓRIO (§23,30) */
-async function abrirRelatorio(relId) {
+async function abrirRelatorio(relId, autoPrint = false) {
   const data = await INSP.carregarRelatorio(relId);
   if (!data) { toast('Relatório não encontrado.', { type: 'crit' }); return renderConsulta(); }
   const { rel, caracteristicas, acoes } = data;
@@ -334,6 +335,7 @@ async function abrirRelatorio(relId) {
   $('#bc-back').addEventListener('click', e => { e.preventDefault(); go('consulta-dimensional.html'); });
   $('#btn-voltar').addEventListener('click', () => go('consulta-dimensional.html'));
   $('#btn-imprimir').addEventListener('click', () => window.print());
+  if (autoPrint) setTimeout(() => window.print(), 500);   // Imprimir direto (botão da lista)
 }
 const cell = (l, v) => `<div class="insp-rep-cell"><span class="insp-info-l">${l}</span><span class="insp-info-v">${(v === 0 || v) ? v : '—'}</span></div>`;
 const dash = v => (v == null || v === '') ? '—' : String(v).replace('.', ',');
