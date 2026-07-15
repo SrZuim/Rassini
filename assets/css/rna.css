@@ -811,3 +811,7 @@ body.kiosk .rna-content { padding: 26px; }
 .insp-pill.insp-info{ background:rgba(43,108,176,.12); color:var(--rna-info); }
 
 @media (max-width:640px){ .bib-tipo-cards{ grid-template-columns:1fr 1fr; } }
+
+/* Minhas Auditorias — coluna Observações (texto da Biblioteca, com reticências) */
+.insp-obs-cell{ max-width:210px; }
+.insp-obs{ display:inline-block; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; cursor:help; }

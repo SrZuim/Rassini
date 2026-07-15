@@ -393,7 +393,7 @@ function stepMedicoes(host) {
       <span class="text-muted-2" style="font-size:12.5px"><i class="bi bi-lock"></i> Nominal/limites vêm da Biblioteca (somente leitura)</span>
     </div>
     <div class="insp-table-wrap"><table class="insp-mtable"><thead><tr>
-      <th class="sticky-l">Cota</th><th>Característica</th><th>Un.</th><th>Nominal</th><th>Mín</th><th>Máx</th><th>Equip.</th>
+      <th class="sticky-l">Cota</th><th>Característica</th><th>Ref.</th><th>Un.</th><th>Nominal</th><th>Mín</th><th>Máx</th><th>Equip.</th><th>Obs.</th>
       ${Array.from({ length: qtd }, (_, i) => `<th class="insp-samp">Peça ${i + 1}</th>`).join('')}
       <th>Classe</th><th>Status</th>
     </tr></thead><tbody>
@@ -431,17 +431,24 @@ function linhaMedicao(c, qtd) {
   const dimCols = (attr || informativo)
     ? `<td colspan="3" class="cell-sub" style="text-align:center">${informativo ? '—' : 'OK / NOK'}</td>`
     : `<td>${fmt(c.nominal)}</td><td>${fmt(c.minimo)}</td><td>${fmt(c.maximo)}</td>`;
+  // Referência e Observações vêm da Biblioteca Técnica (snapshot da especificação):
+  // c.referencia = bib_metricas.referencia · c.observacao_tec = bib_metricas.observacao.
+  const obs = c.observacao_tec || '';
   return `<tr data-row="${c.id}">
     <td class="sticky-l cell-strong">${c.cota ?? '—'}</td>
-    <td>${c.caracteristica}${tipoTag}<div class="cell-sub">${c.referencia || ''}</div></td>
+    <td>${c.caracteristica}${tipoTag}</td>
+    <td class="cell-sub">${c.referencia || '—'}</td>
     <td>${c.unidade || ''}</td>${dimCols}
     <td class="cell-sub">${c.equipamento || '—'}</td>
+    <td class="cell-sub insp-obs-cell"${obs ? ` title="${escTitle(obs)}"` : ''}>${obs ? `<span class="insp-obs">${escTitle(obs)}</span>` : '—'}</td>
     ${cells}
     <td class="insp-classe-cell">${informativo ? '<span class="text-muted-2">—</span>' : classeCellHtml(c)}</td>
     <td class="insp-status-cell">${informativo ? '<span class="insp-pill insp-info">Informativa</span>' : statusCellHtml(c.resultado)}</td>
   </tr>`;
 }
 const fmt = v => (v == null || v === '') ? '—' : String(v).replace('.', ',');
+/* Escapa texto livre (observação da Biblioteca) p/ conteúdo e atributo title. */
+const escTitle = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const cellCls = r => r === 'aprovado' ? 'is-ok' : r === 'reprovado' ? 'is-crit' : '';
 function statusCellHtml(res) {
   if (res === 'aprovado') return `<span class="insp-pill insp-ok"><i class="bi bi-check-circle-fill"></i> Aprovado</span>`;
