@@ -9,7 +9,7 @@
    Persistência 100% via db.js (demo ou Supabase, sem alteração).
    ========================================================================== */
 import { db } from './db.js';
-import { ficha, catalogosEspec } from './biblioteca.js';
+import { ficha, catalogosEspec, ehInformativo, ehAtributo } from './biblioteca.js';
 import { PLANTA_SIGLAS, INSP_STATUS } from './inspecao-data.js';
 
 export function nowISO() { return new Date().toISOString(); }
@@ -26,8 +26,18 @@ export function num(v) {
 /* ============================================================ CÁLCULO (§9-11)
    O auditor NUNCA define aprovado/reprovado — estas funções são a única fonte. */
 
-/** Uma medição: 'aprovado' | 'reprovado' | 'pendente' (limites inclusivos, §9). */
-export function avaliarMedicao(valor, minimo, maximo) {
+/** Avalia atributo OK/NOK → aprovado/reprovado/pendente. */
+export function avaliarAtributo(valor) {
+  const s = String(valor ?? '').trim().toUpperCase();
+  if (s === 'OK') return 'aprovado';
+  if (s === 'NOK' || s === 'NOK.' || s === 'NÃO OK' || s === 'NAO OK') return 'reprovado';
+  return 'pendente';
+}
+
+/** Uma medição: 'aprovado' | 'reprovado' | 'pendente' (limites inclusivos, §9).
+    `tipo` opcional: 'ATRIBUTO' avalia OK/NOK; demais usam limites numéricos. */
+export function avaliarMedicao(valor, minimo, maximo, tipo) {
+  if (tipo === 'ATRIBUTO') return avaliarAtributo(valor);
   const v = num(valor);
   if (v == null) return 'pendente';
   const min = num(minimo), max = num(maximo);
@@ -164,22 +174,33 @@ export async function carregarEspecs(relatorioId, pecaId) {
     for (const m of meds) await db.remove('insp_medicoes', m.id);
     await db.remove('insp_caracteristicas', c.id);
   }
-  // snapshot das métricas (bib_metricas) — congela limites (§21, auditor não altera)
+  // snapshot das métricas (bib_metricas) — congela limites (§21, auditor não altera).
+  // Carrega o tipo da especificação: ATRIBUTO vira OK/NOK; REFERENCIA é informativa
+  // (não recebe medição nem entra na conformidade).
   let ordem = 0;
   for (const m of f.metricas) {
     ordem++;
+    const tipo = m.tipo_especificacao || 'TOLERANCIA';
+    const informativo = ehInformativo(tipo);
+    const atributo = ehAtributo(tipo);
     await db.insert('insp_caracteristicas', {
       relatorio_id: relatorioId, metrica_id: m.id,
-      cota: m.cota ?? ordem, quadrante: p.quadrante || '',
+      cota: m.cota ?? ordem, quadrante: m.quadrante || p.quadrante || '',
       caracteristica: cat.carMap[m.caracteristica_id] || m.caracteristica || '—',
       referencia: m.referencia || '',
       unidade: m.unidade || '',
-      nominal: m.nominal ?? null, minimo: m.tol_min ?? null, maximo: m.tol_max ?? null,
+      nominal: (informativo || atributo) ? null : (m.nominal ?? null),
+      minimo: (informativo || atributo) ? null : (m.tol_min ?? null),
+      maximo: (informativo || atributo) ? null : (m.tol_max ?? null),
       equipamento: cat.eqMap[m.equipamento_id] || m.equipamento || '',
       observacao_tec: m.observacao || '',
-      tipo_campo: 'numerico',            // futuro: características configuráveis não-numéricas
-      opcoes: null,
-      resultado: 'pendente', classe_defeito: null, observacao: '', ordem
+      tipo_especificacao: tipo,
+      tipo_campo: atributo ? 'atributo' : 'numerico',
+      informativo,
+      opcoes: atributo ? ['OK', 'NOK'] : null,
+      // informativas já nascem "aprovadas" para não travar a finalização, mas são
+      // excluídas de todos os cálculos/indicadores (ver resumo/resultadoGeral).
+      resultado: informativo ? 'aprovado' : 'pendente', classe_defeito: null, observacao: '', ordem
     });
   }
   await registrarEvento({ relatorio: { id: relatorioId, auditor_id: null }, tipo_evento: 'part_selected', metadata: { peca: p.codigo, caracteristicas: f.metricas.length } });
@@ -191,7 +212,8 @@ export async function carregarEspecs(relatorioId, pecaId) {
 export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valor) {
   const car = await db.get('insp_caracteristicas', caracteristicaId);
   if (!car) return null;
-  const resultado = avaliarMedicao(valor, car.minimo, car.maximo);
+  if (car.informativo) return null;                        // REFERENCIA não recebe medição
+  const resultado = avaliarMedicao(valor, car.minimo, car.maximo, car.tipo_especificacao);
   const existentes = await db.list('insp_medicoes', { filter: { caracteristica_id: caracteristicaId } });
   const ex = existentes.find(m => m.amostra === amostra);
   const payload = { relatorio_id: relatorioId, caracteristica_id: caracteristicaId, amostra, valor: (valor ?? ''), resultado, medido_iso: nowISO() };
@@ -220,7 +242,8 @@ export async function recalcularCaracteristica(caracteristicaId) {
 }
 
 export async function recalcularRelatorio(relatorioId) {
-  const cars = await db.list('insp_caracteristicas', { filter: { relatorio_id: relatorioId } });
+  const todas = await db.list('insp_caracteristicas', { filter: { relatorio_id: relatorioId } });
+  const cars = todas.filter(c => !c.informativo);          // REFERENCIA não entra no resultado
   const geral = resultadoGeral(cars.map(c => c.resultado));
   const rel = await db.get('insp_relatorios', relatorioId);
   const status = (rel && String(rel.status).startsWith('finalizada')) ? rel.status
@@ -331,7 +354,8 @@ export function fmtDuracao(seg) {
 
 /* ================================================================ RESUMO (§22) */
 export async function resumoRelatorio(relatorioId) {
-  const { rel, caracteristicas } = await carregarRelatorio(relatorioId);
+  const { rel, caracteristicas: todas } = await carregarRelatorio(relatorioId);
+  const caracteristicas = todas.filter(c => !c.informativo);   // informativas fora dos indicadores
   const totalCar = caracteristicas.length;
   const carAprov = caracteristicas.filter(c => c.resultado === 'aprovado').length;
   const carReprov = caracteristicas.filter(c => c.resultado === 'reprovado').length;
@@ -362,7 +386,7 @@ export async function validarFinalizacao(relatorioId) {
   // medições obrigatórias — a inspeção só finaliza com todas as amostras medidas
   const qtd = rel.quantidade || 0;
   let semMedicao = 0;
-  caracteristicas.forEach(c => {
+  caracteristicas.filter(c => !c.informativo).forEach(c => {   // informativas não exigem medição
     for (let a = 1; a <= qtd; a++) {
       const m = c.medicoes.find(x => x.amostra === a);
       if (!m || String(m.valor ?? '') === '') semMedicao++;

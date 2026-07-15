@@ -20,11 +20,10 @@ export const BIB_CLIENTES = [
   { id:'cl8', nome:'Iveco',          ativo:true }
 ];
 
+/* PLANTA — lista fixa (2 opções canônicas). Sem texto livre. */
 export const BIB_PLANTAS = [
-  { id:'pl1', nome:'Planta Jarinu',            ativo:true },
-  { id:'pl2', nome:'Planta Rio Nova Iguaçu',   ativo:true },
-  { id:'pl3', nome:'Planta SP 01',             ativo:true },
-  { id:'pl4', nome:'Planta SP 02',             ativo:true }
+  { id:'pl1', nome:'Rio de Janeiro – Nova Iguaçu',        ativo:true },
+  { id:'pl2', nome:'São Paulo – São Bernardo do Campo',   ativo:true }
 ];
 
 export const BIB_FAMILIAS = [
@@ -77,10 +76,37 @@ export const BIB_EQUIPAMENTOS_MEDICAO = [
   'Certificado','Marcação','Gravação a quente','Embuchadeira','Calibrador de Raio','Calibrador de Folga','OK/NOK'
 ].map((nome, i) => ({ id:'eq' + String(i + 1).padStart(2, '0'), nome, ativo:true }));
 
-/* QUEM MEDE — perfis responsáveis pela medição (permite cadastro futuro). */
+/* QUEM MEDE — lista fixa (6 opções). Sem texto livre. */
 export const BIB_QUEM_MEDE = [
-  'G. DA QUALIDADE','ENG. DE PROCESSO','LABORATÓRIO','TODOS'
+  'G. Qualidade','Eng. Processos','Eng. Produto','Laboratório','Recebimento de Materiais','Metrologia'
 ].map((nome, i) => ({ id:'qm' + (i + 1), nome, ativo:true }));
+
+/* TIPO DA ESPECIFICAÇÃO — cadastro inteligente. Cada tipo define quais campos
+   ficam habilitados e como os limites (mín/máx) são obtidos/calculados.
+   `campos`: conjunto de chaves habilitadas para edição.
+   `informativo`: não participa de aprovação/reprovação nem dos indicadores.
+   `atributo`: medição OK/NOK na auditoria (sem valores dimensionais). */
+export const BIB_TIPO_ESPEC = [
+  { id:'TOLERANCIA', titulo:'Tolerância',              icon:'bi-plus-slash-minus',
+    desc:'Nominal com desvios (superior/inferior) ou ± simétrico. Modo principal.',
+    campos:['nominal','superior','inferior','simetrica'] },
+  { id:'MAX_MIN',    titulo:'Máx e Mín',               icon:'bi-arrows-expand',
+    desc:'Define diretamente o limite mínimo e o máximo.',
+    campos:['tol_min','tol_max'] },
+  { id:'UNID_MAX',   titulo:'Unidimensional (Máximo)', icon:'bi-arrow-bar-up',
+    desc:'Apenas o valor máximo é controlado.',
+    campos:['tol_max'] },
+  { id:'UNID_MIN',   titulo:'Unidimensional (Mínimo)', icon:'bi-arrow-bar-down',
+    desc:'Apenas o valor mínimo é controlado.',
+    campos:['tol_min'] },
+  { id:'ATRIBUTO',   titulo:'Atributo (OK/NOK)',       icon:'bi-check2-square',
+    desc:'Inspeção visual ou funcional. Sem valores dimensionais.',
+    campos:[], atributo:true },
+  { id:'REFERENCIA', titulo:'Referência',              icon:'bi-info-circle',
+    desc:'Apenas informativa. Orienta o auditor; não aprova nem reprova a peça.',
+    campos:['referencia'], informativo:true }
+];
+export const BIB_TIPO_ESPEC_MAP = Object.fromEntries(BIB_TIPO_ESPEC.map(t => [t.id, t]));
 
 /* Status possíveis de uma peça (ciclo de vida da ficha). */
 export const BIB_STATUS = ['Ativo', 'Em revisão', 'Arquivado', 'Obsoleto'];
@@ -108,7 +134,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp01', codigo:'RCE-001', nome:'Feixe de Mola Traseiro',
     cliente:'Volvo', familia:'Feixe de Molas', quadrante:'',
     peso:'62,4 kg', material:'SAE 5160H', acabamento:'Pintura eletrostática', cor:'Preto',
-    status:'Ativo', planta:'Planta Jarinu', norma:'ABNT NBR 6329', especificacao:'ET-RCE-001 Rev.C',
+    status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'ABNT NBR 6329', especificacao:'ET-RCE-001 Rev.C',
     revisao_desenho:3, data_revisao_desenho:'2026-05-18', numero_ad:'AD-2026-0158',
     revisao:3, observacoes:'Conferir torque dos grampos em U conforme PC-001.',
     imagem:null, galeria:[], ativo:true, created_at:'2025-11-02', updated_at:'2026-05-18', created_by:'u1'
@@ -117,7 +143,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp02', codigo:'RCE-014', nome:'Mola Parabólica Dianteira',
     cliente:'Scania', familia:'Mola Parabólica', quadrante:'',
     peso:'28,1 kg', material:'SAE 51B60', acabamento:'Shot peening + pintura', cor:'Cinza grafite',
-    status:'Ativo', planta:'Planta Jarinu', norma:'DIN 17221', especificacao:'ET-RCE-014 Rev.B',
+    status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'DIN 17221', especificacao:'ET-RCE-014 Rev.B',
     revisao_desenho:2, data_revisao_desenho:'2026-04-30', numero_ad:'AD-2026-0092',
     revisao:2, observacoes:'Dureza pós-têmpera crítica.',
     imagem:null, galeria:[], ativo:true, created_at:'2025-12-10', updated_at:'2026-04-30', created_by:'u1'
@@ -126,7 +152,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp03', codigo:'LM-206', nome:'Lâmina Principal 2ª',
     cliente:'Mercedes-Benz', familia:'Lâmina', quadrante:'',
     peso:'11,7 kg', material:'SAE 5160', acabamento:'Jateado', cor:'Natural',
-    status:'Em revisão', planta:'Planta Rio Nova Iguaçu', norma:'ABNT NBR 6329', especificacao:'ET-LM-206 Rev.A',
+    status:'Em revisão', planta:'Rio de Janeiro – Nova Iguaçu', norma:'ABNT NBR 6329', especificacao:'ET-LM-206 Rev.A',
     revisao_desenho:1, data_revisao_desenho:'2026-06-22', numero_ad:'AD-2026-0203',
     revisao:1, observacoes:'Validar novo raio de dobra.',
     imagem:null, galeria:[], ativo:true, created_at:'2026-06-22', updated_at:'2026-06-22', created_by:'u1'
@@ -135,7 +161,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp04', codigo:'GR-330', nome:'Grampo em U M20',
     cliente:'Randon', familia:'Grampo', quadrante:'',
     peso:'3,2 kg', material:'SAE 1045', acabamento:'Zincado', cor:'Prata',
-    status:'Ativo', planta:'Planta SP 01', norma:'ISO 898-1', especificacao:'ET-GR-330 Rev.D',
+    status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'ISO 898-1', especificacao:'ET-GR-330 Rev.D',
     revisao_desenho:4, data_revisao_desenho:'2026-03-14', numero_ad:'AD-2025-0451',
     revisao:4, observacoes:'Torque 320 N·m ±5%.',
     imagem:null, galeria:[], ativo:true, created_at:'2025-09-01', updated_at:'2026-03-14', created_by:'u1'
@@ -144,7 +170,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp05', codigo:'HC-118', nome:'Mola Helicoidal Traseira',
     cliente:'Volkswagen', familia:'Mola Helicoidal', quadrante:'',
     peso:'4,8 kg', material:'SAE 9254', acabamento:'Pintura epóxi', cor:'Preto fosco',
-    status:'Ativo', planta:'Planta SP 02', norma:'SAE J157', especificacao:'ET-HC-118 Rev.A',
+    status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'SAE J157', especificacao:'ET-HC-118 Rev.A',
     revisao_desenho:1, data_revisao_desenho:'2026-02-05', numero_ad:'AD-2026-0031',
     revisao:1, observacoes:'',
     imagem:null, galeria:[], ativo:true, created_at:'2026-02-05', updated_at:'2026-02-05', created_by:'u1'
@@ -153,7 +179,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp06', codigo:'BE-402', nome:'Barra Estabilizadora Dianteira',
     cliente:'Ford', familia:'Barra Estabilizadora', quadrante:'',
     peso:'9,6 kg', material:'SAE 26MnB5', acabamento:'Fosfatizado + pintura', cor:'Preto',
-    status:'Arquivado', planta:'Planta Jarinu', norma:'ASTM A513', especificacao:'ET-BE-402 Rev.B',
+    status:'Arquivado', planta:'São Paulo – São Bernardo do Campo', norma:'ASTM A513', especificacao:'ET-BE-402 Rev.B',
     revisao_desenho:2, data_revisao_desenho:'2025-10-19', numero_ad:'AD-2025-0288',
     revisao:2, observacoes:'Substituída pela BE-410.',
     imagem:null, galeria:[], ativo:false, created_at:'2025-06-11', updated_at:'2025-10-19', created_by:'u1'
@@ -164,30 +190,51 @@ export const BIB_PECAS_DEFAULT = [
    Modelo Rassini: cota, característica (id), referência, valor nominal, tolerâncias,
    unidade, equipamento de medição (id), quem mede (id), observação.
    A peça RCE-001 tem 1 especificação FORA de tolerância (Altura Livre) p/ demo. */
-export const BIB_METRICAS_DEFAULT = [
+const _METRICAS_RAW = [
   // RCE-001
-  { id:'mt01', peca_id:'bp01', cota:1, caracteristica_id:_car('Comprimento Total nos apoios'), referencia:'Vista A', nominal:1520, tol_min:1518, tol_max:1522, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:1 },
-  { id:'mt02', peca_id:'bp01', cota:2, caracteristica_id:_car('Largura da lâmina'),            referencia:'Vista B', nominal:90,   tol_min:89.5, tol_max:90.5, unidade:'mm', equipamento_id:_eq('Paquímetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:2 },
-  { id:'mt03', peca_id:'bp01', cota:3, caracteristica_id:_car('Espessura'),                    referencia:'Detalhe A', nominal:16, tol_min:15.8, tol_max:16.2, unidade:'mm', equipamento_id:_eq('Micrômetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:3 },
-  { id:'mt04', peca_id:'bp01', cota:4, caracteristica_id:_car('Altura Livre'),                 referencia:'Vista C', nominal:205,  tol_min:206,  tol_max:210,  unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('ENG. DE PROCESSO'), observacao:'Sob carga zero', ordem:4 },
-  { id:'mt05', peca_id:'bp01', cota:5, caracteristica_id:_car('Dureza'),                       referencia:'—',       nominal:44,   tol_min:42,   tol_max:48,   unidade:'HRC', equipamento_id:_eq('Durômetro'), quem_mede_id:_qm('LABORATÓRIO'), observacao:'', ordem:5 },
+  { id:'mt01', peca_id:'bp01', cota:1, quadrante:'Q1', caracteristica_id:_car('Comprimento Total nos apoios'), referencia:'Vista A', nominal:1520, tol_min:1518, tol_max:1522, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. Qualidade'), observacao:'', ordem:1 },
+  { id:'mt02', peca_id:'bp01', cota:2, caracteristica_id:_car('Largura da lâmina'),            referencia:'Vista B', nominal:90,   tol_min:89.5, tol_max:90.5, unidade:'mm', equipamento_id:_eq('Paquímetro'), quem_mede_id:_qm('G. Qualidade'), observacao:'', ordem:2 },
+  { id:'mt03', peca_id:'bp01', cota:3, caracteristica_id:_car('Espessura'),                    referencia:'Detalhe A', nominal:16, tol_min:15.8, tol_max:16.2, unidade:'mm', equipamento_id:_eq('Micrômetro'), quem_mede_id:_qm('G. Qualidade'), observacao:'', ordem:3 },
+  { id:'mt04', peca_id:'bp01', cota:4, caracteristica_id:_car('Altura Livre'),                 referencia:'Vista C', nominal:205,  tol_min:206,  tol_max:210,  unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('Eng. Processos'), observacao:'Sob carga zero', ordem:4 },
+  { id:'mt05', peca_id:'bp01', cota:5, caracteristica_id:_car('Dureza'),                       referencia:'—',       nominal:44,   tol_min:42,   tol_max:48,   unidade:'HRC', equipamento_id:_eq('Durômetro'), quem_mede_id:_qm('Laboratório'), observacao:'', ordem:5 },
   // RCE-014
-  { id:'mt06', peca_id:'bp02', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:1360, tol_min:1357, tol_max:1363, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:1 },
-  { id:'mt07', peca_id:'bp02', cota:2, caracteristica_id:_car('Espessura'),                    referencia:'Vista B', nominal:22,   tol_min:21.7, tol_max:22.3, unidade:'mm', equipamento_id:_eq('Micrômetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:2 },
-  { id:'mt08', peca_id:'bp02', cota:3, caracteristica_id:_car('Dureza'),                       referencia:'—',       nominal:46,   tol_min:44,   tol_max:50,   unidade:'HRC', equipamento_id:_eq('Durômetro'), quem_mede_id:_qm('LABORATÓRIO'), observacao:'Característica crítica', ordem:3 },
+  { id:'mt06', peca_id:'bp02', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:1360, tol_min:1357, tol_max:1363, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. Qualidade'), observacao:'', ordem:1 },
+  { id:'mt07', peca_id:'bp02', cota:2, caracteristica_id:_car('Espessura'),                    referencia:'Vista B', nominal:22,   tol_min:21.7, tol_max:22.3, unidade:'mm', equipamento_id:_eq('Micrômetro'), quem_mede_id:_qm('G. Qualidade'), observacao:'', ordem:2 },
+  { id:'mt08', peca_id:'bp02', cota:3, caracteristica_id:_car('Dureza'),                       referencia:'—',       nominal:46,   tol_min:44,   tol_max:50,   unidade:'HRC', equipamento_id:_eq('Durômetro'), quem_mede_id:_qm('Laboratório'), observacao:'Característica crítica', ordem:3 },
   // LM-206
-  { id:'mt09', peca_id:'bp03', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:1180, tol_min:1178, tol_max:1182, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:1 },
-  { id:'mt10', peca_id:'bp03', cota:2, caracteristica_id:_car('Largura'),                      referencia:'Vista B', nominal:90,   tol_min:89.5, tol_max:90.5, unidade:'mm', equipamento_id:_eq('Paquímetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:2 },
-  { id:'mt11', peca_id:'bp03', cota:3, caracteristica_id:_car('ØDiâmetro do furo'),            referencia:'Detalhe A', nominal:16, tol_min:16,   tol_max:16.2, unidade:'mm', equipamento_id:_eq('Micrômetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:3 },
+  { id:'mt09', peca_id:'bp03', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:1180, tol_min:1178, tol_max:1182, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. Qualidade'), observacao:'', ordem:1 },
+  { id:'mt10', peca_id:'bp03', cota:2, caracteristica_id:_car('Largura'),                      referencia:'Vista B', nominal:90,   tol_min:89.5, tol_max:90.5, unidade:'mm', equipamento_id:_eq('Paquímetro'), quem_mede_id:_qm('G. Qualidade'), observacao:'', ordem:2 },
+  { id:'mt11', peca_id:'bp03', cota:3, caracteristica_id:_car('ØDiâmetro do furo'),            referencia:'Detalhe A', nominal:16, tol_min:16,   tol_max:16.2, unidade:'mm', equipamento_id:_eq('Micrômetro'), quem_mede_id:_qm('G. Qualidade'), observacao:'', ordem:3 },
   // GR-330
-  { id:'mt12', peca_id:'bp04', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:104,  tol_min:103,  tol_max:105,  unidade:'mm', equipamento_id:_eq('Paquímetro'), quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'Abertura interna', ordem:1 },
-  { id:'mt13', peca_id:'bp04', cota:2, caracteristica_id:_car('Ângulo'),                       referencia:'Vista B', nominal:90,   tol_min:89,   tol_max:91,   unidade:'°',  equipamento_id:_eq('Goniômetro'), quem_mede_id:_qm('ENG. DE PROCESSO'), observacao:'', ordem:2 },
+  { id:'mt12', peca_id:'bp04', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:104,  tol_min:103,  tol_max:105,  unidade:'mm', equipamento_id:_eq('Paquímetro'), quem_mede_id:_qm('G. Qualidade'), observacao:'Abertura interna', ordem:1 },
+  { id:'mt13', peca_id:'bp04', cota:2, caracteristica_id:_car('Ângulo'),                       referencia:'Vista B', nominal:90,   tol_min:89,   tol_max:91,   unidade:'°',  equipamento_id:_eq('Goniômetro'), quem_mede_id:_qm('Eng. Processos'), observacao:'', ordem:2 },
   // HC-118
-  { id:'mt14', peca_id:'bp05', cota:1, caracteristica_id:_car('Altura Livre'),                 referencia:'Vista A', nominal:385,  tol_min:382,  tol_max:388,  unidade:'mm', equipamento_id:_eq('Trena'),          quem_mede_id:_qm('ENG. DE PROCESSO'), observacao:'', ordem:1 },
-  { id:'mt15', peca_id:'bp05', cota:2, caracteristica_id:_car('Rate K1'),                      referencia:'—',       nominal:34,   tol_min:32,   tol_max:36,   unidade:'N/mm', equipamento_id:_eq('Máquina de Carga'), quem_mede_id:_qm('ENG. DE PROCESSO'), observacao:'', ordem:2 },
+  { id:'mt14', peca_id:'bp05', cota:1, caracteristica_id:_car('Altura Livre'),                 referencia:'Vista A', nominal:385,  tol_min:382,  tol_max:388,  unidade:'mm', equipamento_id:_eq('Trena'),          quem_mede_id:_qm('Eng. Processos'), observacao:'', ordem:1 },
+  { id:'mt15', peca_id:'bp05', cota:2, caracteristica_id:_car('Rate K1'),                      referencia:'—',       nominal:34,   tol_min:32,   tol_max:36,   unidade:'N/mm', equipamento_id:_eq('Máquina de Carga'), quem_mede_id:_qm('Eng. Processos'), observacao:'', ordem:2 },
   // BE-402
-  { id:'mt16', peca_id:'bp06', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:1240, tol_min:1237, tol_max:1243, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. DA QUALIDADE'), observacao:'', ordem:1 }
+  { id:'mt16', peca_id:'bp06', cota:1, caracteristica_id:_car('Comprimento'),                  referencia:'Vista A', nominal:1240, tol_min:1237, tol_max:1243, unidade:'mm', equipamento_id:_eq('Trena'),      quem_mede_id:_qm('G. Qualidade'), observacao:'', ordem:1 },
+  // RCE-001 — demos dos novos tipos de especificação
+  { id:'mt17', peca_id:'bp01', cota:6, quadrante:'Q2', tipo_especificacao:'ATRIBUTO', caracteristica_id:_car('Identificação part number'), referencia:'Vista A', unidade:'', equipamento_id:_eq('Visual'), quem_mede_id:_qm('G. Qualidade'), observacao:'Gravação legível', ordem:6 },
+  { id:'mt18', peca_id:'bp01', cota:7, quadrante:'Q2', tipo_especificacao:'REFERENCIA', caracteristica_id:_car('Raio'), referencia:'Conforme desenho — Ver Nota 01', unidade:'mm', equipamento_id:_eq('Calibrador de Raio'), quem_mede_id:_qm('Metrologia'), observacao:'', ordem:7 }
 ];
+
+/* Normaliza cada especificação semente com os campos do cadastro inteligente:
+   tipo_especificacao (default TOLERANCIA) + desvios superior/inferior derivados
+   quando há nominal. Mantém tol_min/tol_max como fonte para os módulos antigos. */
+function seedSpec(m) {
+  const tipo = m.tipo_especificacao || 'TOLERANCIA';
+  const out = {
+    quadrante: '', superior: null, inferior: null, tol_simetrica: null,
+    ...m, tipo_especificacao: tipo
+  };
+  if (tipo === 'TOLERANCIA' && m.nominal != null) {
+    out.superior = m.superior ?? (m.tol_max != null ? +(m.tol_max - m.nominal).toFixed(4) : null);
+    out.inferior = m.inferior ?? (m.tol_min != null ? +(m.tol_min - m.nominal).toFixed(4) : null);
+  }
+  if (tipo === 'ATRIBUTO' || tipo === 'REFERENCIA') { out.nominal = null; out.tol_min = null; out.tol_max = null; }
+  return out;
+}
+export const BIB_METRICAS_DEFAULT = _METRICAS_RAW.map(seedSpec);
 
 /* --------------------------------------------------------- pontos inspeção - */
 export const BIB_PONTOS_DEFAULT = [

@@ -383,7 +383,7 @@ function stepMedicoes(host) {
   if (!R.caracteristicas.length) { host.innerHTML = `<div class="insp-blocker"><i class="bi bi-info-circle"></i> Esta peça não possui características cadastradas.</div>`; return; }
   const qtd = r.quantidade;
   LOCAL = {};
-  R.caracteristicas.forEach(c => { LOCAL[c.id] = { min: c.minimo, max: c.maximo, vals: {} }; c.medicoes.forEach(m => LOCAL[c.id].vals[m.amostra] = m.valor); });
+  R.caracteristicas.forEach(c => { LOCAL[c.id] = { min: c.minimo, max: c.maximo, tipo: c.tipo_especificacao, informativo: !!c.informativo, vals: {} }; c.medicoes.forEach(m => LOCAL[c.id].vals[m.amostra] = m.valor); });
 
   host.innerHTML = `
     <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
@@ -401,29 +401,44 @@ function stepMedicoes(host) {
     </tbody></table></div>`;
 
   $('#btn-ajuda-classe').addEventListener('click', ajudaClasses);
-  if (VIEWONLY) { $$('.insp-minput', host).forEach(i => i.disabled = true); $$('.insp-classe-sel', host).forEach(s => s.disabled = true); return; }
+  if (VIEWONLY) { $$('.insp-minput', host).forEach(i => i.disabled = true); $$('.insp-attr', host).forEach(s => s.disabled = true); $$('.insp-classe-sel', host).forEach(s => s.disabled = true); return; }
   $$('.insp-minput', host).forEach(inp => {
     inp.addEventListener('input', () => onMedInput(inp));
     inp.addEventListener('change', () => persistMed(inp));
   });
+  $$('.insp-attr', host).forEach(sel => sel.addEventListener('change', () => onAttrInput(sel)));
   $$('.insp-classe-sel', host).forEach(sel => sel.addEventListener('change', () => onClasse(sel)));
   $$('.insp-tratar', host).forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));
 }
 
 function linhaMedicao(c, qtd) {
-  const cells = Array.from({ length: qtd }, (_, i) => {
-    const a = i + 1; const m = c.medicoes.find(x => x.amostra === a);
-    const val = m ? m.valor : ''; const res = m ? m.resultado : 'pendente';
-    return `<td class="insp-samp"><input class="insp-minput ${cellCls(res)}" data-car="${c.id}" data-a="${a}" value="${val ?? ''}" inputmode="decimal" placeholder="—"></td>`;
-  }).join('');
+  const attr = c.tipo_especificacao === 'ATRIBUTO';
+  const informativo = !!c.informativo;
+  // Célula por amostra: numérica, OK/NOK (atributo) ou nada (informativa).
+  const cells = informativo
+    ? `<td class="insp-samp insp-info-cell" colspan="${qtd}"><i class="bi bi-info-circle"></i> ${c.referencia || 'Característica informativa'}</td>`
+    : Array.from({ length: qtd }, (_, i) => {
+        const a = i + 1; const m = c.medicoes.find(x => x.amostra === a);
+        const val = m ? m.valor : ''; const res = m ? m.resultado : 'pendente';
+        if (attr) {
+          const sel = String(val ?? '').toUpperCase();
+          return `<td class="insp-samp"><select class="insp-attr ${cellCls(res)}" data-car="${c.id}" data-a="${a}">
+            <option value="">—</option><option value="OK" ${sel === 'OK' ? 'selected' : ''}>OK</option><option value="NOK" ${sel === 'NOK' ? 'selected' : ''}>NOK</option></select></td>`;
+        }
+        return `<td class="insp-samp"><input class="insp-minput ${cellCls(res)}" data-car="${c.id}" data-a="${a}" value="${val ?? ''}" inputmode="decimal" placeholder="—"></td>`;
+      }).join('');
+  const tipoTag = informativo ? ' <span class="insp-tipo-tag">Referência</span>' : (attr ? ' <span class="insp-tipo-tag">OK/NOK</span>' : '');
+  const dimCols = (attr || informativo)
+    ? `<td colspan="3" class="cell-sub" style="text-align:center">${informativo ? '—' : 'OK / NOK'}</td>`
+    : `<td>${fmt(c.nominal)}</td><td>${fmt(c.minimo)}</td><td>${fmt(c.maximo)}</td>`;
   return `<tr data-row="${c.id}">
     <td class="sticky-l cell-strong">${c.cota ?? '—'}</td>
-    <td>${c.caracteristica}<div class="cell-sub">${c.referencia || ''}</div></td>
-    <td>${c.unidade || ''}</td><td>${fmt(c.nominal)}</td><td>${fmt(c.minimo)}</td><td>${fmt(c.maximo)}</td>
+    <td>${c.caracteristica}${tipoTag}<div class="cell-sub">${c.referencia || ''}</div></td>
+    <td>${c.unidade || ''}</td>${dimCols}
     <td class="cell-sub">${c.equipamento || '—'}</td>
     ${cells}
-    <td class="insp-classe-cell">${classeCellHtml(c)}</td>
-    <td class="insp-status-cell">${statusCellHtml(c.resultado)}</td>
+    <td class="insp-classe-cell">${informativo ? '<span class="text-muted-2">—</span>' : classeCellHtml(c)}</td>
+    <td class="insp-status-cell">${informativo ? '<span class="insp-pill insp-info">Informativa</span>' : statusCellHtml(c.resultado)}</td>
   </tr>`;
 }
 const fmt = v => (v == null || v === '') ? '—' : String(v).replace('.', ',');
@@ -445,22 +460,32 @@ function classeCellHtml(c) {
 function onMedInput(inp) {
   const carId = inp.dataset.car, a = +inp.dataset.a;
   LOCAL[carId].vals[a] = inp.value;
-  const res = INSP.avaliarMedicao(inp.value, LOCAL[carId].min, LOCAL[carId].max);
+  const res = INSP.avaliarMedicao(inp.value, LOCAL[carId].min, LOCAL[carId].max, LOCAL[carId].tipo);
   inp.classList.remove('is-ok', 'is-crit'); if (res !== 'pendente') inp.classList.add(cellCls(res));
-  // resultado da linha (a partir do modelo local)
+  recalcLinha(carId);
+}
+/* Atributo OK/NOK: recalcula local e persiste imediatamente (select change). */
+function onAttrInput(sel) {
+  const carId = sel.dataset.car, a = +sel.dataset.a;
+  LOCAL[carId].vals[a] = sel.value;
+  const res = INSP.avaliarMedicao(sel.value, null, null, 'ATRIBUTO');
+  sel.classList.remove('is-ok', 'is-crit'); if (res !== 'pendente') sel.classList.add(cellCls(res));
+  recalcLinha(carId);
+  persistMed(sel);
+}
+/* Recalcula o status da linha e o banner geral a partir do modelo local. */
+function recalcLinha(carId) {
   const qtd = R.rel.quantidade;
   const rowRes = INSP.resultadoCaracteristica(resInputs(carId, qtd));
   const row = document.querySelector(`tr[data-row="${carId}"]`);
   row.querySelector('.insp-status-cell').innerHTML = statusCellHtml(rowRes);
-  // reflete no modelo carregado (para classe cell + banner)
   const car = R.caracteristicas.find(c => c.id === carId); if (car) car.resultado = rowRes;
   row.querySelector('.insp-classe-cell').innerHTML = classeCellHtml(car);
   bindRowClasse(row);
-  // banner geral (local)
-  R.rel.resultado = INSP.resultadoGeral(R.caracteristicas.map(c => c.resultado));
+  R.rel.resultado = INSP.resultadoGeral(R.caracteristicas.filter(c => !c.informativo).map(c => c.resultado));
   refreshBanner();
 }
-function resInputs(carId, qtd) { const out = []; for (let s = 1; s <= qtd; s++) out.push(INSP.avaliarMedicao(LOCAL[carId].vals[s], LOCAL[carId].min, LOCAL[carId].max)); return out; }
+function resInputs(carId, qtd) { const out = []; const L = LOCAL[carId]; for (let s = 1; s <= qtd; s++) out.push(INSP.avaliarMedicao(L.vals[s], L.min, L.max, L.tipo)); return out; }
 function bindRowClasse(row) {
   row.querySelectorAll('.insp-classe-sel').forEach(sel => sel.addEventListener('change', () => onClasse(sel)));
   row.querySelectorAll('.insp-tratar').forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));

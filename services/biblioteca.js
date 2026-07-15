@@ -6,8 +6,10 @@
    ========================================================================== */
 import { db } from './db.js';
 
-/* Campos da peça indexados pela busca “estilo Google”. */
-const CAMPOS_BUSCA = ['codigo','nome','cliente','familia','material','norma','especificacao','planta','quadrante','numero_ad','observacoes'];
+/* Campos da peça indexados pela busca “estilo Google”.
+   (Reestruturação: material/norma/especificacao/observacoes/quadrante saíram da
+   peça — quadrante agora é por especificação.) */
+const CAMPOS_BUSCA = ['codigo','nome','cliente','familia','planta','numero_ad'];
 
 /* Remove acentos e baixa a caixa para busca tolerante. */
 export function normaliza(txt) {
@@ -83,9 +85,49 @@ export async function porCodigo(codigo) {
   return pecas.find(p => normaliza(p.codigo) === alvo) || null;
 }
 
+/* ------------------------------------------ tipos de especificação / cálculo
+   Motor único do "cadastro inteligente": a partir do tipo e dos campos digitados,
+   calcula tol_min/tol_max (fonte usada por Auditoria, Relatório, indicadores).
+   Compartilhado por editor (preview em tempo real) e salvamento. */
+export const SPEC_TIPOS = ['MAX_MIN','ATRIBUTO','UNID_MAX','UNID_MIN','REFERENCIA','TOLERANCIA'];
+export function ehInformativo(tipo) { return tipo === 'REFERENCIA'; }
+export function ehAtributo(tipo)    { return tipo === 'ATRIBUTO'; }
+function round(n) { return Math.round(n * 1e6) / 1e6; }
+
+/** Calcula { tol_min, tol_max } a partir do tipo e dos campos do editor.
+    `simetrica` (bool) indica uso do ± (tol_simetrica) no modo TOLERANCIA. */
+export function calcularLimites(spec = {}) {
+  const tipo = spec.tipo_especificacao || 'TOLERANCIA';
+  const nom = num(spec.nominal);
+  const c = v => (v === '' || v == null ? null : num(v));
+  switch (tipo) {
+    case 'MAX_MIN':    return { tol_min: c(spec.tol_min), tol_max: c(spec.tol_max) };
+    case 'UNID_MAX':   return { tol_min: null,            tol_max: c(spec.tol_max) };
+    case 'UNID_MIN':   return { tol_min: c(spec.tol_min), tol_max: null };
+    case 'ATRIBUTO':
+    case 'REFERENCIA': return { tol_min: null, tol_max: null };
+    case 'TOLERANCIA':
+    default: {
+      if (spec.simetrica) {
+        const p = c(spec.tol_simetrica);
+        if (nom == null || p == null) return { tol_min: null, tol_max: null };
+        const a = Math.abs(p);
+        return { tol_min: round(nom - a), tol_max: round(nom + a) };
+      }
+      const sup = c(spec.superior), inf = c(spec.inferior);
+      return {
+        tol_min: (nom != null && inf != null) ? round(nom + inf) : null,
+        tol_max: (nom != null && sup != null) ? round(nom + sup) : null
+      };
+    }
+  }
+}
+
 /* ---------------------------------------------------------- tolerância ----- */
-/** true se o valor nominal está fora da faixa de tolerância (ou faixa inválida). */
+/** true se o valor nominal está fora da faixa de tolerância (ou faixa inválida).
+    Só se aplica a especificações dimensionais com nominal (TOLERANCIA/…). */
 export function foraDePadrao(m) {
+  if (ehInformativo(m.tipo_especificacao) || ehAtributo(m.tipo_especificacao)) return false;
   const nom = num(m.nominal), min = num(m.tol_min), max = num(m.tol_max);
   if (nom == null) return false;
   if (min != null && max != null && min > max) return true;           // faixa invertida
@@ -129,8 +171,8 @@ export function registrarRecente(userId, pecaId) {
 }
 
 /* --------------------------------------------------------- versionamento --- */
-/* Campos da peça acompanhados no diff do histórico. */
-const CAMPOS_HIST = ['codigo','nome','cliente','familia','quadrante','peso','material','acabamento','cor','status','planta','norma','especificacao','revisao_desenho','data_revisao_desenho','numero_ad','observacoes'];
+/* Campos da peça acompanhados no diff do histórico (apenas informações da peça). */
+const CAMPOS_HIST = ['codigo','nome','cliente','familia','status','planta','revisao_desenho','data_revisao_desenho','numero_ad'];
 
 /** Diferença campo-a-campo entre a peça antes e depois (para o histórico). */
 export function diffPeca(antes, depois) {
@@ -162,8 +204,9 @@ export async function salvarRevisao(pecaId, patch, usuario) {
     resumo: mudancas.length ? `${mudancas.length} campo(s) alterado(s)` : 'Revisão salva'
   });
 
+  // revisao (compat) e revisao_cadastro (novo nome explícito) caminham juntas.
   const atualizado = await db.update('bib_pecas', pecaId, {
-    ...patch, revisao: novaRev, updated_at: hoje()
+    ...patch, revisao: novaRev, revisao_cadastro: novaRev, updated_at: hoje()
   });
 
   for (const m of mudancas) {

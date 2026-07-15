@@ -299,11 +299,19 @@ async function abrirRelatorio(relId, autoPrint = false) {
           <th>Cota</th><th>Característica</th><th>Un.</th><th>Nom.</th><th>Mín</th><th>Máx</th><th>Equip.</th>
           ${Array.from({ length: rel.quantidade || 0 }, (_, i) => `<th>P${i + 1}</th>`).join('')}
           <th>Result.</th><th>Classe</th></tr></thead><tbody>
-          ${caracteristicas.map(c => `<tr>
-            <td>${c.cota ?? '—'}</td><td>${c.caracteristica}</td><td>${c.unidade || ''}</td><td>${dash(c.nominal)}</td><td>${dash(c.minimo)}</td><td>${dash(c.maximo)}</td><td class="cell-sub">${c.equipamento || '—'}</td>
-            ${Array.from({ length: rel.quantidade || 0 }, (_, i) => { const m = c.medicoes.find(x => x.amostra === i + 1); return `<td class="${m ? (m.resultado === 'aprovado' ? 'rep-ok' : m.resultado === 'reprovado' ? 'rep-crit' : '') : ''}">${m ? dash(m.valor) : '—'}</td>`; }).join('')}
-            <td>${c.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovado</span>' : c.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovado</span>' : '—'}</td>
-            <td>${c.classe_defeito ? 'Classe ' + c.classe_defeito : '—'}</td></tr>`).join('')}
+          ${caracteristicas.map(c => {
+            const info = !!c.informativo;
+            const nomeCel = `${c.caracteristica}${c.referencia ? `<div class="cell-sub"><i class="bi bi-info-circle"></i> ${c.referencia}</div>` : ''}`;
+            const dimCels = info ? `<td colspan="3" class="cell-sub" style="text-align:center">Informativa</td>` : `<td>${dash(c.nominal)}</td><td>${dash(c.minimo)}</td><td>${dash(c.maximo)}</td>`;
+            const sampCels = info
+              ? `<td colspan="${rel.quantidade || 1}" class="cell-sub" style="text-align:center">—</td>`
+              : Array.from({ length: rel.quantidade || 0 }, (_, i) => { const m = c.medicoes.find(x => x.amostra === i + 1); return `<td class="${m ? (m.resultado === 'aprovado' ? 'rep-ok' : m.resultado === 'reprovado' ? 'rep-crit' : '') : ''}">${m ? dash(m.valor) : '—'}</td>`; }).join('');
+            const resCel = info ? '<span class="rep-tag">Informativa</span>' : (c.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovado</span>' : c.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovado</span>' : '—');
+            return `<tr>
+            <td>${c.cota ?? '—'}</td><td>${nomeCel}</td><td>${c.unidade || ''}</td>${dimCels}<td class="cell-sub">${c.equipamento || '—'}</td>
+            ${sampCels}
+            <td>${resCel}</td>
+            <td>${c.classe_defeito ? 'Classe ' + c.classe_defeito : '—'}</td></tr>`; }).join('')}
         </tbody></table></div></div>
 
       ${caracteristicas.some(c => c.resultado === 'reprovado') ? `<div class="insp-rep-section"><div class="insp-rep-sec-t">Reprovações e tratamento</div>
