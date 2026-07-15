@@ -155,7 +155,14 @@
       const btn = document.getElementById('btn-cad');
       btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enviando solicitação...';
       try {
-        await auth.signup({ nome, email, password: senha, planta, cargo });
+        const res = await auth.signup({ nome, email, password: senha, planta, cargo });
+        if (res?.recuperado) {
+          // Órfão recuperado: a conta de login já existia (senha original mantida).
+          const p = okBox.querySelector('p');
+          if (p) p.innerHTML = '<b>Encontramos um cadastro anterior e recuperamos sua solicitação.</b><br>'
+            + 'Aguarde a aprovação do administrador. No login, use a <b>senha que você já tinha</b> '
+            + 'ou a opção <b>“Esqueci minha senha”</b>.';
+        }
         form.style.display = 'none';
         info.style.display = 'none';
         okBox.style.display = 'block';

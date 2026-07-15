@@ -53,11 +53,15 @@ export function traduzErroSupabase(error, contexto = '') {
   if (/for security purposes|rate limit|too many|over_request_rate/.test(full))
     return new Error('Muitas tentativas. Aguarde alguns segundos e tente novamente.');
 
-  // Casos conhecidos → mensagem clara
-  if (/already registered|already been registered|user already exists/.test(full))
-    return new Error('E-mail já cadastrado.');
+  // Casos conhecidos → mensagem clara e ACIONÁVEL (não um beco sem saída).
+  // OBS.: no cadastro, signup() intercepta "already registered" ANTES daqui
+  // para tentar recuperar contas órfãs; esta mensagem é o fallback.
+  if (/already registered|already been registered|user already exists|user_already_exists/.test(full))
+    return new Error('Este e-mail já possui uma conta. Se você já solicitou acesso, aguarde a aprovação; caso já use a plataforma, faça login ou recupere sua senha.');
   if (code === '23505' || /duplicate key|unique constraint/.test(full))
-    return new Error('E-mail já cadastrado.');
+    return new Error('Já existe um cadastro com este e-mail.');
+  if (/invalid email|email.*invalid/.test(full))
+    return new Error('O endereço de e-mail informado é inválido.');
   if (/rassini|corporativo/.test(full))
     return new Error('Utilize seu e-mail corporativo da Rassini NHK.');
   if (code === '42501' || /row-level security|permission denied|violates row-level/.test(full))
@@ -84,6 +88,17 @@ function mensagemStatus(status) {
     recusado:  'Seu acesso foi recusado. Procure seu supervisor ou administrador.',
     bloqueado: 'Seu acesso está bloqueado. Procure o administrador.'
   })[status] || 'Seu acesso está inativo. Procure o administrador.';
+}
+
+/* [MÓDULO USUÁRIOS] Mensagens do CADASTRO quando o e-mail já tem perfil público.
+   Erro amigável e específico por status (substitui o genérico "já cadastrado"). */
+function mensagemCadastroExistente(status) {
+  return ({
+    pendente:  'Já existe uma solicitação de acesso pendente para este e-mail. Aguarde a aprovação do administrador.',
+    aprovado:  'Este e-mail já possui uma conta ativa. Utilize a tela de login ou a opção de recuperação de senha.',
+    recusado:  'Este e-mail possui uma solicitação recusada. Entre em contato com o administrador para reavaliação.',
+    bloqueado: 'Este e-mail está bloqueado. Entre em contato com o administrador.'
+  })[status] || 'Este e-mail já possui um cadastro no sistema.';
 }
 
 /* Fallback embutido (caso o fetch de users.json falhe, ex.: file://).
@@ -226,8 +241,25 @@ export const auth = {
     if (!SUPABASE.enabled) throw new Error('Cadastro indisponível: backend não configurado.');
     const sb = await getSupabase();
 
-    // --- Logs temporários de depuração (remova em produção estável) ----------
     console.log('%c[CADASTRO] 1) dados enviados', 'color:#e0a500;font-weight:bold', { nome, email, planta, cargo: cargoOk });
+
+    // (1.5) Pré-checagem de status → mensagem específica em vez da genérica.
+    //       Se já há perfil público, não faz sentido tentar signUp de novo.
+    const pre = await this._statusEmail(sb, email);
+    if (pre?.existe_usuarios) {
+      this._logAcesso({ email, evento: 'cadastro_bloqueado', motivo: 'status_' + (pre.status || '?') });
+      throw new Error(mensagemCadastroExistente(pre.status));
+    }
+    // Órfão conhecido (existe no Auth, ausente em usuarios) → recupera direto,
+    // sem depender do erro do signUp.
+    if (pre?.orfao_auth) {
+      const rec = await this._recuperarOrfao(sb, { email, nome, planta, cargo: cargoOk });
+      if (rec?.recuperado) {
+        this._logAcesso({ nome, email, evento: 'cadastro_recuperado' });
+        return { email, nome, status: 'pendente', recuperado: true };
+      }
+      if (rec?.ja_existe) throw new Error(mensagemCadastroExistente(rec.status));
+    }
 
     // (2) Cria a conta no Auth
     const { data, error: authErr } = await sb.auth.signUp({
@@ -236,23 +268,68 @@ export const auth = {
     });
     console.log('%c[CADASTRO] 2) resultado signUp', 'color:#e0a500;font-weight:bold',
       { userId: data?.user?.id || null, temSessao: !!data?.session, authErr });
-    if (authErr) { console.error('[CADASTRO] erro Auth completo:', authErr); throw traduzErroSupabase(authErr, 'auth'); }
+
+    if (authErr) {
+      console.error('[CADASTRO] erro Auth completo:', { message: authErr?.message, code: authErr?.code, status: authErr?.status });
+      // Conta já existe no Auth mas sem perfil público (órfão típico de exclusão
+      // parcial). Tenta recuperar o perfil pendente sem duplicar nem trocar senha.
+      if (/already registered|already been registered|user already exists|user_already_exists/i.test(String(authErr?.message || ''))) {
+        const rec = await this._recuperarOrfao(sb, { email, nome, planta, cargo: cargoOk });
+        if (rec?.recuperado) {
+          this._logAcesso({ nome, email, evento: 'cadastro_recuperado' });
+          return { email, nome, status: 'pendente', recuperado: true };
+        }
+        if (rec?.ja_existe) throw new Error(mensagemCadastroExistente(rec.status));
+        // Conta no Auth existe, mas não conseguimos recuperar automaticamente.
+        throw new Error('Este e-mail já possui uma conta de acesso. Se for você, faça login ou use "Esqueci minha senha". Se acredita que houve um erro, procure o administrador.');
+      }
+      throw traduzErroSupabase(authErr, 'auth');
+    }
 
     const authId = data?.user?.id || null;   // usa data.user.id (funciona com confirm-email ON/OFF)
     if (!authId) console.warn('[CADASTRO] signUp não retornou user.id (confirm-email?). A RPC seguirá por e-mail.');
 
-    // (3) Cria o perfil pendente via RPC segura
+    // (3) Cria o perfil pendente via RPC segura. Se falhar aqui, a conta já foi
+    //     criada no Auth → sinaliza claramente a criação PARCIAL (recuperável).
     const { data: rpc, error: rpcErr } = await sb.rpc('solicitar_acesso', {
       p_nome: nome, p_email: email, p_planta: planta, p_cargo: cargoOk, p_auth_id: authId
     });
     console.log('%c[CADASTRO] 3) resultado solicitar_acesso', 'color:#e0a500;font-weight:bold', { rpc, rpcErr });
-    if (rpcErr) { console.error('[CADASTRO] erro RPC completo:', rpcErr); throw traduzErroSupabase(rpcErr, 'perfil'); }
+    if (rpcErr) {
+      console.error('[CADASTRO] Conta criada no Auth, mas o perfil falhou (criação parcial):',
+        { message: rpcErr?.message, code: rpcErr?.code });
+      this._logAcesso({ email, evento: 'cadastro_parcial', motivo: rpcErr?.message || 'perfil' });
+      throw new Error('A conta foi criada, mas o perfil não foi finalizado. Tente cadastrar novamente — o sistema recuperará seus dados automaticamente — ou procure o administrador.');
+    }
 
     // (4) Não deixa sessão aberta — usuário aguarda aprovação.
     try { await sb.auth.signOut(); } catch {}
     this._logAcesso({ nome, email, evento: 'cadastro' });
     console.log('%c[CADASTRO] 4) concluído — perfil pendente criado', 'color:#1c8c4a;font-weight:bold');
     return { email, nome, status: 'pendente' };
+  },
+
+  /* [MÓDULO USUÁRIOS] Pré-checagem de status do e-mail (RPC fn_status_email).
+     Best-effort: se a RPC não existir (banco desatualizado), retorna null e o
+     fluxo segue pelo caminho antigo (signUp + tratamento de erro). */
+  async _statusEmail(sb, email) {
+    try {
+      const { data, error } = await sb.rpc('fn_status_email', { p_email: email });
+      if (error) { console.warn('[CADASTRO] fn_status_email indisponível:', error?.message); return null; }
+      return data || null;
+    } catch (e) { console.warn('[CADASTRO] fn_status_email exceção:', e?.message); return null; }
+  },
+
+  /* [MÓDULO USUÁRIOS] Recupera perfil órfão (RPC fn_recuperar_perfil_orfao).
+     Cria o perfil pendente a partir da conta existente em auth.users. */
+  async _recuperarOrfao(sb, { email, nome, planta, cargo }) {
+    try {
+      const { data, error } = await sb.rpc('fn_recuperar_perfil_orfao', {
+        p_email: email, p_nome: nome, p_planta: planta, p_cargo: cargo
+      });
+      if (error) { console.warn('[CADASTRO] recuperação de órfão falhou:', error?.message); return null; }
+      return data || null;
+    } catch (e) { console.warn('[CADASTRO] recuperação de órfão exceção:', e?.message); return null; }
   },
 
   /** Alias explícito exigido pelo fluxo de cadastro. */

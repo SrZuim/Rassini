@@ -25,6 +25,7 @@ async function boot() {
         <p>Solicitações de acesso, aprovação, cargos e bloqueios.</p>
       </div>
       <div class="d-flex gap-2">
+        <button class="rna-btn rna-btn-ghost" id="btn-diag"><i class="bi bi-search-heart"></i> Diagnosticar e-mail</button>
         <button class="rna-btn rna-btn-ghost" id="btn-logs"><i class="bi bi-clock-history"></i> Auditoria</button>
         <button class="rna-btn rna-btn-dark" id="btn-refresh"><i class="bi bi-arrow-clockwise"></i> Atualizar</button>
       </div>
@@ -60,6 +61,7 @@ async function boot() {
   // filtros / ações de topo
   $('#btn-refresh').addEventListener('click', reload);
   $('#btn-logs').addEventListener('click', () => openLogs());
+  $('#btn-diag').addEventListener('click', () => openDiagnostico());
   $('#f-q').addEventListener('input', e => { state.q = e.target.value.trim().toLowerCase(); state.page = 1; renderTable(); });
   $('#f-planta').addEventListener('change', e => { state.planta = e.target.value; state.page = 1; renderTable(); });
   $('#f-cargo').addEventListener('change', e => { state.cargo = e.target.value; state.page = 1; renderTable(); });
@@ -304,6 +306,111 @@ async function openLogs() {
     content: logs.length ? `<div style="max-height:60vh;overflow:auto"><div class="rna-timeline">${logs.map(logHtml).join('')}</div></div>`
                          : '<p class="text-muted-2">Nenhum registro ainda.</p>'
   });
+}
+
+/* -------------------------------------------------- diagnóstico de e-mail -
+   ETAPA 8: pesquisa um e-mail nos dois locais (auth.users + usuarios) e mostra
+   a situação + ações de correção. Requer as RPCs de fix_email_ja_cadastrado.sql. */
+async function openDiagnostico(preset = '') {
+  const m = modal({
+    title: 'Diagnóstico de e-mail',
+    size: 'modal-lg',
+    content: `
+      <p style="font-size:13px" class="text-muted-2">Verifica se o e-mail existe no <b>Authentication</b> e na tabela <b>usuarios</b>, aponta a inconsistência e sugere a correção.</p>
+      <div class="d-flex gap-2">
+        <input id="dg-email" class="form-control" placeholder="usuario@rassininhk.com.br" value="${preset}" style="flex:1">
+        <button class="rna-btn rna-btn-primary" id="dg-run"><i class="bi bi-search"></i> Diagnosticar</button>
+      </div>
+      <div id="dg-out" class="mt-3"></div>`
+  });
+  const runBtn = $('#dg-run', m.host), input = $('#dg-email', m.host), out = $('#dg-out', m.host);
+  const run = async () => {
+    const email = input.value.trim().toLowerCase();
+    if (!email) { input.focus(); return; }
+    runBtn.disabled = true; out.innerHTML = `<div class="text-muted-2" style="font-size:13px"><span class="spinner-border spinner-border-sm"></span> Consultando…</div>`;
+    try {
+      const d = await usuariosSvc.diagnosticoEmail(email);
+      out.innerHTML = diagHtml(d);
+      wireDiagActions(out, d, m);
+    } catch (e) {
+      out.innerHTML = `<div class="text-danger" style="font-size:13px"><i class="bi bi-exclamation-triangle"></i> ${e.message || 'Falha no diagnóstico.'}</div>
+        <p class="text-muted-2" style="font-size:12px;margin-top:6px">Confirme que <code>database/fix_email_ja_cadastrado.sql</code> foi aplicado no Supabase.</p>`;
+    } finally { runBtn.disabled = false; }
+  };
+  runBtn.addEventListener('click', run);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  if (preset) run(); else input.focus();
+}
+
+function diagHtml(d) {
+  const yn = v => v ? `<span class="rna-badge badge-ok"><i class="bi bi-check-circle"></i> Sim</span>`
+                    : `<span class="rna-badge badge-crit"><i class="bi bi-x-circle"></i> Não</span>`;
+  const row = (k, v) => `<div class="d-flex justify-content-between gap-3" style="padding:3px 0"><span class="text-muted-2">${k}</span><b style="text-align:right;word-break:break-all">${v ?? '—'}</b></div>`;
+  const dt = v => v ? fmtDT(v, true) : '—';
+  return `
+    <div class="rna-card"><div class="rna-card__body" style="font-size:12.5px;line-height:1.8">
+      ${row('E-mail', d.email)}
+      ${row('Existe no Authentication', yn(d.existe_auth))}
+      ${row('Existe em usuarios', yn(d.existe_usuarios))}
+      ${row('UUID (auth.users)', d.auth_uuid)}
+      ${row('UUID (usuarios.id)', d.usuarios_uuid)}
+      ${row('Vínculo (usuarios.auth_id)', d.usuarios_auth_id)}
+      ${row('Nome', d.nome)}
+      ${row('Status', d.status ? `<span class="rna-badge ${(STATUS_META[d.status]||{}).badge||'badge-na'}">${d.status}</span>` : '—')}
+      ${row('Perfil', d.role)}
+      ${row('E-mail confirmado (Auth)', d.existe_auth ? yn(d.auth_confirmado) : '—')}
+      ${row('Criado (Auth)', dt(d.auth_criado_em))}
+      ${row('Último login (Auth)', dt(d.auth_ultimo_login))}
+      ${row('Criado (usuarios)', dt(d.usuarios_criado_em))}
+    </div></div>
+    <div class="rna-card mt-2" style="border-left:3px solid var(--rna-yellow-600)"><div class="rna-card__body">
+      <div style="font-size:13px"><b><i class="bi bi-info-circle text-warning"></i> Situação</b><br>${d.situacao}</div>
+      <div class="d-flex flex-wrap gap-2 mt-3" id="dg-actions"></div>
+    </div></div>`;
+}
+
+function wireDiagActions(out, d, m) {
+  const box = $('#dg-actions', out); if (!box) return;
+  const acts = [];
+  if (d.acao_recomendada === 'restaurar_perfil')
+    acts.push(['restaurar', 'bi-arrow-counterclockwise', 'Restaurar perfil (recuperar órfão)', 'rna-btn-primary']);
+  if (d.acao_recomendada === 'corrigir_vinculo_ids')
+    acts.push(['vinculo', 'bi-link-45deg', 'Corrigir vínculo de IDs', 'rna-btn-primary']);
+  if (d.existe_usuarios) {
+    acts.push(['abrir', 'bi-box-arrow-up-right', 'Abrir na lista', 'rna-btn-ghost']);
+    if (d.status !== 'aprovado') acts.push(['aprovar', 'bi-check-circle', 'Aprovar', 'rna-btn-ghost']);
+    if (d.status !== 'pendente') acts.push(['pendente', 'bi-hourglass-split', 'Redefinir p/ pendente', 'rna-btn-ghost']);
+    acts.push(['excluir', 'bi-trash', 'Excluir completo (public + auth)', 'rna-btn-dark']);
+  }
+  if (d.existe_auth && !d.existe_usuarios)
+    acts.push(['nota-auth', 'bi-shield-exclamation', 'Só existe no Auth', 'rna-btn-ghost']);
+
+  box.innerHTML = acts.map(([a, ic, lb, cls]) => `<button class="rna-btn ${cls} rna-btn-sm" data-dg="${a}"><i class="bi ${ic}"></i> ${lb}</button>`).join('')
+    || '<span class="text-muted-2" style="font-size:12.5px">Nenhuma ação necessária.</span>';
+
+  const reRun = () => openDiagnostico(d.email);
+  $$('[data-dg]', box).forEach(b => b.addEventListener('click', async () => {
+    const a = b.dataset.dg;
+    if (a === 'restaurar')
+      return runAction('Restaurar perfil', () => usuariosSvc.recuperarOrfao(d.email, { nome: d.nome }), 'Perfil recuperado como pendente.', () => { m.close(); reload(); reRun(); });
+    if (a === 'vinculo')
+      return runAction('Corrigir vínculo', () => usuariosSvc.corrigirVinculo(d.email), 'Vínculo de IDs corrigido.', () => { m.close(); reload(); reRun(); });
+    if (a === 'abrir') { m.close(); const u = byId(d.usuarios_uuid); if (u) openDrawer(u.id); else { await reload(); const u2 = ALL.find(x => (x.email||'').toLowerCase() === d.email); if (u2) openDrawer(u2.id); } return; }
+    if (a === 'aprovar') { const u = byIdOrEmail(d); if (u) return runAction('Aprovar', () => usuariosSvc.aprovar(u), 'Usuário aprovado.', () => { m.close(); reload(); }); }
+    if (a === 'pendente') { const u = byIdOrEmail(d); if (u) return runAction('Redefinir', () => usuariosSvc.redefinirPendente(u), 'Status redefinido para pendente.', () => { m.close(); reload(); }); }
+    if (a === 'excluir') {
+      const u = byIdOrEmail(d); if (!u) return;
+      return confirmDialog('Excluir <b>completamente</b> este usuário (tabela usuarios + Supabase Authentication)? Esta ação não pode ser desfeita.',
+        () => runAction('Excluir completo', () => usuariosSvc.excluir(u), 'Usuário excluído dos dois locais.', () => { m.close(); reload(); }),
+        { title: 'Excluir completo', okLabel: 'Excluir', danger: true });
+    }
+    if (a === 'nota-auth')
+      return toast('A conta existe apenas no Authentication. Use “Restaurar perfil” para recriar o cadastro, ou remova a conta pelo painel Authentication do Supabase.', { type: 'info', title: 'Somente no Auth' });
+  }));
+}
+
+function byIdOrEmail(d) {
+  return byId(d.usuarios_uuid) || ALL.find(x => (x.email || '').toLowerCase() === d.email) || null;
 }
 
 /* ---------------------------------------------------------------- helpers - */

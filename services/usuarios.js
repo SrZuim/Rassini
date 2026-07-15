@@ -73,6 +73,28 @@ export const usuariosSvc = {
     }
   },
 
+  /* ------------------------------------------ diagnóstico de e-mail (admin)
+     Investiga um e-mail nos dois locais (auth.users + usuarios) e devolve a
+     situação + ação recomendada. Requer as RPCs de fix_email_ja_cadastrado.sql. */
+  async diagnosticoEmail(email) {
+    return this._rpc('fn_diagnostico_email', { p_email: String(email || '').trim().toLowerCase() });
+  },
+  /** Recupera o perfil órfão (existe no Auth, ausente em usuarios). */
+  async recuperarOrfao(email, { nome = null, planta = null, cargo = 'auditor' } = {}) {
+    return this._rpc('fn_recuperar_perfil_orfao', {
+      p_email: String(email || '').trim().toLowerCase(), p_nome: nome, p_planta: planta, p_cargo: cargo
+    });
+  },
+  /** Alinha usuarios.auth_id ao auth.users.id correto (mesmo e-mail). */
+  async corrigirVinculo(email) {
+    return this._rpc('fn_corrigir_vinculo_email', { p_email: String(email || '').trim().toLowerCase() });
+  },
+  /** Redefine o status do perfil para 'pendente' (reabre a solicitação). */
+  redefinirPendente(u) {
+    return this._acao('fn_redefinir_pendente', { p_alvo: u.id }, u,
+      { status: 'pendente', ativo: false }, 'alteracao_dados', 'Status redefinido para pendente');
+  },
+
   /* ------------------------------------------------------------- internos */
   async _rpc(fn, args) {
     if (!SUPABASE.enabled) throw new Error('__DEMO__');
