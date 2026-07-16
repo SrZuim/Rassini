@@ -38,7 +38,7 @@ export async function mountShell() {
   }
 
   // ---- monta grupos de navegação respeitando RBAC ----
-  const liberados = MODULES.filter(m => can(user.role, m.id, 'view'));
+  const liberados = MODULES.filter(m => !m.hidden && can(user.role, m.id, 'view'));
   console.log('[RNA-SHELL] menus liberados para', user.role, ':', ['home (Portal)', ...liberados.map(m => m.id)]);
   const groups = {};
   liberados.forEach(m => {

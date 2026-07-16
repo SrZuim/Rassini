@@ -610,6 +610,9 @@ body.kiosk .rna-content { padding: 26px; }
 .insp-search-res{ margin-top:6px; }
 .insp-search-item{ padding:9px 12px; border:1px solid var(--rna-border); border-radius:9px; cursor:pointer; margin-bottom:5px; transition:.12s; }
 .insp-search-item:hover{ background:var(--rna-yellow-soft); border-color:var(--rna-yellow); }
+/* Minhas Auditorias — seleção de peça da Biblioteca Técnica (etapa 1) */
+.insp-search-thumb{ width:44px; height:34px; object-fit:cover; border-radius:6px; border:1px solid var(--rna-border); background:var(--rna-surface); flex:0 0 auto; }
+.insp-peca-img{ width:132px; height:96px; object-fit:cover; border-radius:9px; border:1px solid var(--rna-border); background:var(--rna-surface); flex:0 0 auto; }
 .insp-peca-card{ border:1.5px solid var(--rna-border); border-radius:12px; padding:14px 16px; background:var(--rna-bg); }
 .insp-peca-card__head{ display:flex; align-items:center; gap:8px; font-size:14.5px; margin-bottom:10px; }
 .insp-peca-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px 16px; margin-bottom:8px; }

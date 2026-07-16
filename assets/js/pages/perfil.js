@@ -42,7 +42,7 @@ async function render() {
         </div></div>
         <div class="rna-card"><div class="rna-card__head"><h3><i class="bi bi-shield-check"></i> Minhas permissões</h3></div>
           <div class="rna-card__body" style="max-height:280px;overflow:auto">
-            ${MODULES.map(mo=>{
+            ${MODULES.filter(mo=>!mo.hidden).map(mo=>{
               const p = perms[mo.id]||[];
               return `<div class="d-flex justify-content-between align-items-center py-1" style="border-bottom:1px solid #eef1f4;font-size:12.5px">
                 <span><i class="bi ${mo.icon} text-muted-2"></i> ${mo.label}</span>

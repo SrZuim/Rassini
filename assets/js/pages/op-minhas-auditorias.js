@@ -11,7 +11,8 @@ import { db } from '../../../services/db.js';
 import { can, statusClass } from '../../../services/config.js';
 import * as INSP from '../../../services/inspecao.js';
 import * as ATIV from '../../../services/atividades.js';
-import { buscar } from '../../../services/biblioteca.js';
+import { buscarParaInspecao, porId as pecaPorId } from '../../../services/biblioteca.js';
+import { BIB_IMG_PLACEHOLDER } from '../../../services/biblioteca-data.js';
 import { INSP_QUANTIDADES, INSP_STATUS, INSP_MOTIVOS_PAUSA } from '../../../services/inspecao-data.js';
 import { $, $$, el, toast, modal, confirmDialog, initials } from '../ui.js';
 import { initEvidenceUpload } from '../evidence.js';
@@ -24,6 +25,11 @@ let USER, PLANTAO, USUARIOS = [], CLASSES = [];
 let R, STEP = 0, VIEWONLY = false;   // wizard
 let LOCAL;                            // modelo local de cálculo (medições)
 let saveT;                           // timer do autosave
+let PECA_ATUAL = null;                // peça da Biblioteca vinculada (dados atuais)
+
+/* Logs de diagnóstico só em desenvolvimento — nunca registram token/senha/chave. */
+const DEV = ['localhost', '127.0.0.1', ''].includes(location.hostname);
+const dbg = (...a) => { if (DEV) console.log('%c[INSP]', 'color:#2b6cb0;font-weight:bold', ...a); };
 
 const ctx = await mountShell();
 if (ctx) {
@@ -150,11 +156,23 @@ const tiposHtml = (tipos) => tipos.length ? tipos.map(t => `<div class="insp-rad
 async function openWizard(relId, viewonly = false) {
   VIEWONLY = viewonly;
   R = await INSP.carregarRelatorio(relId);
-  if (!R) { toast('Relatório não encontrado.', { type: 'crit' }); return renderList(); }
+  if (!R) { toast('A auditoria não foi encontrada.', { type: 'crit', title: 'Relatório inexistente' }); return renderList(); }
   const fin = String(R.rel.status).startsWith('finalizada') || R.rel.status === 'revisada';
   if (fin && !viewonly) VIEWONLY = true;           // finalizado só em modo leitura (§21)
+  // Persistência (§reabrir): o vínculo vem do banco (peca_id) — nunca de memória
+  // ou localStorage. Relê os dados ATUAIS da peça na Biblioteca Técnica.
+  PECA_ATUAL = await carregarPecaVinculada(R.rel.peca_id);
+  dbg('Auditoria aberta:', { id: R.rel.id, numero: R.rel.numero, peca_id: R.rel.peca_id, caracteristicas: R.caracteristicas.length });
   STEP = VIEWONLY ? 4 : (R.rel.etapa || 0);
   paintWizard();
+}
+
+/* Peça vinculada, relida da Biblioteca. null = removida do cadastro (o passo 0
+   avisa e exige nova seleção). Falha de leitura não derruba a abertura. */
+async function carregarPecaVinculada(pecaId) {
+  if (!pecaId) return null;
+  try { return await pecaPorId(pecaId); }
+  catch (e) { INSP.logErro('Falha ao reler a peça vinculada', e); return null; }
 }
 
 async function reload() { R = await INSP.carregarRelatorio(R.rel.id); }
@@ -201,7 +219,7 @@ function maxStepAllowed() {
   const r = R.rel;
   if (VIEWONLY) return ETAPAS.length - 1;
   let m = 0;
-  if (r.tipo_id && r.peca_id) m = 1;
+  if (r.tipo_id && pecaVinculada()) m = 1;
   if (m >= 1 && r.lote && r.op) m = 2;
   if (m >= 2 && r.quantidade) m = 3;
   if (m >= 3 && R.caracteristicas.some(c => c.medicoes.length)) m = 4;
@@ -223,13 +241,54 @@ function refreshBanner() {
 /* ------------------------------------------------------------ autosave UI */
 function flagSaving() { const s = $('#insp-save'); if (s) { s.className = 'insp-save is-saving'; s.innerHTML = '<i class="bi bi-arrow-repeat"></i> Salvando...'; } }
 function flagSaved() { const s = $('#insp-save'); if (!s) return; s.className = 'insp-save is-ok'; s.innerHTML = '<i class="bi bi-check2"></i> Alterações salvas'; clearTimeout(saveT); saveT = setTimeout(() => { if ($('#insp-save')) $('#insp-save').className = 'insp-save'; }, 2500); }
-function flagError() { const s = $('#insp-save'); if (s) { s.className = 'insp-save is-err'; s.innerHTML = '<i class="bi bi-wifi-off"></i> Não foi possível salvar. Verifique sua conexão.'; } }
-async function autosave(fn) { flagSaving(); try { await fn(); flagSaved(); } catch (e) { console.error(e); flagError(); } }
+/* Erro de salvamento: mostra a causa REAL (permissão, sessão, migration pendente,
+   peça inexistente...) — nunca "verifique sua conexão" para tudo. O erro completo
+   (message/code/details/hint) sai no console via INSP.logErro. */
+function flagError(msg) {
+  const s = $('#insp-save');
+  if (!s) return;
+  clearTimeout(saveT);
+  s.className = 'insp-save is-err';
+  s.title = msg;
+  s.innerHTML = `<i class="bi bi-exclamation-octagon"></i> ${escTitle(msg)}`;
+}
+/** Executa `fn` com feedback de salvamento. Retorna true/false e NÃO lança — o
+    chamador decide o que fazer (ex.: só confirmar sucesso se realmente salvou). */
+async function autosave(fn, { contexto = 'Falha ao salvar', toastErro = true } = {}) {
+  flagSaving();
+  try {
+    await fn();
+    flagSaved();
+    return true;
+  } catch (e) {
+    INSP.logErro(contexto, e);
+    const msg = INSP.mensagemErro(e);
+    flagError(msg);
+    if (toastErro) toast(msg, { type: 'crit', title: 'Não foi possível salvar', timeout: 9000 });
+    return false;
+  }
+}
 
 /* ------------------------------------------------------------ navegação */
+/* Só avança com peça REAL vinculada no banco (peca_id) e com as especificações
+   já carregadas — nunca com texto digitado no campo de busca. */
+function pecaVinculada() { return !!(R?.rel?.peca_id && R.caracteristicas.length); }
+
+/* Habilita/desabilita o Avançar conforme os pré-requisitos da etapa atual. */
+function atualizarNav() {
+  const next = $('#nav-next');
+  if (!next || VIEWONLY) return;
+  const bloqueio = STEP === 0 && !(pecaVinculada() && !SELECIONANDO)
+    ? 'Selecione uma peça da Biblioteca Técnica para avançar.' : '';
+  next.disabled = !!bloqueio;
+  next.title = bloqueio;
+}
+
 async function onNext() {
   const r = R.rel;
-  if (STEP === 0 && (!r.tipo_id || !r.peca_id)) return toast('Selecione o tipo e a peça para avançar.', { type: 'warn' });
+  if (STEP === 0 && !r.tipo_id) return toast('Tipo de inspeção ausente. Reabra a inspeção.', { type: 'warn' });
+  if (STEP === 0 && !pecaVinculada())
+    return toast('Selecione uma peça da Biblioteca Técnica. O vínculo precisa estar salvo antes de avançar.', { type: 'warn', title: 'Peça obrigatória' });
   if (STEP === 1 && (!String(r.lote).trim() || !String(r.op).trim())) return toast('Informe o lote e a OP.', { type: 'warn' });
   if (STEP === 2 && !r.quantidade) return toast('Selecione a quantidade de peças.', { type: 'warn' });
   if (STEP < ETAPAS.length - 1) { STEP++; await INSP.patchRelatorio(r.id, { etapa: STEP }); renderStep(); }
@@ -244,9 +303,16 @@ function renderStep() {
   if (prev) prev.style.visibility = STEP === 0 ? 'hidden' : 'visible';
   if (next) next.style.display = STEP >= ETAPAS.length - 1 ? 'none' : '';
   ({ 0: stepTipoPeca, 1: stepIdentificacao, 2: stepAmostras, 3: stepMedicoes, 4: stepRevisao, 5: stepResultado }[STEP])(host);
+  atualizarNav();
 }
 
-/* ============================================================ ETAPA 0 (§5) */
+/* ============================================================ ETAPA 0 (§5)
+   Busca dinâmica na Biblioteca Técnica → vínculo pelo ID oficial da peça.
+   RESULTADOS: guardados para validar a seleção contra a lista oficial (o auditor
+   nunca avança com texto digitado — só com peça escolhida da Biblioteca). */
+let RESULTADOS = [];      // última busca (fonte da validação do clique)
+let SELECIONANDO = false; // trava anti-clique-duplo (§Teste 10)
+
 async function stepTipoPeca(host) {
   const r = R.rel;
   host.innerHTML = `
@@ -259,52 +325,127 @@ async function stepTipoPeca(host) {
       </div>
       <div class="col-md-7">
         <label class="form-label">Selecionar peça * <span class="text-muted-2">(Biblioteca Técnica)</span></label>
-        <input class="form-control" id="pc-busca" placeholder="PN, código, nome, cliente, desenho, revisão..." autocomplete="off" ${VIEWONLY ? 'disabled' : ''}>
+        <input class="form-control" id="pc-busca" placeholder="PN, nome, cliente, número da AD, revisão..." autocomplete="off" ${VIEWONLY ? 'disabled' : ''}>
         <div id="pc-res" class="insp-search-res"></div>
+        <small class="text-muted-2">Pesquise por Part Number, nome, cliente, número da AD ou revisão do desenho. Somente peças ativas na Biblioteca Técnica.</small>
       </div>
     </div>
-    <div id="pc-sel" class="mt-3">${r.peca_id ? pecaCard(r) : ''}</div>`;
+    <div id="pc-sel" class="mt-3">${pecaSelHtml(r)}</div>`;
 
   if (VIEWONLY) return;
   const inp = $('#pc-busca'), res = $('#pc-res');
   let t;
   inp.addEventListener('input', () => {
     clearTimeout(t);
+    const q = inp.value.trim();
+    if (q.length < 2) { RESULTADOS = []; res.innerHTML = ''; return; }
+    res.innerHTML = `<div class="text-muted-2 p-2"><span class="spinner-border spinner-border-sm"></span> Carregando Biblioteca Técnica...</div>`;
     t = setTimeout(async () => {
-      const q = inp.value.trim();
-      if (q.length < 2) { res.innerHTML = ''; return; }
-      const pecas = await buscar(q);
-      res.innerHTML = pecas.length ? pecas.slice(0, 8).map(p => `<div class="insp-search-item" data-id="${p.id}">
-        <div><b>${p.codigo}</b> — ${p.nome}</div><div class="cell-sub">${p.cliente || '—'} · Rev ${p.revisao_desenho ?? '—'} · ${p.numero_ad || ''}</div></div>`).join('')
-        : `<div class="text-muted-2 p-2">Nenhuma peça encontrada.</div>`;
+      try {
+        RESULTADOS = await buscarParaInspecao(q, 8);
+      } catch (e) {
+        INSP.logErro('Falha ao consultar a Biblioteca Técnica', e);
+        RESULTADOS = [];
+        res.innerHTML = `<div class="insp-blocker"><i class="bi bi-exclamation-octagon"></i> ${escTitle(INSP.mensagemErro(e))}</div>`;
+        return;
+      }
+      if (inp.value.trim() !== q) return;              // resposta velha: ignora
+      res.innerHTML = RESULTADOS.length
+        ? RESULTADOS.map(pecaItemHtml).join('')
+        : `<div class="text-muted-2 p-2"><i class="bi bi-search"></i> Nenhuma peça encontrada na Biblioteca Técnica.</div>`;
       $$('.insp-search-item', res).forEach(it => it.addEventListener('click', () => selecionarPeca(it.dataset.id)));
     }, 250);
   });
 }
 
+/* Resultado da busca: PN, nome, cliente, revisão, AD, código interno, imagem e status. */
+function pecaItemHtml(p) {
+  const img = p.imagem || BIB_IMG_PLACEHOLDER;
+  const meta = [p.cliente, p.revisao_desenho != null && p.revisao_desenho !== '' ? `Rev. ${p.revisao_desenho}` : null,
+    p.numero_ad ? `AD ${p.numero_ad}` : null, p.familia].filter(Boolean).join(' · ');
+  return `<div class="insp-search-item d-flex align-items-center gap-2" data-id="${p.id}">
+    <img src="${escTitle(img)}" alt="" class="insp-search-thumb">
+    <div class="flex-fill">
+      <div><b>${escTitle(p.codigo)}</b> — ${escTitle(p.nome)}</div>
+      <div class="cell-sub">${escTitle(meta) || '—'}</div>
+    </div>
+    <span class="rna-badge ${statusClass(p.status)}">${escTitle(p.status || 'Ativo')}</span>
+  </div>`;
+}
+
+/* Vincula a peça à auditoria: valida contra a lista oficial → salva o ID no banco
+   → confirma → recarrega o estado → libera o Avançar. Sem duplicidade e sem
+   depender de localStorage: a fonte da verdade é o registro no banco. */
 async function selecionarPeca(pecaId) {
-  await autosave(async () => {
-    const n = await INSP.carregarEspecs(R.rel.id, pecaId);
-    await reload();
-    if (n === 0) {
-      $('#pc-sel').innerHTML = `<div class="insp-blocker"><i class="bi bi-exclamation-triangle"></i>
-        Esta peça não possui especificações dimensionais cadastradas na Biblioteca Técnica. Solicite o cadastro ou a revisão das informações antes de iniciar a inspeção.</div>`;
-      return;
-    }
-    $('#pc-res').innerHTML = ''; $('#pc-busca').value = '';
-    $('#pc-sel').innerHTML = pecaCard(R.rel);
+  if (SELECIONANDO) return;                                    // clique duplo (§Teste 10)
+  const peca = RESULTADOS.find(p => p.id === pecaId);          // só a lista oficial vale
+  if (!peca) {
+    toast('A peça selecionada não foi encontrada na Biblioteca Técnica. Refaça a busca.', { type: 'warn' });
+    return;
+  }
+  SELECIONANDO = true;
+  atualizarNav();                                              // trava o Avançar enquanto salva
+  const res = $('#pc-res'), sel = $('#pc-sel');
+  res.innerHTML = `<div class="text-muted-2 p-2"><span class="spinner-border spinner-border-sm"></span> Salvando peça na auditoria...</div>`;
+  flagSaving();
+  dbg('Vinculando peça à auditoria:', { auditoria: R.rel.id, peca_id: peca.id, pn: peca.codigo, auditor: USER?.id });
+  try {
+    const n = await INSP.carregarEspecs(R.rel.id, peca.id);    // grava o ID no banco
+    await reload();                                            // estado local ← banco
+    dbg('Vínculo salvo. Relatório no banco:', { peca_id: R.rel.peca_id, caracteristicas: R.caracteristicas.length });
+    PECA_ATUAL = peca;
+    RESULTADOS = [];
+    res.innerHTML = ''; $('#pc-busca').value = '';
+    sel.innerHTML = pecaSelHtml(R.rel);
+    flagSaved();
     refreshBanner();
-  });
+    toast(`Peça ${peca.codigo} vinculada com sucesso — ${n} característica(s) carregada(s).`, { type: 'ok', title: 'Peça vinculada', timeout: 4000 });
+  } catch (e) {
+    // Causa real: permissão, sessão, migration, peça inativa, cadastro incompleto...
+    INSP.logErro('Falha ao vincular a peça à auditoria', e);
+    const msg = INSP.mensagemErro(e);
+    flagError(msg);
+    res.innerHTML = '';
+    // Mantém o card da peça anterior, se ainda houver um vínculo válido salvo.
+    sel.innerHTML = `<div class="insp-blocker mb-2"><i class="bi bi-exclamation-octagon"></i> <div>${escTitle(msg)}</div></div>`
+      + (pecaVinculada() ? pecaSelHtml(R.rel) : '');
+    toast(msg, { type: 'crit', title: 'Não foi possível vincular a peça', timeout: 9000 });
+  } finally {
+    SELECIONANDO = false;
+    atualizarNav();                                            // libera o Avançar se houve sucesso
+  }
+}
+
+/* Bloco da peça selecionada: avisa quando o cadastro sumiu ou está inativo
+   (§Teste 8) e, fora isso, mostra o card com os dados atuais da Biblioteca. */
+function pecaSelHtml(r) {
+  if (!r.peca_id) return '';
+  if (!PECA_ATUAL) {
+    return `<div class="insp-blocker"><i class="bi bi-exclamation-octagon"></i>
+      <div><b>A peça vinculada não existe mais na Biblioteca Técnica.</b>
+      <div class="cell-sub">PN ${escTitle(r.peca_codigo || '—')} — ${escTitle(r.peca_nome || '')}. O cadastro foi removido. Selecione outra peça para continuar.</div></div></div>`;
+  }
+  const inativa = PECA_ATUAL.ativo === false || ['Arquivado', 'Obsoleto'].includes(PECA_ATUAL.status);
+  const aviso = inativa ? `<div class="insp-blocker mb-2"><i class="bi bi-exclamation-triangle"></i>
+    <div>O cadastro desta peça está <b>${escTitle(PECA_ATUAL.status || 'inativo')}</b> na Biblioteca Técnica. Confirme com a Engenharia antes de concluir a inspeção.</div></div>` : '';
+  return aviso + pecaCard(r);
 }
 
 function pecaCard(r) {
   const nCar = R.caracteristicas.length;
+  const p = PECA_ATUAL || {};
+  const img = p.imagem || BIB_IMG_PLACEHOLDER;
   return `<div class="insp-peca-card">
-    <div class="insp-peca-card__head"><i class="bi bi-box-seam"></i> <b>${r.peca_codigo}</b> — ${r.peca_nome}
-      <span class="rna-badge badge-ok ms-auto">${nCar} característica(s)</span></div>
-    <div class="insp-peca-grid">
-      ${info('Cliente', r.cliente)} ${info('PN', r.peca_codigo)} ${info('Desenho / Rev', 'Rev ' + (r.revisao_desenho ?? '—'))}
-      ${info('Data da revisão', r.data_revisao_desenho)} ${info('Número da AD', r.numero_ad)} ${info('Quadrante', r.quadrante || '—')}
+    <div class="insp-peca-card__head"><i class="bi bi-box-seam"></i> <b>${escTitle(r.peca_codigo)}</b> — ${escTitle(r.peca_nome)}
+      <span class="rna-badge badge-ok ms-auto"><i class="bi bi-check2"></i> ${nCar} característica(s)</span></div>
+    <div class="d-flex gap-3 flex-wrap">
+      <img src="${escTitle(img)}" alt="Imagem da peça ${escTitle(r.peca_codigo)}" class="insp-peca-img">
+      <div class="flex-fill">
+        <div class="insp-peca-grid">
+          ${info('Cliente', r.cliente)} ${info('PN', r.peca_codigo)} ${info('Desenho / Rev', 'Rev ' + (r.revisao_desenho ?? '—'))}
+          ${info('Data da revisão', r.data_revisao_desenho)} ${info('Número da AD', r.numero_ad)} ${info('Quadrante', r.quadrante || '—')}
+        </div>
+      </div>
     </div>
     <small class="text-muted-2"><i class="bi bi-lock"></i> As especificações são somente para consulta e cálculo — não podem ser alteradas na inspeção.</small>
   </div>`;
@@ -370,7 +511,9 @@ async function escolherQtd(q) {
   aplicarQtd(q);
 }
 async function aplicarQtd(q) {
-  await autosave(async () => { await INSP.aplicarQuantidade(R.rel.id, q); await reload(); });
+  const ok = await autosave(async () => { await INSP.aplicarQuantidade(R.rel.id, q); await reload(); },
+    { contexto: 'Falha ao aplicar a quantidade de amostras' });
+  if (!ok) return;                                   // erro real já exibido — não marca como salvo
   $$('.insp-qtd__b').forEach(b => b.classList.toggle('is-sel', +b.dataset.q === q));
   refreshBanner();
 }
@@ -546,7 +689,7 @@ async function abrirTratamento(carId) {
   $('#tr-save', m.host).addEventListener('click', async () => {
     const classe = $('#tr-classe', m.host).value;
     if (!classe) return toast('Selecione a classe do defeito.', { type: 'warn' });
-    await autosave(async () => {
+    const ok = await autosave(async () => {
       await INSP.salvarClasse(carId, classe);
       await INSP.salvarObservacao(carId, $('#tr-obs', m.host).value);
       const saved = await ev.commit({ usuario: USER, registro_tipo: 'insp_acao', registro_id: R.rel.id });
@@ -558,7 +701,8 @@ async function abrirTratamento(carId) {
       });
       await INSP.registrarEvento({ relatorio: R.rel, tipo_evento: 'corrective_action_created', caracteristica_id: carId, metadata: { classe } });
       await reload();
-    });
+    }, { contexto: 'Falha ao salvar o tratamento' });
+    if (!ok) return;                                 // erro real exibido — modal segue aberto p/ correção
     m.close(); toast('Tratamento salvo.', { type: 'ok' }); renderStep();
   });
 }

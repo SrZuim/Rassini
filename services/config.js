@@ -47,7 +47,11 @@ export const MODULES = [
   /* [GESTÃO OPERACIONAL] Novo fluxo do auditor — atividades configuráveis atribuídas automaticamente. */
   { id:'op_plantao',    label:'Plantão',              short:'Plantão',             page:'op-plantao.html',    icon:'bi-broadcast',         group:'Operações',   color:'green',  desc:'Inicie o plantão e veja as atividades atribuídas a você.' },
   { id:'op_rotinas',    label:'Minhas Rotinas',       short:'Minhas Rotinas',      page:'op-minhas-rotinas.html', icon:'bi-list-check',    group:'Operações',   color:'yellow', desc:'Execute as rotinas atribuídas a você.' },
-  { id:'op_checklists', label:'Meus Checklists',      short:'Meus Checklists',     page:'op-meus-checklists.html', icon:'bi-ui-checks',     group:'Operações',   color:'orange', desc:'Execute os checklists atribuídos a você.' },
+  /* Checklist aposentado como item de menu — a execução acontece pelo Plantão
+     (cards de checklist → op-meus-checklists.html?exec=<id>). `hidden` remove da
+     navegação/portal, mas o módulo permanece no RBAC para a tela de execução
+     continuar acessível a quem roda plantão (auditor/admin). */
+  { id:'op_checklists', label:'Checklist (execução)',  short:'Checklist',           page:'op-meus-checklists.html', icon:'bi-ui-checks',     group:'Operações',   color:'orange', desc:'Execução de checklists do plantão.', hidden:true },
   { id:'op_auditorias', label:'Minhas Auditorias',    short:'Minhas Auditorias',   page:'op-minhas-auditorias.html', icon:'bi-rulers',      group:'Operações',   color:'blue',   desc:'Inspeções dimensionais: medições, cálculo automático, classes de defeito e relatório.' },
   { id:'op_pendencias', label:'Pendências',           short:'Pendências',          page:'op-pendencias.html', icon:'bi-exclamation-circle',group:'Operações',   color:'red',    desc:'Suas pendências abertas.' },
   { id:'op_historico',  label:'Histórico',            short:'Histórico',           page:'op-historico.html',  icon:'bi-clock-history',     group:'Operações',   color:'gray',   desc:'Histórico das suas atividades.' },

@@ -57,6 +57,39 @@ export async function sugestoes(q = '', limite = 8) {
   return scored.slice(0, limite).map(s => s.p);
 }
 
+/* Campos indexados na busca da Auditoria (Minhas Auditorias → selecionar peça).
+   Além dos CAMPOS_BUSCA, o auditor pesquisa pela revisão do desenho e pela AD. */
+const CAMPOS_BUSCA_INSPECAO = ['codigo', 'nome', 'cliente', 'familia', 'planta', 'numero_ad', 'revisao_desenho'];
+
+/** Busca de peças para a inspeção dimensional (§5).
+    Só retorna peças ATIVAS e com cadastro utilizável — arquivadas/obsoletas não
+    podem ser auditadas. Casa Part Number, nome, cliente, família, planta,
+    número da AD e revisão do desenho (aceita "21" e "Rev. 21").
+    Ordena por relevância: PN exato → PN → nome → demais campos. */
+export async function buscarParaInspecao(q = '', limite = 8) {
+  const termo = normaliza(q);
+  if (!termo) return [];
+  const pecas = (await listarPecas()).filter(p => !['Arquivado', 'Obsoleto'].includes(p.status));
+  const rev = termo.replace(/^rev\.?\s*/, '');
+  const revNum = /^\d+$/.test(rev) ? String(parseInt(rev, 10)) : null;
+  const scored = [];
+  for (const p of pecas) {
+    const codigo = normaliza(p.codigo), nome = normaliza(p.nome);
+    let score = -1;
+    if (codigo === termo) score = 0;
+    else if (codigo.startsWith(termo)) score = 1;
+    else if (nome.startsWith(termo)) score = 2;
+    else if (codigo.includes(termo) || nome.includes(termo)) score = 3;
+    else if (normaliza(p.numero_ad).includes(termo)) score = 4;
+    else if (normaliza(p.cliente).includes(termo)) score = 5;
+    else if (CAMPOS_BUSCA_INSPECAO.some(c => normaliza(p[c]).includes(termo))) score = 6;
+    else if (revNum && String(p.revisao_desenho ?? '') === revNum) score = 7;
+    if (score >= 0) scored.push({ p, score });
+  }
+  scored.sort((a, b) => a.score - b.score || normaliza(a.p.codigo).localeCompare(normaliza(b.p.codigo)));
+  return scored.slice(0, limite).map(s => s.p);
+}
+
 /** Ficha completa (peça + métricas + pontos + documentos + histórico + versões). */
 export async function ficha(pecaId) {
   const peca = await db.get('bib_pecas', pecaId);
@@ -77,6 +110,13 @@ export async function ficha(pecaId) {
     historico: historico.sort((a, b) => String(b.quando).localeCompare(String(a.quando))),
     versoes: versoes.sort((a, b) => (b.revisao || 0) - (a.revisao || 0))
   };
+}
+
+/** Peça pelo ID oficial da Biblioteca — leitura leve (sem métricas/documentos).
+    Usado pela Auditoria para reexibir a peça vinculada ao reabrir o relatório. */
+export async function porId(pecaId) {
+  if (!pecaId) return null;
+  return db.get('bib_pecas', pecaId);
 }
 
 export async function porCodigo(codigo) {

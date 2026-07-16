@@ -16,6 +16,79 @@ export function nowISO() { return new Date().toISOString(); }
 export function hoje() { return new Date().toISOString().slice(0, 10); }
 export function anoAtual() { return new Date().getFullYear(); }
 
+/* ================================================================ ERROS REAIS
+   Uma falha de permissão, de sessão ou de migration NÃO é "erro de conexão".
+   Cada causa vira uma mensagem acionável; o erro completo vai para o console. */
+export class InspError extends Error {
+  constructor(codigo, mensagem, causa) {
+    super(mensagem);
+    this.name = 'InspError';
+    this.codigo = codigo;
+    this.causa = causa;
+  }
+}
+
+/** Loga o erro real. NUNCA JSON.stringify(error): erros do Supabase têm
+    propriedades não-enumeráveis e serializam para "{}". */
+export function logErro(contexto, e) {
+  console.error(`[INSP] ${contexto}`, {
+    message: e?.message || String(e), code: e?.code, details: e?.details, hint: e?.hint,
+    codigo: e?.codigo, causa: e?.causa
+  });
+}
+
+/** Coluna/tabela ausente = migration pendente (PGRST204/PGRST205/42703/42P01). */
+export function ehErroDeSchema(e) {
+  const code = String(e?.code || '');
+  const txt = `${e?.message || ''} ${e?.details || ''}`.toLowerCase();
+  return ['PGRST204', 'PGRST205', '42703', '42P01'].includes(code)
+    || /could not find the .*column|column .* does not exist|relation .* does not exist|schema cache/.test(txt);
+}
+function ehErroDeRede(e) {
+  return /failed to fetch|networkerror|load failed|network request failed|err_internet|timeout/
+    .test(String(e?.message || '').toLowerCase());
+}
+
+/** Traduz o erro real numa mensagem específica para o auditor (§tratamento de erros). */
+export function mensagemErro(e) {
+  if (e instanceof InspError) return e.message;
+  const code = String(e?.code || e?.status || '');
+  const txt = `${e?.message || ''} ${e?.details || ''} ${e?.hint || ''}`.toLowerCase();
+  if (ehErroDeRede(e))
+    return 'Não foi possível acessar o banco de dados. Verifique sua conexão e tente novamente.';
+  if (ehErroDeSchema(e))
+    return 'Erro de configuração do banco de dados. Consulte o administrador — há migration pendente (database/fix_integracao_auditoria_biblioteca.sql).';
+  if (code === '42501' || /row-level security|permission denied|violates row-level/.test(txt))
+    return 'Você não possui permissão para vincular esta peça a esta auditoria.';
+  if (code === 'PGRST116' || /multiple \(or no\) rows|contains 0 rows/.test(txt))
+    return 'A auditoria não foi encontrada ou não está mais disponível para edição.';
+  if (code === '23503' || /foreign key/.test(txt))
+    return 'A peça selecionada não existe mais na Biblioteca Técnica. Selecione outra peça.';
+  if (['401', '403'].includes(code) || /jwt|not authenticated|invalid token/.test(txt))
+    return 'A sessão do usuário expirou. Entre novamente.';
+  return e?.message
+    ? `O vínculo entre a auditoria e a peça não pôde ser salvo: ${e.message}`
+    : 'O vínculo entre a auditoria e a peça não pôde ser salvo.';
+}
+
+/** Valida a sessão antes de gravar. Em modo demo não há Supabase Auth. */
+export async function sessaoValida() {
+  if (db.mode !== 'supabase') return null;
+  try {
+    const { getSupabase } = await import('./supabaseClient.js');
+    const sb = await getSupabase();
+    const res = await sb.auth.getUser();
+    if (res?.error || !res?.data?.user) {
+      throw new InspError('SESSAO', 'A sessão do usuário expirou. Entre novamente.', res?.error);
+    }
+    return res.data.user;
+  } catch (e) {
+    if (e instanceof InspError) throw e;
+    if (ehErroDeRede(e)) throw new InspError('REDE', 'Não foi possível acessar o banco de dados. Verifique sua conexão e tente novamente.', e);
+    throw new InspError('SESSAO', 'A sessão do usuário expirou. Entre novamente.', e);
+  }
+}
+
 /* Converte "10,25" → 10.25; vazio/nulo → null; não-número → null. */
 export function num(v) {
   if (v === '' || v == null) return null;
@@ -153,37 +226,100 @@ export async function patchRelatorio(relatorioId, patch, { evento } = {}) {
   return r;
 }
 
+/* ================================= SNAPSHOT DA CARACTERÍSTICA — leitura tolerante
+   `tipo_especificacao` e `informativo` só existem após a migration
+   fix_integracao_auditoria_biblioteca.sql. Enquanto ela não roda, o tipo fica
+   preservado em `tipo_campo` ('numerico'|'atributo'|'informativo') e é
+   reconstruído aqui na leitura — a auditoria calcula igual nos dois cenários.
+   Todo caminho de leitura de insp_caracteristicas passa por aqui. */
+export function normalizarCaracteristica(c) {
+  if (!c) return c;
+  const tipo = c.tipo_especificacao
+    ?? (c.tipo_campo === 'atributo' ? 'ATRIBUTO' : c.tipo_campo === 'informativo' ? 'REFERENCIA' : 'TOLERANCIA');
+  return { ...c, tipo_especificacao: tipo, informativo: !!(c.informativo ?? (c.tipo_campo === 'informativo')) };
+}
+async function lerCaracteristica(id) {
+  return normalizarCaracteristica(await db.get('insp_caracteristicas', id));
+}
+async function lerCaracteristicas(relatorioId) {
+  const rows = await db.list('insp_caracteristicas', { filter: { relatorio_id: relatorioId } });
+  return rows.map(normalizarCaracteristica);
+}
+
+/* Insere o snapshot tolerando a ausência das colunas novas (mesmo padrão
+   best-effort já usado na finalização): tenta completo → se a coluna não existe,
+   avisa uma vez e regrava sem os campos opcionais (o tipo sobrevive em tipo_campo). */
+let _semColunasSnapshot = false;
+async function inserirCaracteristica(row) {
+  const semOpcionais = () => { const r = { ...row }; delete r.tipo_especificacao; delete r.informativo; return r; };
+  if (_semColunasSnapshot) return db.insert('insp_caracteristicas', semOpcionais());
+  try {
+    return await db.insert('insp_caracteristicas', row);
+  } catch (e) {
+    if (!ehErroDeSchema(e)) throw e;
+    _semColunasSnapshot = true;
+    console.warn('[INSP] insp_caracteristicas não tem tipo_especificacao/informativo — gravando via tipo_campo. ' +
+      'Rode database/fix_integracao_auditoria_biblioteca.sql no Supabase para normalizar o banco. Detalhe:', e?.message || e);
+    return db.insert('insp_caracteristicas', semOpcionais());
+  }
+}
+
 /* ============================================ ESPECIFICAÇÕES DA BIBLIOTECA (§5)
-   Snapshot das características da peça em insp_caracteristicas (somente leitura
-   durante a inspeção). Retorna a quantidade de características carregadas;
-   0 = peça sem especificações → o chamador bloqueia o avanço (§5). */
+   Vincula a auditoria à peça pelo ID OFICIAL da Biblioteca Técnica
+   (insp_relatorios.peca_id → bib_pecas.id) — nunca pelo Part Number, que pode
+   mudar/duplicar. peca_codigo/peca_nome/cliente/revisao_desenho ficam no
+   relatório apenas como CÓPIA HISTÓRICA do momento da auditoria.
+   Valida sessão → auditoria → peça → especificações ANTES de gravar qualquer
+   coisa, para nunca deixar a auditoria meio vinculada. Erros são específicos
+   (InspError); retorna a quantidade de características carregadas. */
 export async function carregarEspecs(relatorioId, pecaId) {
+  await sessaoValida();                                        // sessão real (§autenticação)
+
+  // 1) a auditoria precisa existir e estar aberta
+  const rel = await db.get('insp_relatorios', relatorioId);
+  if (!rel) throw new InspError('REL_NAO_ENCONTRADA', 'A auditoria não foi encontrada. Volte à lista e abra a inspeção novamente.');
+  if (String(rel.status).startsWith('finalizada') || rel.status === 'revisada')
+    throw new InspError('REL_BLOQUEADA', 'Esta inspeção já foi finalizada e não aceita troca de peça.');
+
+  // 2) a peça precisa existir e estar ativa na Biblioteca Técnica
   const [f, cat] = await Promise.all([ficha(pecaId), catalogosEspec()]);
-  if (!f) return 0;
+  if (!f) throw new InspError('PECA_NAO_ENCONTRADA', 'A peça selecionada não existe mais na Biblioteca Técnica. Atualize a busca e selecione outra peça.');
   const p = f.peca;
-  // grava dados da peça no relatório
-  await patchRelatorio(relatorioId, {
+  if (p.ativo === false || ['Arquivado', 'Obsoleto'].includes(p.status))
+    throw new InspError('PECA_INATIVA', `A peça ${p.codigo} está com cadastro ${String(p.status || 'inativo').toLowerCase()} na Biblioteca Técnica e não pode ser auditada. Selecione outra peça.`);
+
+  // 3) sem especificação não há o que medir → não vincula (evita auditoria órfã)
+  if (!f.metricas.length)
+    throw new InspError('PECA_SEM_ESPECS', `O cadastro da peça ${p.codigo} — ${p.nome} está incompleto: não há especificações dimensionais na Biblioteca Técnica. Solicite o cadastro ou a revisão antes de iniciar a inspeção.`);
+
+  // 4) reseleção da MESMA peça não apaga o que já foi medido (idempotente)
+  const antigas = await lerCaracteristicas(relatorioId);
+  if (rel.peca_id === p.id && antigas.length) return antigas.length;
+
+  // 5) vínculo oficial + cópia histórica
+  const atualizado = await patchRelatorio(relatorioId, {
     peca_id: p.id, peca_codigo: p.codigo, peca_nome: p.nome, cliente: p.cliente || '',
     revisao_desenho: p.revisao_desenho ?? '', data_revisao_desenho: p.data_revisao_desenho || '',
     numero_ad: p.numero_ad || '', quadrante: p.quadrante || ''
   });
-  // remove características antigas (troca de peça)
-  const antigas = await db.list('insp_caracteristicas', { filter: { relatorio_id: relatorioId } });
+  if (!atualizado) throw new InspError('VINCULO', 'O vínculo entre a auditoria e a peça não pôde ser salvo. A auditoria não foi encontrada ou você não tem permissão para alterá-la.');
+
+  // 6) troca de peça: descarta o snapshot anterior (e suas medições)
   for (const c of antigas) {
     const meds = await db.list('insp_medicoes', { filter: { caracteristica_id: c.id } });
     for (const m of meds) await db.remove('insp_medicoes', m.id);
     await db.remove('insp_caracteristicas', c.id);
   }
-  // snapshot das métricas (bib_metricas) — congela limites (§21, auditor não altera).
-  // Carrega o tipo da especificação: ATRIBUTO vira OK/NOK; REFERENCIA é informativa
-  // (não recebe medição nem entra na conformidade).
+
+  // 7) snapshot das métricas (bib_metricas) — congela limites (§21, auditor não altera).
+  // ATRIBUTO vira OK/NOK; REFERENCIA é informativa (não recebe medição nem entra na conformidade).
   let ordem = 0;
   for (const m of f.metricas) {
     ordem++;
     const tipo = m.tipo_especificacao || 'TOLERANCIA';
     const informativo = ehInformativo(tipo);
     const atributo = ehAtributo(tipo);
-    await db.insert('insp_caracteristicas', {
+    await inserirCaracteristica({
       relatorio_id: relatorioId, metrica_id: m.id,
       cota: m.cota ?? ordem, quadrante: m.quadrante || p.quadrante || '',
       caracteristica: cat.carMap[m.caracteristica_id] || m.caracteristica || '—',
@@ -195,7 +331,9 @@ export async function carregarEspecs(relatorioId, pecaId) {
       equipamento: cat.eqMap[m.equipamento_id] || m.equipamento || '',
       observacao_tec: m.observacao || '',
       tipo_especificacao: tipo,
-      tipo_campo: atributo ? 'atributo' : 'numerico',
+      // guarda o tipo também aqui: é o que permite reconstruir informativo/ATRIBUTO
+      // em bases sem as colunas novas (ver normalizarCaracteristica).
+      tipo_campo: informativo ? 'informativo' : atributo ? 'atributo' : 'numerico',
       informativo,
       opcoes: atributo ? ['OK', 'NOK'] : null,
       // informativas já nascem "aprovadas" para não travar a finalização, mas são
@@ -203,14 +341,14 @@ export async function carregarEspecs(relatorioId, pecaId) {
       resultado: informativo ? 'aprovado' : 'pendente', classe_defeito: null, observacao: '', ordem
     });
   }
-  await registrarEvento({ relatorio: { id: relatorioId, auditor_id: null }, tipo_evento: 'part_selected', metadata: { peca: p.codigo, caracteristicas: f.metricas.length } });
+  await registrarEvento({ relatorio: { id: relatorioId, auditor_id: rel.auditor_id, plantao_id: rel.plantao_id }, tipo_evento: 'part_selected', metadata: { peca_id: p.id, peca: p.codigo, caracteristicas: f.metricas.length } });
   return f.metricas.length;
 }
 
 /* ============================================================ MEDIÇÕES (§8-9)
    Autosave: grava a medição, recalcula a característica e o resultado geral. */
 export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valor) {
-  const car = await db.get('insp_caracteristicas', caracteristicaId);
+  const car = await lerCaracteristica(caracteristicaId);
   if (!car) return null;
   if (car.informativo) return null;                        // REFERENCIA não recebe medição
   const resultado = avaliarMedicao(valor, car.minimo, car.maximo, car.tipo_especificacao);
@@ -230,7 +368,7 @@ export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valo
 }
 
 export async function recalcularCaracteristica(caracteristicaId) {
-  const car = await db.get('insp_caracteristicas', caracteristicaId);
+  const car = await lerCaracteristica(caracteristicaId);
   if (!car) return;
   const meds = await db.list('insp_medicoes', { filter: { caracteristica_id: caracteristicaId } });
   const resultado = resultadoCaracteristica(meds.map(m => m.resultado));
@@ -242,7 +380,7 @@ export async function recalcularCaracteristica(caracteristicaId) {
 }
 
 export async function recalcularRelatorio(relatorioId) {
-  const todas = await db.list('insp_caracteristicas', { filter: { relatorio_id: relatorioId } });
+  const todas = await lerCaracteristicas(relatorioId);
   const cars = todas.filter(c => !c.informativo);          // REFERENCIA não entra no resultado
   const geral = resultadoGeral(cars.map(c => c.resultado));
   const rel = await db.get('insp_relatorios', relatorioId);
@@ -282,7 +420,7 @@ export async function carregarRelatorio(relatorioId) {
   const rel = await db.get('insp_relatorios', relatorioId);
   if (!rel) return null;
   const [cars, meds, acoes, anexos] = await Promise.all([
-    db.list('insp_caracteristicas', { filter: { relatorio_id: relatorioId } }),
+    lerCaracteristicas(relatorioId),
     db.list('insp_medicoes',        { filter: { relatorio_id: relatorioId } }),
     db.list('insp_acoes',           { filter: { relatorio_id: relatorioId } }),
     db.list('insp_anexos',          { filter: { relatorio_id: relatorioId } })

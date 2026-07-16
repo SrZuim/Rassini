@@ -1,4 +1,7 @@
-/* Meus Checklists — execução OK/NOK/N-A com config por resposta (Construtor Visual) */
+/* Checklist — tela de EXECUÇÃO OK/NOK/N-A (Construtor Visual) acionada pelo
+   Plantão (op-plantao.html → cards de checklist → ?exec=<id>). O antigo módulo
+   de menu "Meus Checklists" foi aposentado: o acesso é exclusivamente pelo
+   Plantão, portanto abrir esta página sem ?exec redireciona para lá. */
 import { mountShell } from '../app.js';
 import { db } from '../../../services/db.js';
 import * as ATIV from '../../../services/atividades.js';
@@ -7,20 +10,20 @@ import { initEvidenceUpload } from '../evidence.js';
 
 const ctx = await mountShell();
 let USER;
-const state = { view: 'lista', execId: null };
+const state = { execId: null };
 let UP = {}, ANS = {};
 
 if (ctx) {
   USER = ctx.user;
   const ex = new URLSearchParams(location.search).get('exec');
-  if (ex) { state.view = 'exec'; state.execId = ex; }
-  render();
+  if (!ex) { location.replace('op-plantao.html'); }   // sem execução → volta ao Plantão
+  else { state.execId = ex; render(); }
 }
 
 function head() {
   return `<div class="rna-page-head"><div>
-    <div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Operações <i class="bi bi-chevron-right"></i> Meus Checklists</div>
-    <h1>Meus Checklists</h1><p>Checklists atribuídos a você neste plantão — responda em qualquer ordem.</p></div></div>`;
+    <div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Operações <i class="bi bi-chevron-right"></i> <a href="op-plantao.html">Plantão</a> <i class="bi bi-chevron-right"></i> Checklist</div>
+    <h1>Checklist</h1><p>Responda os itens do checklist deste plantão.</p></div></div>`;
 }
 const _cfg = (o = 'nao', f = 'nao', p = false) => ({ observacao: o, foto: f, criar_pendencia: !!p });
 function cfgFor(it, ans) { return (ans === 'OK' ? it.cfg_ok : ans === 'NOK' ? it.cfg_nok : it.cfg_na) || _cfg(); }
@@ -38,38 +41,12 @@ async function render() {
     return;
   }
   await ATIV.montarPlantao(USER, plantao, 'checklist');
-  if (state.view === 'exec' && state.execId) return renderExec(plantao);
-  return renderLista(plantao);
-}
-
-async function renderLista(plantao) {
-  const execs = await ATIV.execucoesDo(plantao.id, USER, 'checklist');
-  const r = ATIV.resumo(execs);
-  const card = (e) => {
-    const a = e.atividade || {}; const feito = e.status === 'concluida' || e.status === 'nao_aplicavel';
-    return `<div class="col-md-6 col-xl-4"><div class="rna-card h-100 op-rot-card ${feito ? 'is-done' : ''}"><div class="rna-card__body">
-      <div class="d-flex justify-content-between align-items-start mb-1"><span class="op-code">${a.codigo || ''}</span>
-        ${a.obrigatoria ? '<span class="rna-badge badge-crit">Obrigatório</span>' : '<span class="rna-badge badge-na">Opcional</span>'}</div>
-      <b style="font-size:15px">${a.nome || '—'}</b>
-      <div class="op-item__resp mt-1"><span><i class="bi bi-tag"></i> ${a.categoria || '—'}</span>${a.horario ? `<span><i class="bi bi-clock"></i> ${a.horario}</span>` : ''}</div>
-      <div class="d-flex justify-content-between align-items-center mt-3">${statusBadge(e.status)}
-        ${feito ? `<button class="rna-btn rna-btn-ghost rna-btn-sm" data-reabrir="${e.id}"><i class="bi bi-arrow-counterclockwise"></i> Reabrir</button>`
-        : `<button class="rna-btn rna-btn-primary rna-btn-sm" data-exec="${e.id}"><i class="bi bi-play-fill"></i> Responder</button>`}</div>
-    </div></div></div>`;
-  };
-  $('#rna-content').innerHTML = head() + `
-    <div class="rna-card mb-3"><div class="rna-card__body d-flex flex-wrap align-items-center gap-3">
-      <div class="flex-fill" style="min-width:200px"><div class="d-flex justify-content-between"><b>Progresso</b><b>${r.concluidas}/${r.total}</b></div>
-        <div class="rna-progress mt-1"><span style="width:${r.pct}%;background:${r.pct === 100 ? 'var(--rna-ok)' : 'var(--rna-yellow)'}"></span></div></div>
-      <a href="op-plantao.html" class="rna-btn rna-btn-ghost"><i class="bi bi-speedometer2"></i> Painel do plantão</a></div>
-    ${execs.length ? `<div class="row g-3">${execs.map(card).join('')}</div>` : `<div class="empty-state"><i class="bi bi-inbox"></i><div>Nenhum checklist atribuído a você hoje.</div></div>`}`;
-  $$('[data-exec]').forEach(b => b.addEventListener('click', () => { state.view = 'exec'; state.execId = b.dataset.exec; render(); }));
-  $$('[data-reabrir]').forEach(b => b.addEventListener('click', async () => { await ATIV.reabrirExec(b.dataset.reabrir); toast('Checklist reaberto.', { type: 'info' }); render(); }));
+  return renderExec(plantao);
 }
 
 async function renderExec(plantao) {
   const exec = await db.get('op_execucao', state.execId);
-  if (!exec) { state.view = 'lista'; return render(); }
+  if (!exec) { location.replace('op-plantao.html'); return; }
   const a = await db.get('op_atividades', exec.atividade_id);
   const itens = await ATIV.itens(exec.atividade_id);
   const resultados = await ATIV.execItens(exec.id);
@@ -153,6 +130,5 @@ async function concluir(exec, a, itens) {
   } catch (err) { console.error('[op-checklists] concluir', err); toast('Erro ao concluir. ' + (err?.message || ''), { type: 'crit' }); btn.disabled = false; }
 }
 
-function voltarLista() { state.view = 'lista'; state.execId = null; history.replaceState(null, '', 'op-meus-checklists.html'); render(); }
-function statusBadge(s) { const m = { pendente: ['badge-pend', 'Pendente'], em_andamento: ['badge-info', 'Em andamento'], concluida: ['badge-ok', 'Concluído'], nao_aplicavel: ['badge-na', 'Não aplicável'] }; const [cls, lb] = m[s] || ['badge-na', s]; return `<span class="rna-badge ${cls}">${lb}</span>`; }
+function voltarLista() { location.href = 'op-plantao.html'; }   // execução aposentada como lista → volta ao Plantão
 function esc(s) { return String(s ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }

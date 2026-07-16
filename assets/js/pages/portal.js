@@ -22,7 +22,7 @@ async function render(user) {
   const hora = new Date().getHours();
   const saud = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
 
-  const cards = MODULES.map(m => {
+  const cards = MODULES.filter(m => !m.hidden).map(m => {
     const allowed = can(user.role, m.id, 'view');
     return `<div class="col-6 col-md-4 col-xl-3">
       <a href="${allowed ? m.page : '#'}" class="portal-card ${allowed ? '' : 'opacity-75'}" ${allowed ? '' : 'onclick="return false" title="Sem permissão"'}>
