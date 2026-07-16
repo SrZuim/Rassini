@@ -114,9 +114,15 @@ export async function execucoesDo(plantaoId, user, tipoSlug) {
     .sort((a, b) => String(a.atividade?.codigo || '').localeCompare(String(b.atividade?.codigo || '')));
 }
 
+/* Execução "resolvida" para efeito de progresso/fechamento do plantão.
+   'concluida_nc' (finalizada COM não conformidade, §21) também está resolvida:
+   a rotina foi executada — a NC vira pendência própria e não pode travar o
+   fechamento do plantão. */
+export const execFeita = e => ['concluida', 'concluida_nc', 'nao_aplicavel', 'cancelada'].includes(e.status);
+
 export function resumo(execs) {
   const total = execs.length;
-  const feito = e => e.status === 'concluida' || e.status === 'nao_aplicavel';
+  const feito = execFeita;
   const concluidas = execs.filter(feito).length;
   const obrigPend = execs.filter(e => e.obrigatoria && !feito(e)).length;
   return { total, concluidas, pendentes: total - concluidas, pct: total ? Math.round(concluidas / total * 100) : 100, obrigPend };
@@ -126,7 +132,7 @@ export function resumo(execs) {
 export async function podeFinalizar(plantaoId, user) {
   const execs = await execucoesDo(plantaoId, user);
   const pend = { rotina: 0, checklist: 0, auditoria: 0, outros: 0 };
-  const feito = e => e.status === 'concluida' || e.status === 'nao_aplicavel';
+  const feito = execFeita;
   execs.forEach(e => {
     if (e.obrigatoria && !feito(e)) {
       const k = ['rotina', 'checklist', 'auditoria'].includes(e.tipo_slug) ? e.tipo_slug : 'outros';

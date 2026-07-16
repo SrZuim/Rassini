@@ -9,13 +9,14 @@ import { db } from '../../../services/db.js';
 import { can, PLANTAS, TURNOS } from '../../../services/config.js';
 import * as ATIV from '../../../services/atividades.js';
 import * as DATA from '../../../services/gestao-op-data.js';
+import * as ROT from '../../../services/rotinas.js';
 import { charts, PALETTE } from '../charts.js';
 import { $, $$, el, toast, modal, confirmDialog } from '../ui.js';
 
 let USER, CAN_EDIT, CAN_DELETE;
-const state = { tab: 'rotinas', view: 'lista', ativId: null };
+const state = { tab: 'rotinas', view: 'lista', ativId: null, modeloId: null };
 const ABAS = [
-  ['rotinas', 'bi-list-check', 'Rotinas'], ['checklists', 'bi-ui-checks', 'Checklists'], ['categorias', 'bi-tags', 'Categorias'], ['tipos', 'bi-collection', 'Tipos de Atividades'],
+  ['rotinas', 'bi-list-check', 'Rotinas'], ['modelos', 'bi-diagram-3-fill', 'Modelos de Rotina'], ['checklists', 'bi-ui-checks', 'Checklists'], ['categorias', 'bi-tags', 'Categorias'], ['tipos', 'bi-collection', 'Tipos de Atividades'],
   ['atribuicoes', 'bi-diagram-2', 'Atribuições'], ['agenda', 'bi-calendar-week', 'Agenda'], ['templates', 'bi-files', 'Templates'], ['indicadores', 'bi-bar-chart', 'Indicadores']
 ];
 const TIPO_LABEL = { rotina: { sing: 'rotina', Sing: 'Rotina', plur: 'Rotinas', icon: 'bi-list-check' }, checklist: { sing: 'checklist', Sing: 'Checklist', plur: 'Checklists', icon: 'bi-ui-checks' } };
@@ -38,6 +39,7 @@ function mount(html, extraHead = '') {
 }
 
 function render() {
+  if (state.tab === 'modelos') return state.view === 'editor' ? renderBuilderModelo() : renderModelos();
   if ((state.tab === 'rotinas' || state.tab === 'checklists') && state.view === 'editor') return curTipo() === 'checklist' ? renderBuilderChecklist() : renderBuilderRotina();
   if (state.tab === 'rotinas' || state.tab === 'checklists') return renderLista(curTipo());
   if (state.tab === 'categorias') return renderCategorias();
@@ -73,6 +75,362 @@ async function renderLista(tipo) {
   $$('[data-del]').forEach(b => b.addEventListener('click', () => excluir(b.dataset.del)));
 }
 
+/* ======================= MODELOS DE ROTINA (§22) ===========================
+   Área de CONFIGURAÇÃO: o administrador define itens, unidades, especificações,
+   validações e frequências. O auditor só executa (Minhas Rotinas). */
+async function renderModelos() {
+  const mods = await ROT.listarModelos({ incluirInativos: true });
+  const itensAll = await db.list('op_atividade_itens');
+  const nItens = id => itensAll.filter(i => i.atividade_id === id && i.ativo !== false).length;
+
+  const card = m => `<div class="col-md-6 col-xl-4"><div class="rna-card h-100 op-modelo-card">
+    <div class="rna-card__body">
+      <div class="d-flex justify-content-between align-items-start mb-1">
+        <span class="op-code">${esc(m.codigo || '—')}</span>
+        <span class="rna-badge ${m.status === 'publicada' ? 'badge-ok' : m.status === 'arquivada' ? 'badge-na' : 'badge-warn'}">${m.status === 'publicada' ? 'Ativo' : m.status === 'arquivada' ? 'Inativo' : 'Rascunho'}</span>
+      </div>
+      <b style="font-size:15px">${esc(m.nome)}</b>
+      <div class="cell-sub" style="min-height:32px">${esc(m.descricao || '')}</div>
+      <div class="op-item__resp mt-1">
+        <span><i class="bi bi-tag"></i> ${esc(m.categoria || '—')}</span>
+        <span><i class="bi bi-list-ol"></i> ${nItens(m.id)} ${nItens(m.id) === 1 ? 'item' : 'itens'}</span>
+        <span><i class="bi bi-arrow-repeat"></i> ${esc(m.frequencia || '—')}</span>
+        <span title="Versão do modelo"><i class="bi bi-clock-history"></i> v${m.versao || 1}</span>
+      </div>
+      <div class="cell-sub mt-1"><i class="bi bi-pencil"></i> ${esc(m.updated_at || '—')}${m.updated_by ? ` · ${esc(nomeUser(m.updated_by))}` : ''}</div>
+      <div class="d-flex flex-wrap gap-1 mt-3">
+        <button class="rna-btn rna-btn-ghost rna-btn-sm" data-mver="${m.id}"><i class="bi bi-eye"></i> Ver</button>
+        ${CAN_EDIT ? `<button class="rna-btn rna-btn-primary rna-btn-sm" data-medit="${m.id}"><i class="bi bi-pencil"></i> Editar</button>
+        <button class="rna-btn rna-btn-ghost rna-btn-sm" data-mdup="${m.id}" title="Duplicar"><i class="bi bi-files"></i></button>
+        <button class="rna-btn rna-btn-ghost rna-btn-sm" data-mtoggle="${m.id}" title="${m.status === 'arquivada' ? 'Ativar' : 'Desativar'}"><i class="bi ${m.status === 'arquivada' ? 'bi-toggle-off' : 'bi-toggle-on'}"></i></button>` : ''}
+        ${CAN_DELETE ? `<button class="rna-btn rna-btn-ghost rna-btn-sm" data-mdel="${m.id}" title="Excluir"><i class="bi bi-trash text-danger"></i></button>` : ''}
+      </div>
+    </div></div></div>`;
+
+  mount(`
+    <div class="rna-card mb-3"><div class="rna-card__body d-flex flex-wrap align-items-center gap-2">
+      <i class="bi bi-info-circle" style="color:var(--rna-info)"></i>
+      <span class="flex-fill" style="font-size:13px">Modelos padronizados de rotina. O que você configura aqui é <b>somente leitura</b> na execução do auditor: limites, especificações, unidades e regras não podem ser alterados em Minhas Rotinas.</span>
+    </div></div>
+    ${mods.length ? `<div class="row g-3">${mods.map(card).join('')}</div>`
+      : `<div class="empty-state" style="padding:40px"><i class="bi bi-diagram-3"></i>
+          <div>Nenhum modelo cadastrado.</div>
+          ${CAN_EDIT ? `<div class="cell-sub mt-1">Instale os modelos padrão (SP1–SP5, Magnaflux, Temperatura e Umidade) ou crie o seu.</div>` : ''}</div>`}`,
+    CAN_EDIT ? `<button class="rna-btn rna-btn-ghost" id="btn-seed"><i class="bi bi-download"></i> Instalar modelos padrão</button>
+                <button class="rna-btn rna-btn-primary" id="btn-novo-mod"><i class="bi bi-plus-lg"></i> Novo modelo</button>` : '');
+
+  $('#btn-seed')?.addEventListener('click', instalarPadrao);
+  $('#btn-novo-mod')?.addEventListener('click', () => { state.modeloId = null; state.view = 'editor'; render(); });
+  $$('[data-medit]').forEach(b => b.addEventListener('click', () => { state.modeloId = b.dataset.medit; state.view = 'editor'; render(); }));
+  $$('[data-mver]').forEach(b => b.addEventListener('click', () => verModelo(b.dataset.mver)));
+  $$('[data-mdup]').forEach(b => b.addEventListener('click', async () => {
+    try { const n = await ROT.duplicarModelo(b.dataset.mdup, USER); toast(`Modelo duplicado como ${n.codigo}.`, { type: 'ok' }); render(); }
+    catch (e) { erro('Não foi possível duplicar o modelo', e); }
+  }));
+  $$('[data-mtoggle]').forEach(b => b.addEventListener('click', async () => {
+    const m = await db.get('op_atividades', b.dataset.mtoggle);
+    const novo = m.status === 'arquivada' ? 'publicada' : 'arquivada';
+    try {
+      await db.update('op_atividades', m.id, { status: novo, updated_at: ATIV.hoje(), updated_by: USER.id });
+      toast(novo === 'publicada' ? 'Modelo ativado.' : 'Modelo desativado.', { type: 'ok' }); render();
+    } catch (e) { erro('Não foi possível alterar o status', e); }
+  }));
+  $$('[data-mdel]').forEach(b => b.addEventListener('click', () => excluirModelo(b.dataset.mdel)));
+}
+
+async function instalarPadrao() {
+  const btn = $('#btn-seed'); if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Instalando...'; }
+  try {
+    const criados = await ROT.garantirModelosPadrao(USER);
+    toast(criados.length ? `${criados.length} modelo(s) instalado(s): ${criados.join(', ')}.` : 'Todos os modelos padrão já estão instalados — nada foi duplicado.',
+      { type: 'ok', title: 'Modelos padrão', timeout: 6000 });
+    render();
+  } catch (e) { erro('Não foi possível instalar os modelos padrão', e); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-download"></i> Instalar modelos padrão'; } }
+}
+
+/* Erro real no console + mensagem legível (nunca "erro genérico"). */
+function erro(titulo, e) {
+  console.error(`[GESTAO-OP] ${titulo}:`, { message: e?.message, code: e?.code, details: e?.details, hint: e?.hint });
+  const migration = /column .* does not exist|schema cache|PGRST204/i.test(`${e?.message} ${e?.code}`);
+  toast(migration
+    ? 'Erro de configuração do banco: rode database/rotinas_inteligentes.sql no Supabase.'
+    : `${titulo}: ${e?.message || 'erro desconhecido'}`, { type: 'crit', title: titulo, timeout: 9000 });
+}
+
+let USERS_CACHE = [];
+const nomeUser = id => USERS_CACHE.find(u => u.id === id)?.nome || id;
+
+async function verModelo(id) {
+  const m = await ROT.modelo(id);
+  const itens = await ROT.itensDoModelo(id);
+  modal({
+    title: `${m.codigo} — ${m.nome}`, size: 'modal-xl',
+    content: `<div class="op-item__resp mb-2"><span><i class="bi bi-tag"></i> ${esc(m.categoria || '—')}</span><span><i class="bi bi-arrow-repeat"></i> ${esc(m.frequencia || '—')}</span><span><i class="bi bi-clock-history"></i> versão ${m.versao || 1}</span><span><i class="bi bi-list-ol"></i> ${itens.length} itens</span></div>
+      <p class="cell-sub">${esc(m.descricao || '')}</p>
+      <div class="rna-table-wrap"><table class="rna-table"><thead><tr><th>#</th><th>Item</th><th>Unid.</th><th>Especificação</th><th>Validação</th><th>Frequência</th><th>Obrig.</th><th>Condição</th></tr></thead><tbody>
+      ${itens.map((it, i) => `<tr>
+        <td>${i + 1}</td><td class="cell-strong">${esc(it.nome)}</td>
+        <td>${esc(it.unidade_simbolo || it.unidade || '—')}</td>
+        <td>${esc(ROT.especificacaoTexto(it))}</td>
+        <td class="cell-sub">${esc(ROT.TIPOS_VALIDACAO_MAP[it.tipo_validacao]?.nome || it.tipo_validacao || '—')}</td>
+        <td class="cell-sub">${esc(ROT.FREQUENCIAS_ITEM_MAP[it.frequencia_item]?.nome || '—')}</td>
+        <td>${it.obrigatorio ? '<span class="rna-badge badge-crit">Sim</span>' : '<span class="rna-badge badge-na">Não</span>'}</td>
+        <td class="cell-sub">${it.regra_condicional ? esc(`${it.regra_condicional.campo} = ${it.regra_condicional.igual}`) : '—'}</td>
+      </tr>`).join('')}
+      </tbody></table></div>`,
+    footer: `<button class="rna-btn rna-btn-primary" data-bs-dismiss="modal">Fechar</button>`
+  });
+}
+
+function excluirModelo(id) {
+  confirmDialog('Excluir este modelo e seus itens? As rotinas que o utilizam deixarão de carregar os itens. As execuções já realizadas mantêm o histórico (snapshot).',
+    async () => {
+      try {
+        const emUso = (await db.list('op_atividades')).filter(a => a.modelo_id === id);
+        if (emUso.length) return toast(`Não é possível excluir: ${emUso.length} rotina(s) usam este modelo. Desative-o.`, { type: 'warn', title: 'Modelo em uso', timeout: 8000 });
+        for (const it of await db.list('op_atividade_itens', { filter: { atividade_id: id } })) await db.remove('op_atividade_itens', it.id);
+        await db.remove('op_atividades', id);
+        toast('Modelo excluído.', { type: 'ok' }); render();
+      } catch (e) { erro('Não foi possível excluir o modelo', e); }
+    }, { title: 'Excluir modelo', okLabel: 'Excluir', danger: true });
+}
+
+/* ---------------------- CONSTRUTOR DE MODELO (itens) ---------------------- */
+let M = {}, mItens = [];
+async function renderBuilderModelo() {
+  const isNew = !state.modeloId;
+  let m = { codigo: '', nome: '', descricao: '', categoria: '', frequencia: 'Diária', horario: '', status: 'rascunho', versao: 1 };
+  if (!isNew) m = await ROT.modelo(state.modeloId) || m;
+  M = { ...m };
+  mItens = isNew ? [] : (await ROT.itensDoModelo(state.modeloId)).map(clone);
+  const cats = (await db.list('op_categorias')).filter(c => c.ativo !== false && c.tipo_slug === 'rotina');
+  const catOpt = `<option value="">—</option>` + cats.map(c => `<option ${c.nome === M.categoria ? 'selected' : ''}>${esc(c.nome)}</option>`).join('');
+  const freqOpt = DATA.OP_FREQUENCIAS.map(f => `<option ${f === M.frequencia ? 'selected' : ''}>${f}</option>`).join('');
+
+  mount(`
+    <div class="rna-card mb-3"><div class="rna-card__body d-flex align-items-center gap-2">
+      <i class="bi bi-diagram-3-fill" style="font-size:20px;color:var(--rna-yellow-600)"></i><b>${isNew ? 'Novo modelo de rotina' : `Editar modelo · ${esc(M.codigo)}`}</b>
+      ${!isNew ? `<span class="rna-badge badge-info ms-1">versão ${M.versao || 1}</span>` : ''}
+      <span class="text-muted-2 ms-1" style="font-size:12.5px">Configuração — define o que o auditor verá e como o resultado é calculado.</span></div></div>
+    <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-info-circle"></i> Informações gerais</h3></div><div class="rna-card__body"><div class="row g-3">
+      <div class="col-md-3"><label class="form-label">Código *</label><input class="form-control" data-m="codigo" value="${esc(M.codigo)}" placeholder="Ex.: SP6"><small class="text-muted-2">Único. Usado na seleção.</small></div>
+      <div class="col-md-5"><label class="form-label">Nome do modelo *</label><input class="form-control" data-m="nome" value="${esc(M.nome)}" placeholder="Ex.: SP6"></div>
+      <div class="col-md-4"><label class="form-label">Categoria</label><select class="form-select" data-m="categoria">${catOpt}</select></div>
+      <div class="col-md-8"><label class="form-label">Descrição</label><input class="form-control" data-m="descricao" value="${esc(M.descricao)}"></div>
+      <div class="col-md-2"><label class="form-label">Frequência</label><select class="form-select" data-m="frequencia">${freqOpt}</select></div>
+      <div class="col-md-2"><label class="form-label">Horário padrão</label><input type="time" class="form-control" data-m="horario" value="${esc(M.horario)}"></div>
+      <div class="col-12"><label class="form-check"><input type="checkbox" class="form-check-input" data-m="publicar" ${M.status === 'publicada' ? 'checked' : ''}> <span class="ms-1">Ativo (disponível para seleção)</span></label></div>
+    </div></div></div>
+    <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-list-ol"></i> Itens do modelo <span class="rna-badge badge-info" id="mi-count">${mItens.length}</span></h3>
+      <button class="rna-btn rna-btn-primary rna-btn-sm" id="mi-add"><i class="bi bi-plus-lg"></i> Adicionar item</button></div>
+      <div class="rna-card__body p-0" id="mi-lista"></div></div>
+    <div class="d-flex gap-2 justify-content-end mb-4">
+      <button class="rna-btn rna-btn-ghost" id="m-cancel">Cancelar</button>
+      <button class="rna-btn rna-btn-primary rna-btn-lg" id="m-save"><i class="bi bi-check2"></i> Salvar modelo</button></div>`);
+
+  $$('[data-m]').forEach(inp => {
+    const ev = inp.type === 'checkbox' || inp.tagName === 'SELECT' ? 'change' : 'input';
+    inp.addEventListener(ev, () => {
+      const f = inp.dataset.m;
+      if (f === 'publicar') M.status = inp.checked ? 'publicada' : 'rascunho';
+      else M[f] = inp.value;
+    });
+  });
+  $('#mi-add').addEventListener('click', () => itemModeloModal(null));
+  $('#m-cancel').addEventListener('click', () => { state.view = 'lista'; render(); });
+  $('#m-save').addEventListener('click', () => salvarModelo(isNew));
+  renderItensModelo();
+}
+
+function renderItensModelo() {
+  const box = $('#mi-lista'); if (!box) return;
+  $('#mi-count').textContent = mItens.length;
+  box.innerHTML = mItens.length ? `<div class="rna-table-wrap"><table class="rna-table"><thead><tr>
+      <th style="width:38px">#</th><th>Item</th><th>Tipo</th><th>Unid.</th><th>Especificação</th><th>Frequência</th><th>Obrig.</th><th>Condição</th><th style="width:150px"></th>
+    </tr></thead><tbody>
+    ${mItens.map((it, i) => `<tr class="${it.ativo === false ? 'op-item-off' : ''}">
+      <td class="cell-sub">${i + 1}</td>
+      <td class="cell-strong">${esc(it.nome)}${it.contexto_chave ? ' <span class="insp-tipo-tag" title="Alimenta as regras condicionais">contexto</span>' : ''}</td>
+      <td class="cell-sub">${esc(ROT.TIPOS_RESPOSTA_MAP[it.tipo_resposta]?.nome || it.tipo_resposta)}</td>
+      <td>${esc(it.unidade_simbolo || it.unidade || '—')}</td>
+      <td class="cell-sub">${esc(ROT.especificacaoTexto(it))}</td>
+      <td class="cell-sub">${esc(ROT.FREQUENCIAS_ITEM_MAP[it.frequencia_item]?.nome || '—')}</td>
+      <td>${it.obrigatorio ? '<span class="rna-badge badge-crit">Sim</span>' : '<span class="rna-badge badge-na">Não</span>'}</td>
+      <td class="cell-sub">${it.regra_condicional ? esc(String(it.regra_condicional.igual)) : '—'}</td>
+      <td class="text-end"><div class="d-flex gap-1 justify-content-end">
+        <button class="rna-icon-mini" data-mup="${i}" title="Subir"><i class="bi bi-chevron-up"></i></button>
+        <button class="rna-icon-mini" data-mdown="${i}" title="Descer"><i class="bi bi-chevron-down"></i></button>
+        <button class="rna-icon-mini" data-medit2="${i}" title="Editar"><i class="bi bi-pencil"></i></button>
+        <button class="rna-icon-mini" data-mdup2="${i}" title="Duplicar"><i class="bi bi-files"></i></button>
+        <button class="rna-icon-mini" data-mdel2="${i}" title="Excluir"><i class="bi bi-trash text-danger"></i></button>
+      </div></td></tr>`).join('')}
+    </tbody></table></div>`
+    : `<div class="empty-state" style="padding:26px"><i class="bi bi-inbox"></i><div>Nenhum item. Clique em “Adicionar item”.</div></div>`;
+
+  const re = () => { renderItensModelo(); };
+  $$('[data-medit2]', box).forEach(b => b.addEventListener('click', () => itemModeloModal(+b.dataset.medit2)));
+  $$('[data-mdel2]', box).forEach(b => b.addEventListener('click', () => { mItens.splice(+b.dataset.mdel2, 1); re(); }));
+  $$('[data-mdup2]', box).forEach(b => b.addEventListener('click', () => {
+    const i = +b.dataset.mdup2; const c = clone(mItens[i]); delete c.id; c.nome = `${c.nome} (cópia)`; mItens.splice(i + 1, 0, c); re();
+  }));
+  $$('[data-mup]', box).forEach(b => b.addEventListener('click', () => { const i = +b.dataset.mup; if (i > 0) { [mItens[i - 1], mItens[i]] = [mItens[i], mItens[i - 1]]; re(); } }));
+  $$('[data-mdown]', box).forEach(b => b.addEventListener('click', () => { const i = +b.dataset.mdown; if (i < mItens.length - 1) { [mItens[i + 1], mItens[i]] = [mItens[i], mItens[i + 1]]; re(); } }));
+}
+
+/* Modal de item — todos os campos do cadastro inteligente (§13). */
+function itemModeloModal(idx) {
+  const novo = {
+    nome: '', descricao: '', unidade: '', unidade_simbolo: '', tipo_resposta: 'decimal',
+    tipo_validacao: 'intervalo', limite_min: null, limite_max: null, valor_nominal: null, valor_esperado: '',
+    especificacao_texto: '', frequencia_item: 'diario', obrigatorio: true, permite_obs: true,
+    permite_foto: true, exige_foto_nc: false, regra_condicional: null, contexto_chave: null, opcoes: [], ativo: true
+  };
+  const it = idx == null ? novo : clone(mItens[idx]);
+  const sel = (arr, val, key = 'slug', lb = 'nome') => arr.map(o => `<option value="${o[key]}" ${o[key] === val ? 'selected' : ''}>${esc(o[lb])}</option>`).join('');
+  const m = modal({
+    title: idx == null ? 'Adicionar item' : `Editar item · ${esc(it.nome)}`, size: 'modal-xl',
+    content: `<div class="row g-3">
+      <div class="col-md-6"><label class="form-label">Nome do item *</label><input class="form-control" id="i-nome" value="${esc(it.nome)}" placeholder="Ex.: Amperagem — Turbina 1"></div>
+      <div class="col-md-6"><label class="form-label">Descrição</label><input class="form-control" id="i-desc" value="${esc(it.descricao)}"></div>
+      <div class="col-md-3"><label class="form-label">Tipo de resposta *</label><select class="form-select" id="i-tresp">${sel(ROT.TIPOS_RESPOSTA, it.tipo_resposta)}</select></div>
+      <div class="col-md-3"><label class="form-label">Unidade</label><input class="form-control" id="i-unid" value="${esc(it.unidade)}" placeholder="Ex.: Ampère"></div>
+      <div class="col-md-2"><label class="form-label">Símbolo</label><input class="form-control" id="i-simb" value="${esc(it.unidade_simbolo)}" placeholder="A"></div>
+      <div class="col-md-4"><label class="form-label">Frequência do item *</label><select class="form-select" id="i-freq">${sel(ROT.FREQUENCIAS_ITEM, it.frequencia_item)}</select></div>
+
+      <div class="col-md-4"><label class="form-label">Tipo de validação *</label><select class="form-select" id="i-tval">${sel(ROT.TIPOS_VALIDACAO, it.tipo_validacao)}</select></div>
+      <div class="col-md-8"><div class="row g-2" id="i-campos"></div></div>
+
+      <div class="col-md-6"><label class="form-label">Especificação exibida</label><input class="form-control" id="i-espec" value="${esc(it.especificacao_texto)}" placeholder="Deixe vazio para gerar automaticamente"><small class="text-muted-2" id="i-espec-hint"></small></div>
+      <div class="col-md-6"><label class="form-label">Opções da lista <span class="text-muted-2">(separe por ; )</span></label><input class="form-control" id="i-opcoes" value="${esc((it.opcoes || []).join('; '))}" placeholder="Ex.: Scania; Demais clientes"></div>
+
+      <div class="col-md-6"><label class="form-label">Regra condicional</label>
+        <div class="d-flex gap-1">
+          <select class="form-select" id="i-cond-campo"><option value="">Sem condição</option><option value="tipo_cliente" ${it.regra_condicional?.campo === 'tipo_cliente' ? 'selected' : ''}>Tipo de cliente</option></select>
+          <input class="form-control" id="i-cond-val" value="${esc(it.regra_condicional?.igual || '')}" placeholder="Ex.: Scania">
+        </div><small class="text-muted-2">O item só aparece quando o valor informado for igual a este.</small></div>
+      <div class="col-md-6"><label class="form-label">Alimenta o contexto</label>
+        <select class="form-select" id="i-ctx"><option value="">Não</option><option value="tipo_cliente" ${it.contexto_chave === 'tipo_cliente' ? 'selected' : ''}>Tipo de cliente</option></select>
+        <small class="text-muted-2">A resposta deste item liga/desliga os itens condicionais.</small></div>
+
+      <div class="col-12"><div class="d-flex flex-wrap gap-4">
+        <label class="form-check"><input type="checkbox" class="form-check-input" id="i-obrig" ${it.obrigatorio ? 'checked' : ''}> <span class="ms-1">Obrigatório</span></label>
+        <label class="form-check"><input type="checkbox" class="form-check-input" id="i-obs" ${it.permite_obs ? 'checked' : ''}> <span class="ms-1">Permitir observação</span></label>
+        <label class="form-check"><input type="checkbox" class="form-check-input" id="i-foto" ${it.permite_foto ? 'checked' : ''}> <span class="ms-1">Permitir foto</span></label>
+        <label class="form-check"><input type="checkbox" class="form-check-input" id="i-fotonc" ${it.exige_foto_nc ? 'checked' : ''}> <span class="ms-1">Exigir foto quando Não Conforme</span></label>
+        <label class="form-check"><input type="checkbox" class="form-check-input" id="i-ativo" ${it.ativo !== false ? 'checked' : ''}> <span class="ms-1">Ativo</span></label>
+      </div></div>
+      <div class="col-12"><div id="i-erros"></div></div>
+    </div>`,
+    footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Cancelar</button><button class="rna-btn rna-btn-primary" id="i-ok"><i class="bi bi-check2"></i> Salvar item</button>`
+  });
+
+  const q = id => $(id, m.host);
+  /* Campos do tipo de validação aparecem conforme a regra escolhida (§15). */
+  const pintarCampos = () => {
+    const tv = q('#i-tval').value;
+    const campos = ROT.TIPOS_VALIDACAO_MAP[tv]?.campos || [];
+    const inp = (id, lb, val, ph = '') => `<div class="col-md-4"><label class="form-label">${lb} *</label><input class="form-control" id="${id}" value="${val ?? ''}" placeholder="${ph}" inputmode="decimal"></div>`;
+    q('#i-campos').innerHTML = [
+      campos.includes('limite_min') ? inp('i-min', 'Valor mínimo', it.limite_min ?? '', 'Ex.: 79') : '',
+      campos.includes('limite_max') ? inp('i-max', 'Valor máximo', it.limite_max ?? '', 'Ex.: 92') : '',
+      campos.includes('valor_esperado') ? `<div class="col-md-4"><label class="form-label">Valor esperado *</label><input class="form-control" id="i-esp" value="${esc(it.valor_esperado)}"></div>` : '',
+      `<div class="col-md-4"><label class="form-label">Valor nominal</label><input class="form-control" id="i-nom" value="${it.valor_nominal ?? ''}" inputmode="decimal" placeholder="Opcional"></div>`
+    ].join('') || `<div class="col-12"><small class="text-muted-2">Este tipo não exige limites — o item apenas registra a informação.</small></div>`;
+    atualizarHint();
+  };
+  const lerParcial = () => ({
+    nome: q('#i-nome').value.trim(), tipo_resposta: q('#i-tresp').value, tipo_validacao: q('#i-tval').value,
+    unidade: q('#i-unid').value.trim(), unidade_simbolo: q('#i-simb').value.trim(),
+    limite_min: q('#i-min') ? ROT.num(q('#i-min').value) : null,
+    limite_max: q('#i-max') ? ROT.num(q('#i-max').value) : null,
+    valor_esperado: q('#i-esp') ? q('#i-esp').value.trim() : '',
+    especificacao_texto: q('#i-espec').value.trim()
+  });
+  const atualizarHint = () => {
+    const p = lerParcial();
+    q('#i-espec-hint').textContent = p.especificacao_texto ? '' : `Gerada automaticamente: “${ROT.especificacaoTexto({ ...p, especificacao_texto: '' })}”`;
+  };
+  q('#i-tval').addEventListener('change', pintarCampos);
+  ['#i-unid', '#i-simb', '#i-espec'].forEach(s => q(s).addEventListener('input', atualizarHint));
+  m.host.addEventListener('input', e => { if (['i-min', 'i-max'].includes(e.target.id)) atualizarHint(); });
+  pintarCampos();
+
+  q('#i-ok').addEventListener('click', () => {
+    const condCampo = q('#i-cond-campo').value, condVal = q('#i-cond-val').value.trim();
+    const out = {
+      ...it,
+      nome: q('#i-nome').value.trim(), descricao: q('#i-desc').value.trim(),
+      tipo_resposta: q('#i-tresp').value, unidade: q('#i-unid').value.trim(), unidade_simbolo: q('#i-simb').value.trim(),
+      frequencia_item: q('#i-freq').value, tipo_validacao: q('#i-tval').value,
+      limite_min: q('#i-min') ? ROT.num(q('#i-min').value) : null,
+      limite_max: q('#i-max') ? ROT.num(q('#i-max').value) : null,
+      valor_nominal: q('#i-nom') ? ROT.num(q('#i-nom').value) : null,
+      valor_esperado: q('#i-esp') ? q('#i-esp').value.trim() : '',
+      especificacao_texto: q('#i-espec').value.trim(),
+      opcoes: q('#i-opcoes').value.split(';').map(s => s.trim()).filter(Boolean),
+      regra_condicional: condCampo && condVal ? { campo: condCampo, igual: condVal } : null,
+      contexto_chave: q('#i-ctx').value || null,
+      obrigatorio: q('#i-obrig').checked, permite_obs: q('#i-obs').checked,
+      permite_foto: q('#i-foto').checked, exige_foto_nc: q('#i-fotonc').checked, ativo: q('#i-ativo').checked
+    };
+    const erros = ROT.validarItemCadastro(out);
+    if (erros.length) {
+      q('#i-erros').innerHTML = `<div class="insp-blocker"><i class="bi bi-exclamation-octagon"></i><div>${erros.map(esc).join('<br>')}</div></div>`;
+      return;
+    }
+    if (idx == null) mItens.push(out); else mItens[idx] = out;
+    m.close(); renderItensModelo();
+  });
+}
+
+async function salvarModelo(isNew) {
+  const btn = $('#m-save'); if (btn.disabled) return;
+  const erros = ROT.validarModeloCadastro(M, mItens);
+  if (erros.length) return toast(erros[0], { type: 'warn', title: 'Revise o cadastro' });
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...';
+  try {
+    const codUp = String(M.codigo).trim().toUpperCase();
+    const jaExiste = (await ROT.listarModelos({ incluirInativos: true }))
+      .find(x => String(x.codigo || '').toUpperCase() === codUp && x.id !== state.modeloId);
+    if (jaExiste) { toast(`O código ${codUp} já é usado pelo modelo “${jaExiste.nome}”.`, { type: 'warn', title: 'Código duplicado' }); return; }
+
+    const patch = {
+      tipo_slug: 'rotina', is_template: true, codigo: codUp, nome: M.nome.trim(),
+      descricao: M.descricao || '', categoria: M.categoria || '', frequencia: M.frequencia || 'Diária',
+      horario: M.horario || '', status: M.status || 'rascunho',
+      updated_at: ATIV.hoje(), updated_by: USER.id
+    };
+    let mod;
+    if (isNew) {
+      mod = await db.insert('op_atividades', { ...patch, versao: 1, responsavel: 'todos', obrigatoria: true, anexos: [], created_by: USER.id, created_at: ATIV.hoje() });
+    } else {
+      // Alterar um modelo já usado gera NOVA VERSÃO — o histórico das execuções
+      // antigas continua intacto pelo snapshot (§23).
+      const usado = await modeloJaExecutado(state.modeloId);
+      mod = await db.update('op_atividades', state.modeloId, usado ? { ...patch, versao: (M.versao || 1) + 1 } : patch);
+      if (usado) toast(`Modelo já executado: publicada a versão ${mod.versao}. As execuções anteriores mantêm a especificação da versão antiga.`, { type: 'info', title: 'Nova versão', timeout: 8000 });
+    }
+    // regrava os itens na ordem da tela
+    for (const antigo of await db.list('op_atividade_itens', { filter: { atividade_id: mod.id } })) await db.remove('op_atividade_itens', antigo.id);
+    let ordem = 1;
+    for (const it of mItens) { const { id: _i, atividade_id: _a, ...resto } = it; await db.insert('op_atividade_itens', { ...resto, atividade_id: mod.id, ordem: ordem++ }); }
+    await db.log({ usuario: USER.nome, acao: `${isNew ? 'Criou' : 'Editou'} modelo de rotina ${mod.codigo}`, entidade: 'op_atividades', antes: isNew ? '—' : `v${M.versao || 1}`, depois: `v${mod.versao || 1}` });
+    toast(isNew ? 'Modelo criado.' : 'Modelo salvo.', { type: 'ok', title: 'Modelos de Rotina' });
+    state.view = 'lista'; render();
+  } catch (e) {
+    erro('Não foi possível salvar o modelo', e);
+    btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2"></i> Salvar modelo';
+  }
+}
+
+/** Existe execução concluída de alguma rotina que usa este modelo? (§23) */
+async function modeloJaExecutado(modeloId) {
+  const execs = await db.list('op_execucao');
+  if (execs.some(e => e.modelo_id === modeloId && String(e.status).startsWith('conclu'))) return true;
+  const rotinas = (await db.list('op_atividades')).filter(a => a.modelo_id === modeloId).map(a => a.id);
+  return execs.some(e => rotinas.includes(e.atividade_id) && String(e.status).startsWith('conclu'));
+}
+
 /* ============================ CONSTRUTOR DE ROTINA ========================= */
 let R = {}, C = {}, edItens = [], USUARIOS = [];
 function respLabel(r) { return r === 'todos' ? 'Todos os auditores' : (USUARIOS.find(u => u.id === r)?.nome || r); }
@@ -84,7 +442,11 @@ async function renderBuilderRotina() {
   const isNew = !state.ativId;
   let a = { tipo_slug: 'rotina', status: 'rascunho', obrigatoria: true, frequencia: 'Diária', horario: '', exec_observacao: 'opcional', exec_foto: 'opcional', permite_na: true, responsavel: 'todos' };
   if (!isNew) a = await db.get('op_atividades', state.ativId) || a;
-  R = { nome: a.nome || '', descricao: a.descricao || '', categoria: a.categoria || '', frequencia: a.frequencia || 'Diária', horario: a.horario || '', planta: a.planta || '', turno: a.turno || '', setor: a.setor || '', responsavel: a.responsavel || 'todos', exec_observacao: a.exec_observacao || 'opcional', exec_foto: a.exec_foto || 'opcional', permite_na: a.permite_na !== false, obrigatoria: a.obrigatoria !== false, status: a.status || 'rascunho' };
+  R = { nome: a.nome || '', descricao: a.descricao || '', categoria: a.categoria || '', frequencia: a.frequencia || 'Diária', horario: a.horario || '', planta: a.planta || '', turno: a.turno || '', setor: a.setor || '', responsavel: a.responsavel || 'todos', exec_observacao: a.exec_observacao || 'opcional', exec_foto: a.exec_foto || 'opcional', permite_na: a.permite_na !== false, obrigatoria: a.obrigatoria !== false, status: a.status || 'rascunho', modelo_id: a.modelo_id || '' };
+  /* Rotina personalizada = sem modelo, com itens próprios (§13). */
+  R.personalizada = !isNew && !a.modelo_id;
+  mItens = (!isNew && !a.modelo_id) ? (await ROT.itensDoModelo(a.id)).map(clone) : [];
+  MODELOS = await ROT.listarModelos();
   const cats = (await db.list('op_categorias')).filter(c => c.ativo !== false && c.tipo_slug === 'rotina');
   USUARIOS = (await db.list('usuarios')).filter(u => u.role === 'auditor');
   const catOpt = `<option value="">—</option>` + cats.map(c => `<option ${c.nome === R.categoria ? 'selected' : ''}>${c.nome}</option>`).join('');
@@ -99,6 +461,12 @@ async function renderBuilderRotina() {
       <span class="text-muted-2 ms-1" style="font-size:12.5px">Construtor visual — monte exatamente o que o auditor verá.</span></div></div>
     <div class="row g-3">
       <div class="col-lg-7">
+        <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-diagram-3-fill"></i> Modelo de rotina</h3></div><div class="rna-card__body">
+          <label class="form-label">Nome da rotina / Modelo de rotina *</label>
+          <input class="form-control" id="mod-busca" placeholder="Selecione um modelo de rotina" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="mod-lista">
+          <div id="mod-lista" class="insp-search-res" role="listbox"></div>
+          <div id="mod-sel" class="mt-2"></div>
+        </div></div>
         <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-info-circle"></i> Informações gerais</h3></div><div class="rna-card__body"><div class="row g-3">
           <div class="col-md-8"><label class="form-label">Nome da rotina *</label><input class="form-control" data-r="nome" value="${esc(R.nome)}"></div>
           <div class="col-md-4"><label class="form-label">Horário</label><input class="form-control" type="time" data-r="horario" value="${esc(R.horario)}"></div>
@@ -106,6 +474,11 @@ async function renderBuilderRotina() {
           <div class="col-md-4"><label class="form-label">Frequência</label><select class="form-select" data-r="frequencia">${freqOpt}</select></div>
           <div class="col-12"><label class="form-label">Categoria</label><div class="d-flex gap-1"><select class="form-select" data-r="categoria">${catOpt}</select><button class="rna-btn rna-btn-ghost" id="add-cat" title="Nova categoria"><i class="bi bi-plus-lg"></i></button></div></div>
         </div></div></div>
+        <div class="rna-card mb-3" id="rot-itens-card" hidden><div class="rna-card__head"><h3><i class="bi bi-list-ol"></i> Itens da rotina <span class="rna-badge badge-info" id="mi-count">0</span></h3>
+          <button class="rna-btn rna-btn-primary rna-btn-sm" id="mi-add"><i class="bi bi-plus-lg"></i> Adicionar item</button></div>
+          <div class="rna-card__body p-0" id="mi-lista"></div>
+          <div class="rna-card__body"><label class="form-check"><input type="checkbox" class="form-check-input" id="r-salvar-modelo"> <span class="ms-1">Salvar também como modelo reutilizável</span></label>
+            <small class="text-muted-2 d-block">O modelo passa a aparecer na lista de seleção para as próximas rotinas.</small></div></div>
         <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-geo-alt"></i> Onde será executada</h3></div><div class="rna-card__body"><div class="row g-3">
           <div class="col-md-6"><label class="form-label">Planta</label><select class="form-select" data-r="planta">${plantaOpt}</select></div>
           <div class="col-md-6"><label class="form-label">Turno</label><select class="form-select" data-r="turno">${turnoOpt}</select></div>
@@ -136,21 +509,142 @@ async function renderBuilderRotina() {
   $('#add-cat').addEventListener('click', () => novaCategoria('rotina'));
   $('#ed-cancel').addEventListener('click', () => { state.view = 'lista'; render(); });
   $('#ed-save').addEventListener('click', () => salvarRotina(isNew));
+  $('#mi-add').addEventListener('click', () => itemModeloModal(null));
+  initSeletorModelo();
   renderRotinaPreview();
 }
 function markRadios() { $$('.op-radio').forEach(l => l.classList.toggle('active', l.querySelector('input').checked)); }
 
-function renderRotinaPreview() {
+/* -------------------- Seleção pesquisável do modelo (§3, §4) --------------- */
+let MODELOS = [];
+const OPCAO_PERSONALIZADA = { id: '__custom__', codigo: 'PERSONALIZADA', nome: 'Rotina personalizada', descricao: 'Monte os itens manualmente, sem modelo padrão.' };
+
+function initSeletorModelo() {
+  const inp = $('#mod-busca'), lista = $('#mod-lista');
+  let marcado = -1;
+
+  const opcoes = (q = '') => {
+    const norm = s => String(s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+    const t = norm(q);
+    const achados = MODELOS.filter(m => !t || [m.nome, m.codigo, m.categoria].some(c => norm(c).includes(t)));
+    const custom = !t || norm(OPCAO_PERSONALIZADA.nome).includes(t) ? [OPCAO_PERSONALIZADA] : [];
+    return [...achados, ...custom];
+  };
+  const fechar = () => { lista.innerHTML = ''; inp.setAttribute('aria-expanded', 'false'); marcado = -1; };
+  const abrir = (q = '') => {
+    const ops = opcoes(q);
+    lista.innerHTML = ops.length
+      ? ops.map((m, i) => `<div class="insp-search-item" role="option" data-mid="${m.id}" data-i="${i}">
+          <div><b>${esc(m.codigo)}</b> — ${esc(m.nome)}</div>
+          <div class="cell-sub">${esc(m.descricao || '')}</div></div>`).join('')
+      : `<div class="text-muted-2 p-2"><i class="bi bi-search"></i> Nenhum modelo encontrado.</div>`;
+    inp.setAttribute('aria-expanded', 'true');
+    $$('.insp-search-item', lista).forEach(el2 => el2.addEventListener('click', () => escolherModelo(el2.dataset.mid)));
+  };
+  const marcar = d => {
+    const its = $$('.insp-search-item', lista); if (!its.length) return;
+    marcado = (marcado + d + its.length) % its.length;
+    its.forEach((x, i) => x.classList.toggle('is-sel', i === marcado));
+    its[marcado].scrollIntoView({ block: 'nearest' });
+  };
+
+  inp.addEventListener('focus', () => abrir(inp.value.trim()));
+  inp.addEventListener('input', () => abrir(inp.value.trim()));
+  /* Navegação por teclado (§3) */
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); marcar(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); marcar(-1); }
+    else if (e.key === 'Enter') { const s = $$('.insp-search-item', lista)[marcado]; if (s) { e.preventDefault(); escolherModelo(s.dataset.mid); } }
+    else if (e.key === 'Escape') fechar();
+  });
+  document.addEventListener('click', e => { if (!e.target.closest('#mod-busca, #mod-lista')) fechar(); });
+
+  pintarModeloSel();
+}
+
+/* Carrega automaticamente a configuração do modelo (§4). */
+async function escolherModelo(id) {
+  $('#mod-lista').innerHTML = '';
+  if (id === OPCAO_PERSONALIZADA.id) {
+    R.modelo_id = ''; R.personalizada = true;
+    $('#mod-busca').value = '';
+    pintarModeloSel(); renderRotinaPreview();
+    return;
+  }
+  const m = MODELOS.find(x => x.id === id);
+  if (!m) return toast('Modelo não encontrado. Atualize a página.', { type: 'warn' });
+  R.modelo_id = m.id; R.personalizada = false;
+  // herda a configuração do modelo — o admin ainda pode ajustar nome/horário
+  R.nome = m.nome; R.descricao = m.descricao || ''; R.categoria = m.categoria || '';
+  R.frequencia = m.frequencia || 'Diária';
+  if (m.horario) R.horario = m.horario;
+  $('#mod-busca').value = '';
+  ['nome', 'descricao', 'horario'].forEach(f => { const el2 = document.querySelector(`[data-r="${f}"]`); if (el2) el2.value = R[f] || ''; });
+  const selCat = document.querySelector('[data-r="categoria"]'); if (selCat) selCat.value = R.categoria || '';
+  const selFreq = document.querySelector('[data-r="frequencia"]'); if (selFreq) selFreq.value = R.frequencia;
+  await pintarModeloSel(); renderRotinaPreview();
+}
+
+/* Mostra o modelo escolhido + seus itens (somente leitura) ou o editor de itens. */
+async function pintarModeloSel() {
+  const box = $('#mod-sel'), card = $('#rot-itens-card'); if (!box) return;
+  if (R.personalizada) {
+    box.innerHTML = `<div class="insp-blocker insp-ok-blocker"><i class="bi bi-pencil-square"></i>
+      <div><b>Rotina personalizada</b><div class="cell-sub">Monte os itens manualmente no bloco abaixo.</div></div></div>`;
+    if (card) card.hidden = false;
+    renderItensModelo();
+    return;
+  }
+  if (card) card.hidden = true;
+  if (!R.modelo_id) {
+    box.innerHTML = `<small class="text-muted-2">Escolha um modelo padronizado (os itens são carregados automaticamente) ou “Rotina personalizada”.</small>`;
+    return;
+  }
+  const m = MODELOS.find(x => x.id === R.modelo_id) || await ROT.modelo(R.modelo_id);
+  if (!m) { box.innerHTML = `<div class="insp-blocker"><i class="bi bi-exclamation-octagon"></i> O modelo vinculado não existe mais. Selecione outro.</div>`; return; }
+  let itens = [];
+  try { itens = await ROT.itensDoModelo(m.id); }
+  catch (e) { erro('Não foi possível carregar os itens do modelo', e); return; }
+  box.innerHTML = `<div class="insp-peca-card">
+    <div class="insp-peca-card__head"><i class="bi bi-diagram-3-fill"></i> <b>${esc(m.codigo)}</b> — ${esc(m.nome)}
+      <span class="rna-badge badge-ok ms-auto">${itens.length} ${itens.length === 1 ? 'item' : 'itens'} · v${m.versao || 1}</span></div>
+    <div class="cell-sub mb-2">${esc(m.descricao || '')}</div>
+    <div class="op-modelo-itens">${itens.map((it, i) => `<div class="op-modelo-item">
+      <span class="op-idx">${i + 1}</span>
+      <div class="flex-fill"><b>${esc(it.nome)}</b>
+        <div class="cell-sub">${esc(ROT.especificacaoTexto(it))} · ${esc(ROT.FREQUENCIAS_ITEM_MAP[it.frequencia_item]?.nome || '')}${it.regra_condicional ? ` · só ${esc(String(it.regra_condicional.igual))}` : ''}</div></div>
+      ${it.obrigatorio ? '<span class="rna-badge badge-crit">Obrig.</span>' : '<span class="rna-badge badge-na">Opc.</span>'}
+    </div>`).join('') || '<div class="text-muted-2 p-2">Este modelo não tem itens.</div>'}</div>
+    <small class="text-muted-2"><i class="bi bi-lock"></i> Itens, limites e especificações são definidos no modelo (aba “Modelos de Rotina”) — o auditor não altera.</small>
+  </div>`;
+}
+
+async function renderRotinaPreview() {
   const box = $('#rot-preview'); if (!box) return;
   const naBtn = R.permite_na ? `<button class="rna-btn rna-btn-ghost">N/A</button>` : '';
-  box.innerHTML = `
-    <div class="rna-card op-rot-card mb-2"><div class="rna-card__body">
+  const cab = `<div class="rna-card op-rot-card mb-2"><div class="rna-card__body">
       <div class="d-flex justify-content-between align-items-start"><b style="font-size:15px">${esc(R.nome) || 'Nome da rotina'}</b>${R.obrigatoria ? '<span class="rna-badge badge-crit">Obrigatória</span>' : '<span class="rna-badge badge-na">Opcional</span>'}</div>
-      <div class="op-item__resp mt-1">${R.horario ? `<span><i class="bi bi-clock"></i> ${R.horario}</span>` : ''}<span><i class="bi bi-arrow-repeat"></i> ${R.frequencia}</span><span><i class="bi bi-person"></i> ${respLabel(R.responsavel)}</span></div>
-      <div class="d-flex gap-2 mt-3"><button class="rna-btn rna-btn-primary" id="pv-concluir"><i class="bi bi-check2"></i> Concluir</button>${naBtn}</div>
-    </div></div>
-    <div id="pv-modal"></div>`;
-  $('#pv-concluir').addEventListener('click', togglePvModal);
+      <div class="op-item__resp mt-1">${R.horario ? `<span><i class="bi bi-clock"></i> ${R.horario}</span>` : ''}<span><i class="bi bi-arrow-repeat"></i> ${R.frequencia}</span><span><i class="bi bi-person"></i> ${respLabel(R.responsavel)}</span></div>`;
+
+  /* Com itens (modelo ou personalizada) a prévia mostra o formulário do auditor. */
+  let itens = R.personalizada ? mItens : [];
+  if (R.modelo_id) { try { itens = await ROT.itensDoModelo(R.modelo_id); } catch { itens = []; } }
+  if (itens.length) {
+    box.innerHTML = cab + `<div class="cell-sub mt-2">${itens.length} ${itens.length === 1 ? 'item' : 'itens'} — o auditor preenche apenas os resultados.</div></div></div>
+      ${itens.slice(0, 8).map(it => `<div class="rna-card mb-2"><div class="rna-card__body">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div><b style="font-size:13.5px">${esc(it.nome)}</b>
+            <div class="cell-sub">${esc(ROT.especificacaoTexto(it))}</div></div>
+          <span class="rna-badge badge-pend">Aguardando</span></div>
+        <input class="form-control form-control-sm mt-2" placeholder="${esc(it.unidade_simbolo || it.unidade || 'Resultado')}" disabled>
+      </div></div>`).join('')}
+      ${itens.length > 8 ? `<div class="text-muted-2 text-center" style="font-size:12.5px">+ ${itens.length - 8} item(ns)</div>` : ''}`;
+    return;
+  }
+  /* Sem itens = rotina de ação única (comportamento legado preservado). */
+  box.innerHTML = cab + `<div class="d-flex gap-2 mt-3"><button class="rna-btn rna-btn-primary" id="pv-concluir"><i class="bi bi-check2"></i> Concluir</button>${naBtn}</div>
+    </div></div><div id="pv-modal"></div>`;
+  $('#pv-concluir')?.addEventListener('click', togglePvModal);
 }
 function togglePvModal() {
   const box = $('#pv-modal'); if (!box) return;
@@ -161,18 +655,60 @@ function togglePvModal() {
 }
 
 async function salvarRotina(isNew) {
+  const btn = $('#ed-save'); if (btn?.disabled) return;                  // clique duplo (§26)
   if (!R.nome.trim()) return toast('Informe o nome da rotina.', { type: 'warn' });
-  const patch = { tipo_slug: 'rotina', nome: R.nome.trim(), descricao: R.descricao || '', categoria: R.categoria || '', frequencia: R.frequencia, horario: R.horario || '', planta: R.planta || '', turno: R.turno || '', setor: R.setor || '', responsavel: R.responsavel || 'todos', exec_observacao: R.exec_observacao, exec_foto: R.exec_foto, permite_na: !!R.permite_na, obrigatoria: !!R.obrigatoria, status: R.status || 'rascunho', updated_at: ATIV.hoje() };
-  let ativ;
-  if (isNew) ativ = await db.insert('op_atividades', { ...patch, is_template: false, anexos: [], created_by: USER.id, created_at: ATIV.hoje() });
-  else ativ = await db.update('op_atividades', state.ativId, patch);
-  for (const it of await db.list('op_atividade_itens', { filter: { atividade_id: ativ.id } })) await db.remove('op_atividade_itens', it.id); // ação única: sem itens
-  await gerarAtribuicao(ativ.id, R);
-  await upsertAgenda(ativ.id, R.frequencia);
-  await db.log({ usuario: USER.nome, acao: `${isNew ? 'Criou' : 'Editou'} rotina ${ativ.nome}`, entidade: 'op_atividades', antes: isNew ? '—' : '', depois: ativ.status });
-  toast(isNew ? 'Rotina criada.' : 'Rotina salva.', { type: 'ok', title: 'Gestão Operacional' });
-  state.view = 'lista'; render();
+  if (R.personalizada && !mItens.length) return toast('Rotina personalizada: adicione ao menos um item.', { type: 'warn' });
+  if (R.personalizada) {
+    const erros = mItens.flatMap(it => ROT.validarItemCadastro(it));
+    if (erros.length) return toast(erros[0], { type: 'warn', title: 'Revise os itens' });
+  }
+  const modeloSel = R.modelo_id ? MODELOS.find(m => m.id === R.modelo_id) : null;
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando...'; }
+  try {
+    const patch = {
+      tipo_slug: 'rotina', nome: R.nome.trim(), descricao: R.descricao || '', categoria: R.categoria || '',
+      frequencia: R.frequencia, horario: R.horario || '', planta: R.planta || '', turno: R.turno || '',
+      setor: R.setor || '', responsavel: R.responsavel || 'todos', exec_observacao: R.exec_observacao,
+      exec_foto: R.exec_foto, permite_na: !!R.permite_na, obrigatoria: !!R.obrigatoria,
+      status: R.status || 'rascunho', updated_at: ATIV.hoje(), updated_by: USER.id,
+      // vínculo com o modelo: os itens vêm dele na execução (§4, §23)
+      modelo_id: R.modelo_id || null,
+      modelo_versao: modeloSel ? (modeloSel.versao || 1) : null
+    };
+    let ativ;
+    if (isNew) ativ = await db.insert('op_atividades', { ...patch, is_template: false, anexos: [], created_by: USER.id, created_at: ATIV.hoje() });
+    else ativ = await db.update('op_atividades', state.ativId, patch);
+
+    /* Itens próprios existem só na rotina PERSONALIZADA. Com modelo vinculado, os
+       itens vivem no modelo — não são copiados (evita duplicidade e divergência). */
+    for (const it of await db.list('op_atividade_itens', { filter: { atividade_id: ativ.id } })) await db.remove('op_atividade_itens', it.id);
+    if (R.personalizada) {
+      let ordem = 1;
+      for (const it of mItens) { const { id: _i, atividade_id: _a, ...resto } = it; await db.insert('op_atividade_itens', { ...resto, atividade_id: ativ.id, ordem: ordem++ }); }
+      /* "Salvar como modelo reutilizável" (§13) — vira um modelo na lista de seleção. */
+      if ($('#r-salvar-modelo')?.checked) {
+        const codigo = await ROT.codigoLivre(slug(R.nome));
+        const mod = await db.insert('op_atividades', {
+          ...patch, is_template: true, modelo_id: null, modelo_versao: null, codigo,
+          versao: 1, status: 'publicada', anexos: [], created_by: USER.id, created_at: ATIV.hoje()
+        });
+        let o = 1;
+        for (const it of mItens) { const { id: _i, atividade_id: _a, ...resto } = it; await db.insert('op_atividade_itens', { ...resto, atividade_id: mod.id, ordem: o++ }); }
+        await db.update('op_atividades', ativ.id, { modelo_id: mod.id, modelo_versao: 1 });
+        toast(`Modelo “${codigo}” criado e disponível para seleção.`, { type: 'ok', title: 'Modelo salvo', timeout: 6000 });
+      }
+    }
+    await gerarAtribuicao(ativ.id, R);
+    await upsertAgenda(ativ.id, R.frequencia);
+    await db.log({ usuario: USER.nome, acao: `${isNew ? 'Criou' : 'Editou'} rotina ${ativ.nome}`, entidade: 'op_atividades', antes: isNew ? '—' : '', depois: ativ.status });
+    toast(isNew ? 'Rotina criada.' : 'Rotina salva.', { type: 'ok', title: 'Gestão Operacional' });
+    state.view = 'lista'; render();
+  } catch (e) {
+    erro('Não foi possível salvar a rotina', e);
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2"></i> Salvar rotina'; }
+  }
 }
+const slug = s => String(s || 'ROTINA').normalize('NFD').replace(/\p{Diacritic}/gu, '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '').toUpperCase().slice(0, 24) || 'ROTINA';
 
 /* ========================== CONSTRUTOR DE CHECKLIST ======================= */
 async function renderBuilderChecklist() {

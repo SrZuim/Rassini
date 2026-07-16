@@ -4,6 +4,7 @@
    (rode database/gestao_operacional.sql). NADA de rotina/checklist fica fixo no
    código de fluxo — tudo é configurável e vem destas tabelas.
    ========================================================================== */
+import { MODELOS_ATIVIDADES, MODELOS_ITENS } from './rotinas-modelos.js';
 
 /* Tipos de atividade — expansível sem programação (basta inserir novo registro). */
 export const OP_TIPOS_ATIVIDADE = [
@@ -142,12 +143,15 @@ export const OP_AGENDA = [
   { id: 'ag-chk-1', atividade_id: 'ativ-chk-001', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' }
 ];
 
-/* Mapa nome→default para o seeding/reset (estilo CATALOGOS). */
+/* Mapa nome→default para o seeding/reset (estilo CATALOGOS).
+   Os modelos padrão de rotina (SP1..SP5, Magnaflux, Temperatura e Umidade) vêm
+   de rotinas-modelos.js — mesma fonte usada pelo instalador do Supabase, para
+   demo e produção nunca divergirem. */
 export const GESTAO_OP = {
   op_tipos_atividade:  OP_TIPOS_ATIVIDADE,
   op_categorias:       OP_CATEGORIAS,
-  op_atividades:       OP_ATIVIDADES,
-  op_atividade_itens:  OP_ATIVIDADE_ITENS,
+  op_atividades:       [...OP_ATIVIDADES, ...MODELOS_ATIVIDADES],
+  op_atividade_itens:  [...OP_ATIVIDADE_ITENS, ...MODELOS_ITENS],
   op_atribuicoes:      OP_ATRIBUICOES,
   op_agenda:           OP_AGENDA,
   op_execucao:         [],

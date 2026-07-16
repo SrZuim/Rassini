@@ -610,6 +610,23 @@ body.kiosk .rna-content { padding: 26px; }
 .insp-search-res{ margin-top:6px; }
 .insp-search-item{ padding:9px 12px; border:1px solid var(--rna-border); border-radius:9px; cursor:pointer; margin-bottom:5px; transition:.12s; }
 .insp-search-item:hover{ background:var(--rna-yellow-soft); border-color:var(--rna-yellow); }
+/* Rotinas Inteligentes — Modelos (Gestão Op.) e execução (Minhas Rotinas) */
+.op-modelo-card{ transition:.15s; }
+.op-modelo-card:hover{ border-color:var(--rna-yellow); }
+.op-modelo-itens{ max-height:280px; overflow:auto; margin-bottom:8px; }
+.op-modelo-item{ display:flex; align-items:center; gap:8px; padding:6px 0; border-bottom:1px solid var(--rna-border); }
+.op-modelo-item:last-child{ border-bottom:0; }
+.op-item-off{ opacity:.5; }
+/* Não Conforme: cor + ícone + texto (nunca só a cor) */
+.op-exec-item.op-fora{ border-color:var(--rna-crit); box-shadow:inset 3px 0 0 var(--rna-crit); }
+.op-obs-wrap.op-obs-req textarea{ border-color:var(--rna-crit); }
+.insp-search-item.is-sel{ background:var(--rna-yellow-soft); border-color:var(--rna-yellow); }
+@media (max-width:640px){
+  /* Celular: os itens já são cards — evita rolagem horizontal (§20) */
+  .op-exec-item .op-idx{ align-self:flex-start; }
+  .op-modelo-itens{ max-height:none; }
+}
+
 /* Minhas Auditorias — seleção de peça da Biblioteca Técnica (etapa 1) */
 .insp-search-thumb{ width:44px; height:34px; object-fit:cover; border-radius:6px; border:1px solid var(--rna-border); background:var(--rna-surface); flex:0 0 auto; }
 .insp-peca-img{ width:132px; height:96px; object-fit:cover; border-radius:9px; border:1px solid var(--rna-border); background:var(--rna-surface); flex:0 0 auto; }
