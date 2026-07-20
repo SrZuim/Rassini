@@ -296,19 +296,26 @@ async function abrirRelatorio(relId, autoPrint = false) {
 
       <div class="insp-rep-section"><div class="insp-rep-sec-t">Resultados das medições</div>
         <div class="insp-table-wrap"><table class="insp-mtable insp-rep-table"><thead><tr>
-          <th>Cota</th><th>Característica</th><th>Un.</th><th>Nom.</th><th>Mín</th><th>Máx</th><th>Equip.</th>
+          <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Un.</th><th>Nom.</th><th>Mín</th><th>Máx</th><th>Equip.</th>
           ${Array.from({ length: rel.quantidade || 0 }, (_, i) => `<th>P${i + 1}</th>`).join('')}
           <th>Result.</th><th>Classe</th></tr></thead><tbody>
           ${caracteristicas.map(c => {
             const info = !!c.informativo;
             const nomeCel = `${c.caracteristica}${c.referencia ? `<div class="cell-sub"><i class="bi bi-info-circle"></i> ${c.referencia}</div>` : ''}`;
-            const dimCels = info ? `<td colspan="3" class="cell-sub" style="text-align:center">Informativa</td>` : `<td>${dash(c.nominal)}</td><td>${dash(c.minimo)}</td><td>${dash(c.maximo)}</td>`;
-            const sampCels = info
-              ? `<td colspan="${rel.quantidade || 1}" class="cell-sub" style="text-align:center">—</td>`
-              : Array.from({ length: rel.quantidade || 0 }, (_, i) => { const m = c.medicoes.find(x => x.amostra === i + 1); return `<td class="${m ? (m.resultado === 'aprovado' ? 'rep-ok' : m.resultado === 'reprovado' ? 'rep-crit' : '') : ''}">${m ? dash(m.valor) : '—'}</td>`; }).join('');
-            const resCel = info ? '<span class="rep-tag">Informativa</span>' : (c.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovado</span>' : c.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovado</span>' : '—');
+            // Referência: sem limites, mas COM os valores medidos (§referência mensurável).
+            const dimCels = info ? `<td colspan="3" class="cell-sub" style="text-align:center">Referência</td>` : `<td>${dash(c.nominal)}</td><td>${dash(c.minimo)}</td><td>${dash(c.maximo)}</td>`;
+            const sampCels = Array.from({ length: rel.quantidade || 0 }, (_, i) => {
+              const m = c.medicoes.find(x => x.amostra === i + 1);
+              // Medição de referência nunca é colorida como aprovada/reprovada.
+              const cls = (!info && m) ? (m.resultado === 'aprovado' ? 'rep-ok' : m.resultado === 'reprovado' ? 'rep-crit' : '') : '';
+              return `<td class="${cls}">${m ? dash(m.valor) : '—'}</td>`;
+            }).join('');
+            const temMedRef = c.medicoes.some(m => String(m.valor ?? '') !== '');
+            const resCel = info
+              ? `<span class="rep-tag">${temMedRef ? 'Registrado — Referência' : 'Referência informativa'}</span>`
+              : (c.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovado</span>' : c.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovado</span>' : '—');
             return `<tr>
-            <td>${c.cota ?? '—'}</td><td>${nomeCel}</td><td>${c.unidade || ''}</td>${dimCels}<td class="cell-sub">${c.equipamento || '—'}</td>
+            <td>${c.cota ?? '—'}</td><td>${nomeCel}</td><td>${c.quadrante || '—'}</td><td>${c.unidade || ''}</td>${dimCels}<td class="cell-sub">${c.equipamento || '—'}</td>
             ${sampCels}
             <td>${resCel}</td>
             <td>${c.classe_defeito ? 'Classe ' + c.classe_defeito : '—'}</td></tr>`; }).join('')}
@@ -327,6 +334,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
         <div class="insp-rep-grid">
           ${cell('Características', resumo.totalCaracteristicas)} ${cell('Aprovadas', resumo.caracteristicasAprovadas)} ${cell('Reprovadas', resumo.caracteristicasReprovadas)}
           ${cell('Medições', resumo.totalMedicoes)} ${cell('Conformidade', resumo.conformidade + '%')} ${cell('Classe A / B / C', `${resumo.classeA} / ${resumo.classeB} / ${resumo.classeC}`)}
+          ${resumo.caracteristicasReferencia ? cell('Referências registradas', `${resumo.medicoesReferencia} medição(ões) · ${resumo.caracteristicasReferencia} característica(s)`) : ''}
         </div>
         <div class="insp-rep-final ${INSP_STATUS[rel.status]?.badge}">RESULTADO GERAL: <b>${rel.resultado === 'aprovado' ? 'APROVADO' : rel.resultado === 'reprovado' ? 'REPROVADO' : 'EM ANDAMENTO'}</b></div>
       </div>

@@ -420,7 +420,8 @@ async function renderEditor() {
     tol_simetrica: m.tol_simetrica ?? '', simetrica: m.tol_simetrica != null && m.tol_simetrica !== '',
     tol_min: m.tol_min ?? '', tol_max: m.tol_max ?? '', unidade: m.unidade || '',
     equipamento_id: m.equipamento_id || null, equipamento_nome: MAP.eq[m.equipamento_id] || '',
-    quem_mede_id: m.quem_mede_id || null, quem_mede_nome: MAP.qm[m.quem_mede_id] || '', observacao: m.observacao || ''
+    quem_mede_id: m.quem_mede_id || null, quem_mede_nome: MAP.qm[m.quem_mede_id] || '', observacao: m.observacao || '',
+    obrigatorio: !!m.obrigatorio          // preserva a marcação ao reeditar a peça
   })) : [];
   edDocsNovos = [];
 
@@ -677,7 +678,8 @@ function abrirTipoModal(idx) {
     tipo_especificacao: m.tipo_especificacao || 'TOLERANCIA',
     nominal: m.nominal ?? '', superior: m.superior ?? '', inferior: m.inferior ?? '',
     tol_simetrica: m.tol_simetrica ?? '', simetrica: !!m.simetrica,
-    tol_min: m.tol_min ?? '', tol_max: m.tol_max ?? '', referencia: m.referencia ?? ''
+    tol_min: m.tol_min ?? '', tol_max: m.tol_max ?? '', referencia: m.referencia ?? '',
+    obrigatorio: !!m.obrigatorio          // exige registro do valor medido na auditoria
   };
   const dlg = modal({
     title: `Tipo da especificação${m.caracteristica_nome ? ` — ${m.caracteristica_nome}` : ''}`,
@@ -723,11 +725,13 @@ function abrirTipoModal(idx) {
       html = `<div class="bib-tipo-note"><i class="bi bi-check2-square"></i> Inspeção OK/NOK — sem valores dimensionais. Na auditoria o operador responderá apenas <b>OK</b> ou <b>NOK</b>.</div>`;
     } else if (tipo === 'REFERENCIA') {
       html = `<label class="form-label">Referência *</label>
-        <input class="form-control tipo-num" data-k="referencia" value="${escAttr(draft.referencia)}" placeholder="Ex.: Conforme desenho, Ver Nota 01, Apenas visual…">
-        <div class="bib-tipo-info"><i class="bi bi-info-circle"></i> Esta característica é apenas informativa. O conteúdo do campo Referência será utilizado apenas como orientação ao auditor e não participa da aprovação ou reprovação da peça.</div>`;
+        <input class="form-control tipo-num" data-k="referencia" value="${escAttr(draft.referencia)}" placeholder="Ex.: 73,00 · Conforme desenho · Ver Nota 01…">
+        <div class="mt-2"><label class="bib-switch"><input type="checkbox" id="tipo-obrig" ${draft.obrigatorio ? 'checked' : ''}> Registro obrigatório na auditoria</label></div>
+        <div class="bib-tipo-info"><i class="bi bi-info-circle"></i> A característica <b>é medida normalmente</b> na auditoria: o auditor informa o valor medido de cada peça. O valor de Referência fica visível como orientação técnica, mas <b>não há limites</b> — a medição nunca reprova e não participa da conformidade. Marque <b>Registro obrigatório</b> para exigir o preenchimento antes de finalizar a auditoria.</div>`;
     }
     fieldsBox.innerHTML = html;
     $('#tipo-sim', fieldsBox)?.addEventListener('change', e => { draft.simetrica = e.target.checked; renderFields(); renderPreview(); });
+    $('#tipo-obrig', fieldsBox)?.addEventListener('change', e => { draft.obrigatorio = e.target.checked; });
     $$('.tipo-num', fieldsBox).forEach(inp => inp.addEventListener('input', () => { draft[inp.dataset.k] = inp.value; renderPreview(); }));
     renderPreview();
   };
@@ -735,7 +739,7 @@ function abrirTipoModal(idx) {
   const renderPreview = () => {
     const tipo = draft.tipo_especificacao;
     if (tipo === 'ATRIBUTO') { prevBox.innerHTML = `<div class="bib-preview"><div class="bib-preview__t">Resultado</div><div class="bib-preview__ok">OK / NOK</div><div class="cell-sub">Sem limites dimensionais.</div></div>`; return; }
-    if (tipo === 'REFERENCIA') { prevBox.innerHTML = `<div class="bib-preview"><div class="bib-preview__t">Referência</div><div class="bib-preview__ref">${escHtml(draft.referencia) || '—'}</div><div class="cell-sub">Não participa da conformidade.</div></div>`; return; }
+    if (tipo === 'REFERENCIA') { prevBox.innerHTML = `<div class="bib-preview"><div class="bib-preview__t">Referência</div><div class="bib-preview__ref">${escHtml(draft.referencia) || '—'}</div><div class="cell-sub">Medida e registrada na auditoria, sem limites — não participa da conformidade.${draft.obrigatorio ? '<br><b>Registro obrigatório.</b>' : ''}</div></div>`; return; }
     const lim = BIB.calcularLimites(draft);
     prevBox.innerHTML = `<div class="bib-preview">
       <div class="bib-preview__t">Limites calculados</div>
@@ -758,7 +762,10 @@ function abrirTipoModal(idx) {
       superior: draft.simetrica ? '' : draft.superior, inferior: draft.simetrica ? '' : draft.inferior,
       tol_simetrica: draft.simetrica ? draft.tol_simetrica : '', simetrica: draft.simetrica,
       tol_min: lim.tol_min ?? '', tol_max: lim.tol_max ?? '',
-      referencia: draft.tipo_especificacao === 'REFERENCIA' ? draft.referencia : m.referencia
+      referencia: draft.tipo_especificacao === 'REFERENCIA' ? draft.referencia : m.referencia,
+      // Registro obrigatório só faz sentido em Referência (os demais tipos já
+      // exigem todas as medições para finalizar a auditoria).
+      obrigatorio: draft.tipo_especificacao === 'REFERENCIA' ? !!draft.obrigatorio : false
     });
     dlg.close(); renderEspecRows();
   });
@@ -833,7 +840,10 @@ async function salvar(isNew, p, f, upImg) {
         tol_simetrica: m.simetrica ? numOrNull(m.tol_simetrica) : null,
         tol_min: lim.tol_min, tol_max: lim.tol_max,
         unidade: m.unidade || '', equipamento_id: await resolveCat('eq', m.equipamento_nome), quem_mede_id: await resolveCat('qm', m.quem_mede_nome),
-        observacao: m.observacao || '', ordem: ord++
+        observacao: m.observacao || '', ordem: ord++,
+        // Exige o registro do valor medido na auditoria (só em REFERENCIA — os
+        // demais tipos já exigem todas as medições). Ver fix_referencia_mensuravel.sql.
+        obrigatorio: info ? !!m.obrigatorio : false
       });
     }
     await substituir('bib_metricas', peca.id, specsRows, r => r);
@@ -853,11 +863,33 @@ async function salvar(isNew, p, f, upImg) {
   }
 }
 
+/* Colunas opcionais criadas por migrations posteriores. Como `substituir` APAGA
+   antes de reinserir, um banco atrás das migrations perderia as métricas se o
+   insert falhasse no meio. Por isso o insert é tolerante: se a coluna não existe,
+   avisa uma vez e regrava sem ela (mesmo padrão de inspecao.js). */
+const COLUNAS_OPCIONAIS = ['obrigatorio'];
+let _semColunasOpcionais = false;
+async function inserirTolerante(tabela, row) {
+  const semOpcionais = () => { const r = { ...row }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
+  if (_semColunasOpcionais) return db.insert(tabela, semOpcionais());
+  try {
+    return await db.insert(tabela, row);
+  } catch (e) {
+    const schema = ['PGRST204', 'PGRST205', '42703', '42P01'].includes(String(e?.code || ''))
+      || /could not find the .*column|column .* does not exist|schema cache/i.test(`${e?.message || ''} ${e?.details || ''}`);
+    if (!schema) throw e;
+    _semColunasOpcionais = true;
+    console.warn(`[BIB] ${tabela} não tem ${COLUNAS_OPCIONAIS.join('/')} — gravando sem esses campos. ` +
+      'Rode database/fix_referencia_mensuravel.sql no Supabase para normalizar o banco. Detalhe:', e?.message || e);
+    return db.insert(tabela, semOpcionais());
+  }
+}
+
 async function substituir(tabela, pecaId, itens, mapFn) {
   const existentes = await db.list(tabela, { filter: { peca_id: pecaId } });
   for (const e of existentes) await db.remove(tabela, e.id);
   let ord = 1;
-  for (const it of itens) await db.insert(tabela, mapFn(it, ord++));
+  for (const it of itens) await inserirTolerante(tabela, mapFn(it, ord++));
 }
 
 async function excluirPeca(pecaId) {
@@ -931,6 +963,6 @@ function blankSpec() {
   return {
     cota: '', quadrante: '', tipo_especificacao: 'TOLERANCIA', caracteristica_nome: '', referencia: '',
     nominal: '', superior: '', inferior: '', tol_simetrica: '', simetrica: false, tol_min: '', tol_max: '',
-    unidade: '', equipamento_nome: '', quem_mede_nome: '', observacao: ''
+    unidade: '', equipamento_nome: '', quem_mede_nome: '', observacao: '', obrigatorio: false
   };
 }

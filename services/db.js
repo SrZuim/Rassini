@@ -77,9 +77,18 @@ export const db = {
     return rows.find(r => r.id === id) || null;
   },
 
-  async insert(table, row) {
+  /* `returning:false` grava sem o SELECT do retorno. Necessário em tabelas cuja
+     policy de leitura é mais restrita que a de escrita (ex.: `logs`, legível só
+     por admin/supervisor): sem isso o PostgREST devolveria 0 linhas no RETURNING
+     e a gravação bem-sucedida pareceria erro. */
+  async insert(table, row, { returning = true } = {}) {
     if (SUPABASE.enabled) {
       const sb = await getSupabase();
+      if (!returning) {
+        const { error } = await sb.from(table).insert(row);
+        if (error) throw error;
+        return null;
+      }
       const { data, error } = await sb.from(table).insert(row).select().single();
       if (error) throw error;
       return data;
@@ -118,12 +127,27 @@ export const db = {
     return true;
   },
 
-  /* registro de auditoria (logs antes/depois) */
+  /* Registro de auditoria (logs antes/depois).
+     A trilha de auditoria NUNCA pode derrubar a transação de negócio que a
+     originou: finalizar uma rotina/inspeção precisa concluir mesmo que a
+     gravação do log falhe (RLS, sessão expirada, migration pendente). A falha é
+     reportada no console com a causa real e devolvida em `{ ok, erro }` para
+     quem quiser tratar — nunca lançada. Ver database/fix_logs_rls.sql. */
   async log(entry) {
     const dispositivo = `${navigator.platform || 'Web'} · ${location.hostname}`;
-    await this.insert('logs', {
-      quando: new Date().toISOString().slice(0, 16).replace('T', ' '),
-      dispositivo, ...entry
-    });
+    try {
+      await this.insert('logs', {
+        quando: new Date().toISOString().slice(0, 16).replace('T', ' '),
+        dispositivo, ...entry
+      }, { returning: false });     // logs_read é restrito: não pede o RETURNING
+      return { ok: true };
+    } catch (e) {
+      const rls = e?.code === '42501' || /row-level security|violates row-level/i.test(String(e?.message || ''));
+      console.warn('[LOG] Registro de auditoria não gravado', {
+        acao: entry?.acao, message: e?.message, code: e?.code, details: e?.details, hint: e?.hint,
+        causa: rls ? 'RLS: falta a policy de INSERT em "logs" — rode database/fix_logs_rls.sql no Supabase.' : undefined
+      });
+      return { ok: false, erro: e };
+    }
   }
 };

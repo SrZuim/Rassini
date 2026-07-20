@@ -536,7 +536,7 @@ function stepMedicoes(host) {
       <span class="text-muted-2" style="font-size:12.5px"><i class="bi bi-lock"></i> Nominal/limites vêm da Biblioteca (somente leitura)</span>
     </div>
     <div class="insp-table-wrap"><table class="insp-mtable"><thead><tr>
-      <th class="sticky-l">Cota</th><th>Característica</th><th>Ref.</th><th>Un.</th><th>Nominal</th><th>Mín</th><th>Máx</th><th>Equip.</th><th>Obs.</th>
+      <th class="sticky-l">Cota</th><th>Característica</th><th>Quadrante</th><th>Ref.</th><th>Un.</th><th>Nominal</th><th>Mín</th><th>Máx</th><th>Equip.</th><th>Obs.</th>
       ${Array.from({ length: qtd }, (_, i) => `<th class="insp-samp">Peça ${i + 1}</th>`).join('')}
       <th>Classe</th><th>Status</th>
     </tr></thead><tbody>
@@ -557,36 +557,45 @@ function stepMedicoes(host) {
 function linhaMedicao(c, qtd) {
   const attr = c.tipo_especificacao === 'ATRIBUTO';
   const informativo = !!c.informativo;
-  // Célula por amostra: numérica, OK/NOK (atributo) ou nada (informativa).
-  const cells = informativo
-    ? `<td class="insp-samp insp-info-cell" colspan="${qtd}"><i class="bi bi-info-circle"></i> ${c.referencia || 'Característica informativa'}</td>`
-    : Array.from({ length: qtd }, (_, i) => {
-        const a = i + 1; const m = c.medicoes.find(x => x.amostra === a);
-        const val = m ? m.valor : ''; const res = m ? m.resultado : 'pendente';
-        if (attr) {
-          const sel = String(val ?? '').toUpperCase();
-          return `<td class="insp-samp"><select class="insp-attr ${cellCls(res)}" data-car="${c.id}" data-a="${a}">
-            <option value="">—</option><option value="OK" ${sel === 'OK' ? 'selected' : ''}>OK</option><option value="NOK" ${sel === 'NOK' ? 'selected' : ''}>NOK</option></select></td>`;
-        }
-        return `<td class="insp-samp"><input class="insp-minput ${cellCls(res)}" data-car="${c.id}" data-a="${a}" value="${val ?? ''}" inputmode="decimal" placeholder="—"></td>`;
-      }).join('');
+  /* Célula por amostra: OK/NOK (atributo) ou campo numérico — inclusive para
+     REFERÊNCIA, que também é medida e registrada. A referência só não possui
+     limites: nunca fica vermelha nem reprova (ver INSP.avaliarReferencia). */
+  const cells = Array.from({ length: qtd }, (_, i) => {
+    const a = i + 1; const m = c.medicoes.find(x => x.amostra === a);
+    const val = m ? m.valor : ''; const res = m ? m.resultado : 'pendente';
+    if (attr) {
+      const sel = String(val ?? '').toUpperCase();
+      return `<td class="insp-samp"><select class="insp-attr ${cellCls(res)}" data-car="${c.id}" data-a="${a}">
+        <option value="">—</option><option value="OK" ${sel === 'OK' ? 'selected' : ''}>OK</option><option value="NOK" ${sel === 'NOK' ? 'selected' : ''}>NOK</option></select></td>`;
+    }
+    return `<td class="insp-samp"><input class="insp-minput ${informativo ? 'is-ref' : ''} ${cellCls(res)}"
+      data-car="${c.id}" data-a="${a}" data-ref="${informativo ? '1' : ''}" value="${val ?? ''}"
+      inputmode="decimal" placeholder="—" title="Peça ${a} — valor medido${informativo ? ' (referência, sem limites)' : ''}"></td>`;
+  }).join('');
   const tipoTag = informativo ? ' <span class="insp-tipo-tag">Referência</span>' : (attr ? ' <span class="insp-tipo-tag">OK/NOK</span>' : '');
-  const dimCols = (attr || informativo)
-    ? `<td colspan="3" class="cell-sub" style="text-align:center">${informativo ? '—' : 'OK / NOK'}</td>`
-    : `<td>${fmt(c.nominal)}</td><td>${fmt(c.minimo)}</td><td>${fmt(c.maximo)}</td>`;
+  const obrigTag = informativo && c.obrigatorio ? ' <span class="insp-tipo-tag insp-tipo-obrig">Obrigatória</span>' : '';
+  /* Referência mantém o valor cadastrado visível (destaque azul) no lugar dos
+     limites — é consulta técnica, não substitui o campo de medição. */
+  const dimCols = attr
+    ? `<td colspan="3" class="cell-sub" style="text-align:center">OK / NOK</td>`
+    : informativo
+      ? `<td colspan="3" class="insp-ref-spec" style="text-align:center"><i class="bi bi-info-circle"></i> Referência: <b>${fmt(c.referencia ?? c.nominal)}</b> ${escTitle(c.unidade || '')}</td>`
+      : `<td>${fmt(c.nominal)}</td><td>${fmt(c.minimo)}</td><td>${fmt(c.maximo)}</td>`;
   // Referência e Observações vêm da Biblioteca Técnica (snapshot da especificação):
   // c.referencia = bib_metricas.referencia · c.observacao_tec = bib_metricas.observacao.
+  // c.quadrante = bib_metricas.quadrante — localização no desenho, somente leitura.
   const obs = c.observacao_tec || '';
   return `<tr data-row="${c.id}">
     <td class="sticky-l cell-strong">${c.cota ?? '—'}</td>
-    <td>${c.caracteristica}${tipoTag}</td>
+    <td>${c.caracteristica}${tipoTag}${obrigTag}</td>
+    <td class="insp-quadrante">${c.quadrante ? escTitle(c.quadrante) : '—'}</td>
     <td class="cell-sub">${c.referencia || '—'}</td>
     <td>${c.unidade || ''}</td>${dimCols}
     <td class="cell-sub">${c.equipamento || '—'}</td>
     <td class="cell-sub insp-obs-cell"${obs ? ` title="${escTitle(obs)}"` : ''}>${obs ? `<span class="insp-obs">${escTitle(obs)}</span>` : '—'}</td>
     ${cells}
     <td class="insp-classe-cell">${informativo ? '<span class="text-muted-2">—</span>' : classeCellHtml(c)}</td>
-    <td class="insp-status-cell">${informativo ? '<span class="insp-pill insp-info">Informativa</span>' : statusCellHtml(c.resultado)}</td>
+    <td class="insp-status-cell">${informativo ? statusReferenciaHtml(c) : statusCellHtml(c.resultado)}</td>
   </tr>`;
 }
 const fmt = v => (v == null || v === '') ? '—' : String(v).replace('.', ',');
@@ -597,6 +606,14 @@ function statusCellHtml(res) {
   if (res === 'aprovado') return `<span class="insp-pill insp-ok"><i class="bi bi-check-circle-fill"></i> Aprovado</span>`;
   if (res === 'reprovado') return `<span class="insp-pill insp-crit"><i class="bi bi-x-circle-fill"></i> Reprovado</span>`;
   return `<span class="insp-pill insp-pend">Aguardando medição</span>`;
+}
+/* Status NEUTRO da referência (§status visual): jamais "Reprovado", qualquer que
+   seja a diferença entre o valor medido e o valor de referência cadastrado. */
+function statusReferenciaHtml(c) {
+  const temMedicao = c.medicoes?.some(m => String(m.valor ?? '') !== '');
+  return temMedicao
+    ? `<span class="insp-pill insp-info"><i class="bi bi-check2"></i> Registrado — Referência</span>`
+    : `<span class="insp-pill insp-info"><i class="bi bi-info-circle"></i> Referência informativa</span>`;
 }
 function classeCellHtml(c) {
   if (c.resultado !== 'reprovado') return '<span class="text-muted-2">—</span>';
@@ -609,9 +626,13 @@ function classeCellHtml(c) {
 /* cálculo local imediato + persistência debounced */
 function onMedInput(inp) {
   const carId = inp.dataset.car, a = +inp.dataset.a;
-  LOCAL[carId].vals[a] = inp.value;
-  const res = INSP.avaliarMedicao(inp.value, LOCAL[carId].min, LOCAL[carId].max, LOCAL[carId].tipo);
-  inp.classList.remove('is-ok', 'is-crit'); if (res !== 'pendente') inp.classList.add(cellCls(res));
+  const L = LOCAL[carId];
+  L.vals[a] = inp.value;
+  /* Referência: sem validação de tolerância → nunca recebe is-ok/is-crit. */
+  if (!L.informativo) {
+    const res = INSP.avaliarMedicao(inp.value, L.min, L.max, L.tipo);
+    inp.classList.remove('is-ok', 'is-crit'); if (res !== 'pendente') inp.classList.add(cellCls(res));
+  }
   recalcLinha(carId);
 }
 /* Atributo OK/NOK: recalcula local e persiste imediatamente (select change). */
@@ -626,16 +647,31 @@ function onAttrInput(sel) {
 /* Recalcula o status da linha e o banner geral a partir do modelo local. */
 function recalcLinha(carId) {
   const qtd = R.rel.quantidade;
-  const rowRes = INSP.resultadoCaracteristica(resInputs(carId, qtd));
   const row = document.querySelector(`tr[data-row="${carId}"]`);
-  row.querySelector('.insp-status-cell').innerHTML = statusCellHtml(rowRes);
-  const car = R.caracteristicas.find(c => c.id === carId); if (car) car.resultado = rowRes;
-  row.querySelector('.insp-classe-cell').innerHTML = classeCellHtml(car);
-  bindRowClasse(row);
+  const car = R.caracteristicas.find(c => c.id === carId);
+  const informativo = !!LOCAL[carId].informativo;
+  const rowRes = INSP.resultadoCaracteristica(resInputs(carId, qtd), { referencia: informativo });
+  if (car) car.resultado = rowRes;
+  if (informativo) {
+    /* Referência: status neutro derivado do que está digitado; sem classe de
+       defeito e sem impacto no resultado geral (excluída de resultadoGeral). */
+    const preenchidas = Array.from({ length: qtd }, (_, i) => LOCAL[carId].vals[i + 1])
+      .filter(v => String(v ?? '') !== '').length;
+    row.querySelector('.insp-status-cell').innerHTML = statusReferenciaHtml({ medicoes: preenchidas ? [{ valor: '1' }] : [] });
+  } else {
+    row.querySelector('.insp-status-cell').innerHTML = statusCellHtml(rowRes);
+    row.querySelector('.insp-classe-cell').innerHTML = classeCellHtml(car);
+    bindRowClasse(row);
+  }
   R.rel.resultado = INSP.resultadoGeral(R.caracteristicas.filter(c => !c.informativo).map(c => c.resultado));
   refreshBanner();
 }
-function resInputs(carId, qtd) { const out = []; const L = LOCAL[carId]; for (let s = 1; s <= qtd; s++) out.push(INSP.avaliarMedicao(L.vals[s], L.min, L.max, L.tipo)); return out; }
+function resInputs(carId, qtd) {
+  const out = []; const L = LOCAL[carId];
+  const tipo = L.informativo ? 'REFERENCIA' : L.tipo;
+  for (let s = 1; s <= qtd; s++) out.push(INSP.avaliarMedicao(L.vals[s], L.min, L.max, tipo));
+  return out;
+}
 function bindRowClasse(row) {
   row.querySelectorAll('.insp-classe-sel').forEach(sel => sel.addEventListener('change', () => onClasse(sel)));
   row.querySelectorAll('.insp-tratar').forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));

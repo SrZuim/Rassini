@@ -99,6 +99,21 @@ export function num(v) {
 /* ============================================================ CÁLCULO (§9-11)
    O auditor NUNCA define aprovado/reprovado — estas funções são a única fonte. */
 
+/* ------------------------------------------------ CARACTERÍSTICA DE REFERÊNCIA
+   Uma característica REFERENCIA é MEDIDA e REGISTRADA normalmente — "referência"
+   significa apenas que a medição não possui limites de aprovação/reprovação.
+   Por isso ela: aceita valor por amostra, é salva, recarregada, impressa e
+   rastreada; mas NUNCA gera 'reprovado', não entra no cálculo de conformidade
+   nem nos indicadores (ver resumoRelatorio/resultadoGeral, que filtram informativo).
+   Resultado neutro da medição de referência (§Referência informativa). */
+export const RESULTADO_REFERENCIA = 'registrado';
+
+/** true quando a característica é de referência (informativa). Tolera bases sem
+    as colunas novas — `informativo` é reconstruído em normalizarCaracteristica. */
+export function ehCaracteristicaReferencia(car) {
+  return !!(car?.informativo || car?.tipo_especificacao === 'REFERENCIA');
+}
+
 /** Avalia atributo OK/NOK → aprovado/reprovado/pendente. */
 export function avaliarAtributo(valor) {
   const s = String(valor ?? '').trim().toUpperCase();
@@ -107,10 +122,18 @@ export function avaliarAtributo(valor) {
   return 'pendente';
 }
 
-/** Uma medição: 'aprovado' | 'reprovado' | 'pendente' (limites inclusivos, §9).
-    `tipo` opcional: 'ATRIBUTO' avalia OK/NOK; demais usam limites numéricos. */
+/** Medição de referência: preenchida → 'registrado' (neutro); vazia → 'pendente'.
+    Nunca 'reprovado' — não há tolerância a comparar. */
+export function avaliarReferencia(valor) {
+  return String(valor ?? '').trim() === '' ? 'pendente' : RESULTADO_REFERENCIA;
+}
+
+/** Uma medição: 'aprovado' | 'reprovado' | 'registrado' | 'pendente' (limites
+    inclusivos, §9). `tipo`: 'ATRIBUTO' avalia OK/NOK; 'REFERENCIA' registra sem
+    validar tolerância; demais usam limites numéricos. */
 export function avaliarMedicao(valor, minimo, maximo, tipo) {
   if (tipo === 'ATRIBUTO') return avaliarAtributo(valor);
+  if (tipo === 'REFERENCIA') return avaliarReferencia(valor);
   const v = num(valor);
   if (v == null) return 'pendente';
   const min = num(minimo), max = num(maximo);
@@ -120,8 +143,11 @@ export function avaliarMedicao(valor, minimo, maximo, tipo) {
 }
 
 /** Resultado da característica (linha): todas aprovadas → aprovado; qualquer
-    reprovada → reprovado; senão pendente (§10). `medicoes` = ['aprovado',...]. */
-export function resultadoCaracteristica(medicoes) {
+    reprovada → reprovado; senão pendente (§10). `medicoes` = ['aprovado',...].
+    `referencia: true` → linha informativa: 'registrado' quando há ao menos uma
+    medição, senão 'aprovado' (neutro, não trava a finalização). Jamais reprova. */
+export function resultadoCaracteristica(medicoes, { referencia = false } = {}) {
+  if (referencia) return medicoes.some(r => r === RESULTADO_REFERENCIA) ? RESULTADO_REFERENCIA : 'aprovado';
   if (!medicoes.length) return 'pendente';
   if (medicoes.some(r => r === 'reprovado')) return 'reprovado';
   if (medicoes.every(r => r === 'aprovado')) return 'aprovado';
@@ -236,7 +262,13 @@ export function normalizarCaracteristica(c) {
   if (!c) return c;
   const tipo = c.tipo_especificacao
     ?? (c.tipo_campo === 'atributo' ? 'ATRIBUTO' : c.tipo_campo === 'informativo' ? 'REFERENCIA' : 'TOLERANCIA');
-  return { ...c, tipo_especificacao: tipo, informativo: !!(c.informativo ?? (c.tipo_campo === 'informativo')) };
+  return {
+    ...c, tipo_especificacao: tipo,
+    informativo: !!(c.informativo ?? (c.tipo_campo === 'informativo')),
+    // Obrigatoriedade de registro (§validação de preenchimento). Coluna opcional:
+    // ausente = não obrigatória, para não travar auditorias/bases já existentes.
+    obrigatorio: !!c.obrigatorio
+  };
 }
 async function lerCaracteristica(id) {
   return normalizarCaracteristica(await db.get('insp_caracteristicas', id));
@@ -251,7 +283,7 @@ async function lerCaracteristicas(relatorioId) {
    avisa uma vez e regrava sem os campos opcionais (o tipo sobrevive em tipo_campo). */
 let _semColunasSnapshot = false;
 async function inserirCaracteristica(row) {
-  const semOpcionais = () => { const r = { ...row }; delete r.tipo_especificacao; delete r.informativo; return r; };
+  const semOpcionais = () => { const r = { ...row }; delete r.tipo_especificacao; delete r.informativo; delete r.obrigatorio; return r; };
   if (_semColunasSnapshot) return db.insert('insp_caracteristicas', semOpcionais());
   try {
     return await db.insert('insp_caracteristicas', row);
@@ -312,7 +344,8 @@ export async function carregarEspecs(relatorioId, pecaId) {
   }
 
   // 7) snapshot das métricas (bib_metricas) — congela limites (§21, auditor não altera).
-  // ATRIBUTO vira OK/NOK; REFERENCIA é informativa (não recebe medição nem entra na conformidade).
+  // ATRIBUTO vira OK/NOK; REFERENCIA é MEDIDA normalmente, porém sem limites: não
+  // reprova e não entra na conformidade (informativo = fora do cálculo, não "sem medição").
   let ordem = 0;
   for (const m of f.metricas) {
     ordem++;
@@ -335,9 +368,13 @@ export async function carregarEspecs(relatorioId, pecaId) {
       // em bases sem as colunas novas (ver normalizarCaracteristica).
       tipo_campo: informativo ? 'informativo' : atributo ? 'atributo' : 'numerico',
       informativo,
+      // Registro obrigatório da medição (só exigido na finalização quando marcado
+      // na Biblioteca Técnica). Obrigatório ≠ reprova: serve à rastreabilidade.
+      obrigatorio: !!(m.obrigatorio ?? m.obrigatoria ?? false),
       opcoes: atributo ? ['OK', 'NOK'] : null,
-      // informativas já nascem "aprovadas" para não travar a finalização, mas são
-      // excluídas de todos os cálculos/indicadores (ver resumo/resultadoGeral).
+      // informativas nascem "aprovadas" (neutro) para não travar a finalização;
+      // ao receber medição passam a 'registrado'. Excluídas de todos os cálculos
+      // e indicadores (ver resumo/resultadoGeral), mas sempre exibidas/impressas.
       resultado: informativo ? 'aprovado' : 'pendente', classe_defeito: null, observacao: '', ordem
     });
   }
@@ -350,8 +387,11 @@ export async function carregarEspecs(relatorioId, pecaId) {
 export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valor) {
   const car = await lerCaracteristica(caracteristicaId);
   if (!car) return null;
-  if (car.informativo) return null;                        // REFERENCIA não recebe medição
-  const resultado = avaliarMedicao(valor, car.minimo, car.maximo, car.tipo_especificacao);
+  // REFERENCIA também é medida e registrada (§Referência): avaliarMedicao devolve
+  // 'registrado' — sem tolerância, sem reprovação. Antes esta linha era descartada.
+  const ehRef = ehCaracteristicaReferencia(car);
+  const resultado = ehRef ? avaliarReferencia(valor)
+    : avaliarMedicao(valor, car.minimo, car.maximo, car.tipo_especificacao);
   const existentes = await db.list('insp_medicoes', { filter: { caracteristica_id: caracteristicaId } });
   const ex = existentes.find(m => m.amostra === amostra);
   const payload = { relatorio_id: relatorioId, caracteristica_id: caracteristicaId, amostra, valor: (valor ?? ''), resultado, medido_iso: nowISO() };
@@ -371,7 +411,10 @@ export async function recalcularCaracteristica(caracteristicaId) {
   const car = await lerCaracteristica(caracteristicaId);
   if (!car) return;
   const meds = await db.list('insp_medicoes', { filter: { caracteristica_id: caracteristicaId } });
-  const resultado = resultadoCaracteristica(meds.map(m => m.resultado));
+  // Referência nunca reprova → resultado neutro ('registrado'/'aprovado'), o que
+  // a mantém fora de reprovações, pendências e classes de defeito.
+  const resultado = resultadoCaracteristica(meds.map(m => m.resultado),
+    { referencia: ehCaracteristicaReferencia(car) });
   const patch = { resultado };
   // se voltou a aprovada/pendente, limpa a classe de defeito
   if (resultado !== 'reprovado' && car.classe_defeito) patch.classe_defeito = null;
@@ -502,9 +545,14 @@ export async function resumoRelatorio(relatorioId) {
   const medReprov = meds.filter(m => m.resultado === 'reprovado').length;
   const classe = cod => caracteristicas.filter(c => c.resultado === 'reprovado' && c.classe_defeito === cod).length;
   const conformidade = totalCar ? Math.round(carAprov / totalCar * 100) : 0;
+  /* Referências: contabilizadas à parte, apenas para rastreabilidade. NÃO entram
+     em conformidade, aprovadas/reprovadas nem no resultado geral. */
+  const refs = todas.filter(c => c.informativo);
+  const medsRef = refs.flatMap(c => c.medicoes).filter(m => String(m.valor ?? '') !== '');
   return {
     totalCaracteristicas: totalCar, caracteristicasAprovadas: carAprov, caracteristicasReprovadas: carReprov,
     totalMedicoes: meds.length, medicoesAprovadas: medAprov, medicoesReprovadas: medReprov,
+    caracteristicasReferencia: refs.length, medicoesReferencia: medsRef.length,
     amostras: rel.quantidade || 0, conformidade,
     classeA: classe('A'), classeB: classe('B'), classeC: classe('C'),
     resultado: rel.resultado, duracaoSeg: rel.duracao_seg
@@ -523,14 +571,25 @@ export async function validarFinalizacao(relatorioId) {
   if (!String(rel.op || '').trim()) faltas.push({ etapa:'Identificação', msg:'Informe a OP' });
   // medições obrigatórias — a inspeção só finaliza com todas as amostras medidas
   const qtd = rel.quantidade || 0;
-  let semMedicao = 0;
-  caracteristicas.filter(c => !c.informativo).forEach(c => {   // informativas não exigem medição
+  const faltamAmostras = c => {
+    let n = 0;
     for (let a = 1; a <= qtd; a++) {
       const m = c.medicoes.find(x => x.amostra === a);
-      if (!m || String(m.valor ?? '') === '') semMedicao++;
+      if (!m || String(m.valor ?? '') === '') n++;
+    }
+    return n;
+  };
+  let semMedicao = 0;
+  caracteristicas.filter(c => !c.informativo).forEach(c => { semMedicao += faltamAmostras(c); });
+  if (semMedicao) faltas.push({ etapa:'Medições', msg:`${semMedicao} medição(ões) não preenchida(s)` });
+  /* Referência marcada como obrigatória: exige o registro do valor medido antes de
+     finalizar (§validação de preenchimento). É obrigatoriedade de REGISTRO — não
+     reprova a característica nem a auditoria, apenas garante rastreabilidade. */
+  caracteristicas.filter(c => c.informativo && c.obrigatorio).forEach(c => {
+    if (faltamAmostras(c)) {
+      faltas.push({ etapa:'Medições', msg:`Informe o valor medido da característica de referência: ${c.caracteristica}.` });
     }
   });
-  if (semMedicao) faltas.push({ etapa:'Medições', msg:`${semMedicao} medição(ões) não preenchida(s)` });
   /* NOVO FLUXO (§Regra 3): a reprovação NÃO bloqueia a finalização. A inspeção
      sempre conclui e gera relatório; havendo reprovação, o tratamento (classe,
      observação, ações) é opcional e a pendência é criada automaticamente ao
