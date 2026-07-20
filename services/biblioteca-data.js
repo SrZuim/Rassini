@@ -137,6 +137,8 @@ export const BIB_PECAS_DEFAULT = [
     status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'ABNT NBR 6329', especificacao:'ET-RCE-001 Rev.C',
     revisao_desenho:3, data_revisao_desenho:'2026-05-18', numero_ad:'AD-2026-0158',
     revisao:3, observacoes:'Conferir torque dos grampos em U conforme PC-001.',
+    // Tipos de inspeção aplicáveis (slugs de insp_tipos — fonte única §12).
+    tipos_inspecao:['layout','final','ppap','fisico_dim'],
     imagem:null, galeria:[], ativo:true, created_at:'2025-11-02', updated_at:'2026-05-18', created_by:'u1'
   },
   {
@@ -146,6 +148,7 @@ export const BIB_PECAS_DEFAULT = [
     status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'DIN 17221', especificacao:'ET-RCE-014 Rev.B',
     revisao_desenho:2, data_revisao_desenho:'2026-04-30', numero_ad:'AD-2026-0092',
     revisao:2, observacoes:'Dureza pós-têmpera crítica.',
+    tipos_inspecao:['layout','final'],
     imagem:null, galeria:[], ativo:true, created_at:'2025-12-10', updated_at:'2026-04-30', created_by:'u1'
   },
   {
@@ -155,6 +158,7 @@ export const BIB_PECAS_DEFAULT = [
     status:'Em revisão', planta:'Rio de Janeiro – Nova Iguaçu', norma:'ABNT NBR 6329', especificacao:'ET-LM-206 Rev.A',
     revisao_desenho:1, data_revisao_desenho:'2026-06-22', numero_ad:'AD-2026-0203',
     revisao:1, observacoes:'Validar novo raio de dobra.',
+    tipos_inspecao:['fisico_dim'],
     imagem:null, galeria:[], ativo:true, created_at:'2026-06-22', updated_at:'2026-06-22', created_by:'u1'
   },
   {
@@ -164,6 +168,7 @@ export const BIB_PECAS_DEFAULT = [
     status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'ISO 898-1', especificacao:'ET-GR-330 Rev.D',
     revisao_desenho:4, data_revisao_desenho:'2026-03-14', numero_ad:'AD-2025-0451',
     revisao:4, observacoes:'Torque 320 N·m ±5%.',
+    tipos_inspecao:['ppap'],
     imagem:null, galeria:[], ativo:true, created_at:'2025-09-01', updated_at:'2026-03-14', created_by:'u1'
   },
   {
@@ -173,9 +178,13 @@ export const BIB_PECAS_DEFAULT = [
     status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'SAE J157', especificacao:'ET-HC-118 Rev.A',
     revisao_desenho:1, data_revisao_desenho:'2026-02-05', numero_ad:'AD-2026-0031',
     revisao:1, observacoes:'',
+    tipos_inspecao:['durabilidade','ride'],
     imagem:null, galeria:[], ativo:true, created_at:'2026-02-05', updated_at:'2026-02-05', created_by:'u1'
   },
   {
+    // Sem `tipos_inspecao`: representa o CADASTRO LEGADO (§5) — a Biblioteca a
+    // marca como "Tipo de inspeção não configurado" e ela não aparece em
+    // nenhuma auditoria até um administrador configurá-la.
     id:'bp06', codigo:'BE-402', nome:'Barra Estabilizadora Dianteira',
     cliente:'Ford', familia:'Barra Estabilizadora', quadrante:'',
     peso:'9,6 kg', material:'SAE 26MnB5', acabamento:'Fosfatizado + pintura', cor:'Preto',

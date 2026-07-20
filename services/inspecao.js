@@ -10,6 +10,7 @@
    ========================================================================== */
 import { db } from './db.js';
 import { ficha, catalogosEspec, ehInformativo, ehAtributo } from './biblioteca.js';
+import { pecaAtendeTipo, tiposDaPeca } from './tipos-inspecao.js';
 import { PLANTA_SIGLAS, INSP_STATUS } from './inspecao-data.js';
 
 export function nowISO() { return new Date().toISOString(); }
@@ -64,6 +65,8 @@ export function mensagemErro(e) {
     return 'A auditoria não foi encontrada ou não está mais disponível para edição.';
   if (code === '23503' || /foreign key/.test(txt))
     return 'A peça selecionada não existe mais na Biblioteca Técnica. Selecione outra peça.';
+  if (code === '23514' || /tipos_inspecao/.test(txt))
+    return 'A peça precisa ter ao menos um tipo de inspeção aplicável cadastrado na Biblioteca Técnica.';
   if (['401', '403'].includes(code) || /jwt|not authenticated|invalid token/.test(txt))
     return 'A sessão do usuário expirou. Entre novamente.';
   return e?.message
@@ -252,6 +255,25 @@ export async function patchRelatorio(relatorioId, patch, { evento } = {}) {
   return r;
 }
 
+/* Igual ao patchRelatorio, mas tolera colunas criadas por migrations recentes
+   (`peca_tipos_inspecao`): se o banco ainda não as tem, regrava sem elas em vez
+   de derrubar a operação. Mesmo padrão de inserirCaracteristica/finalizar. */
+const COLUNAS_REL_OPCIONAIS = ['peca_tipos_inspecao'];
+let _semColunasRel = false;
+async function patchRelatorioTolerante(relatorioId, patch) {
+  const semOpcionais = () => { const p = { ...patch }; COLUNAS_REL_OPCIONAIS.forEach(k => delete p[k]); return p; };
+  if (_semColunasRel) return patchRelatorio(relatorioId, semOpcionais());
+  try {
+    return await patchRelatorio(relatorioId, patch);
+  } catch (e) {
+    if (!ehErroDeSchema(e)) throw e;
+    _semColunasRel = true;
+    console.warn('[INSP] insp_relatorios não tem peca_tipos_inspecao — gravando sem o snapshot do vínculo. ' +
+      'Rode database/fix_tipos_inspecao_peca.sql no Supabase. Detalhe:', e?.message || e);
+    return patchRelatorio(relatorioId, semOpcionais());
+  }
+}
+
 /* ================================= SNAPSHOT DA CARACTERÍSTICA — leitura tolerante
    `tipo_especificacao` e `informativo` só existem após a migration
    fix_integracao_auditoria_biblioteca.sql. Enquanto ela não roda, o tipo fica
@@ -320,6 +342,16 @@ export async function carregarEspecs(relatorioId, pecaId) {
   if (p.ativo === false || ['Arquivado', 'Obsoleto'].includes(p.status))
     throw new InspError('PECA_INATIVA', `A peça ${p.codigo} está com cadastro ${String(p.status || 'inativo').toLowerCase()} na Biblioteca Técnica e não pode ser auditada. Selecione outra peça.`);
 
+  /* 2.1) a peça precisa ser APLICÁVEL ao tipo desta auditoria (§6, §11).
+     Última barreira do servidor: mesmo que a UI seja burlada, uma peça
+     incompatível nunca é vinculada. Peça sem configuração não passa (§5). */
+  if (!pecaAtendeTipo(p, rel.tipo_slug)) {
+    const semConfig = tiposDaPeca(p).length === 0;
+    throw new InspError('PECA_TIPO_INCOMPATIVEL', semConfig
+      ? `A peça ${p.codigo} — ${p.nome} ainda não tem tipos de inspeção configurados na Biblioteca Técnica. Configure o cadastro antes de auditá-la.`
+      : `A peça ${p.codigo} não é aplicável ao tipo de inspeção "${rel.tipo_nome}". Selecione outra peça ou ajuste o cadastro na Biblioteca Técnica.`);
+  }
+
   // 3) sem especificação não há o que medir → não vincula (evita auditoria órfã)
   if (!f.metricas.length)
     throw new InspError('PECA_SEM_ESPECS', `O cadastro da peça ${p.codigo} — ${p.nome} está incompleto: não há especificações dimensionais na Biblioteca Técnica. Solicite o cadastro ou a revisão antes de iniciar a inspeção.`);
@@ -328,11 +360,14 @@ export async function carregarEspecs(relatorioId, pecaId) {
   const antigas = await lerCaracteristicas(relatorioId);
   if (rel.peca_id === p.id && antigas.length) return antigas.length;
 
-  // 5) vínculo oficial + cópia histórica
-  const atualizado = await patchRelatorio(relatorioId, {
+  /* 5) vínculo oficial + cópia histórica. `peca_tipos_inspecao` congela QUAIS
+     tipos a peça atendia no momento da auditoria (§14): se a Biblioteca mudar
+     depois, o relatório antigo continua provando o vínculo que existia. */
+  const atualizado = await patchRelatorioTolerante(relatorioId, {
     peca_id: p.id, peca_codigo: p.codigo, peca_nome: p.nome, cliente: p.cliente || '',
     revisao_desenho: p.revisao_desenho ?? '', data_revisao_desenho: p.data_revisao_desenho || '',
-    numero_ad: p.numero_ad || '', quadrante: p.quadrante || ''
+    numero_ad: p.numero_ad || '', quadrante: p.quadrante || '',
+    peca_tipos_inspecao: tiposDaPeca(p)
   });
   if (!atualizado) throw new InspError('VINCULO', 'O vínculo entre a auditoria e a peça não pôde ser salvo. A auditoria não foi encontrada ou você não tem permissão para alterá-la.');
 
@@ -380,6 +415,41 @@ export async function carregarEspecs(relatorioId, pecaId) {
   }
   await registrarEvento({ relatorio: { id: relatorioId, auditor_id: rel.auditor_id, plantao_id: rel.plantao_id }, tipo_evento: 'part_selected', metadata: { peca_id: p.id, peca: p.codigo, caracteristicas: f.metricas.length } });
   return f.metricas.length;
+}
+
+/* ================================================ TROCA DO TIPO DE INSPEÇÃO (§7)
+   O tipo define quais peças da Biblioteca são aplicáveis. Ao trocá-lo, se a peça
+   vinculada não atender ao novo tipo, o vínculo e TODOS os dados dependentes
+   (snapshot das características + medições) são descartados — nada de peça
+   incompatível permanece carregado. Relatório finalizado não aceita troca (§21). */
+export async function trocarTipoInspecao(relatorioId, tipo, { limparPeca = false } = {}) {
+  const rel = await db.get('insp_relatorios', relatorioId);
+  if (!rel) throw new InspError('REL_NAO_ENCONTRADA', 'A auditoria não foi encontrada. Volte à lista e abra a inspeção novamente.');
+  if (String(rel.status).startsWith('finalizada') || rel.status === 'revisada')
+    throw new InspError('REL_BLOQUEADA', 'Esta inspeção já foi finalizada e não aceita troca de tipo.');
+
+  const patch = {
+    tipo_id: tipo.id, tipo_slug: tipo.slug, tipo_nome: tipo.nome,
+    is_dimensional: tipo.is_dimensional !== false
+  };
+  if (limparPeca) {
+    // remove medições e snapshot da peça incompatível
+    const antigas = await lerCaracteristicas(relatorioId);
+    for (const c of antigas) {
+      const meds = await db.list('insp_medicoes', { filter: { caracteristica_id: c.id } });
+      for (const m of meds) await db.remove('insp_medicoes', m.id);
+      await db.remove('insp_caracteristicas', c.id);
+    }
+    Object.assign(patch, {
+      peca_id: null, peca_codigo: '', peca_nome: '', cliente: '',
+      revisao_desenho: '', data_revisao_desenho: '', numero_ad: '', quadrante: '',
+      peca_tipos_inspecao: null, resultado: 'pendente'
+    });
+  }
+  const atualizado = await patchRelatorioTolerante(relatorioId, patch);
+  await registrarEvento({ relatorio: atualizado, tipo_evento: 'inspection_type_changed',
+    metadata: { tipo: tipo.nome, slug: tipo.slug, peca_removida: !!limparPeca } });
+  return atualizado;
 }
 
 /* ============================================================ MEDIÇÕES (§8-9)

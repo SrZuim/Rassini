@@ -27,6 +27,10 @@ const FILTROS_DEF = [
    carregados sob demanda para a ficha e o editor. */
 let CAT = { car: [], eq: [], qm: [], quad: [] };
 let MAP = { car: {}, eq: {}, qm: {} };
+/* Catálogo de tipos de inspeção (fonte única) — carregado uma vez e reusado
+   pelos chips da listagem, pela ficha e pelos filtros. */
+let TIPOS_MAP = {};
+async function loadTiposInspecao() { if (!Object.keys(TIPOS_MAP).length) TIPOS_MAP = await BIB.mapaTipos(); return TIPOS_MAP; }
 async function loadCatalogos() {
   const c = await BIB.catalogosEspec();
   CAT.car = c.car; CAT.eq = c.eq; CAT.qm = c.qm;
@@ -146,6 +150,7 @@ function timeline(hist) {
 
 /* -------------------------------------------------------------- catálogo --- */
 async function renderCatalogo() {
+  const tiposCat = await loadTiposInspecao().then(() => BIB.listarTipos());
   const filtrosHtml = FILTROS_DEF.map(([campo, label, tabela]) => `
     <select class="form-select form-select-sm bib-filter" data-filtro="${campo}" style="max-width:190px">
       <option value="">${label}: todos</option>
@@ -162,9 +167,17 @@ async function renderCatalogo() {
     </div>
     <div class="bib-filters no-print">
       ${filtrosHtml}
+      <select class="form-select form-select-sm bib-filter" id="bib-filtro-tipo" data-filtro="tipo_inspecao" style="max-width:230px">
+        <option value="">Tipo de inspeção: todos</option>
+        ${tiposCat.map(t => `<option value="${escAttr(t.slug)}" ${state.filtros.tipo_inspecao === t.slug ? 'selected' : ''}>${escHtml(t.nome)}</option>`).join('')}
+        <option value="${BIB.FILTRO_SEM_TIPO}" ${state.filtros.tipo_inspecao === BIB.FILTRO_SEM_TIPO ? 'selected' : ''}>— ${escHtml(BIB.SEM_TIPOS_LABEL)}</option>
+      </select>
       <label class="bib-arch"><input type="checkbox" id="bib-arch" ${state.incluirArquivadas ? 'checked' : ''}> Incluir arquivadas</label>
     </div>
     <div id="bib-results"></div>`);
+
+  // filtro por tipo de inspeção (§9) — combina com os demais filtros (§10)
+  $('#bib-filtro-tipo').addEventListener('change', e => { state.filtros.tipo_inspecao = e.target.value; refreshResults(); });
 
   // popula selects de filtro
   for (const [campo, , tabela] of FILTROS_DEF) {
@@ -206,7 +219,10 @@ async function refreshResults() {
   const box = $('#bib-results'); if (!box) return;
   const pecas = await BIB.buscar(state.q, state.filtros, { incluirArquivadas: state.incluirArquivadas });
   const favs = await BIB.favoritosDe(USER.id);
-  const chips = Object.entries(state.filtros).filter(([, v]) => v).map(([k, v]) => `<span class="rna-badge badge-info">${v} <i class="bi bi-x" data-rmfiltro="${k}" style="cursor:pointer"></i></span>`).join(' ');
+  // O chip do filtro de tipo mostra o nome amigável, nunca o slug interno.
+  const rotuloFiltro = (k, v) => k !== 'tipo_inspecao' ? v
+    : (v === BIB.FILTRO_SEM_TIPO ? BIB.SEM_TIPOS_LABEL : BIB.nomeDoSlug(v, TIPOS_MAP));
+  const chips = Object.entries(state.filtros).filter(([, v]) => v).map(([k, v]) => `<span class="rna-badge badge-info">${escHtml(rotuloFiltro(k, v))} <i class="bi bi-x" data-rmfiltro="${k}" style="cursor:pointer"></i></span>`).join(' ');
   box.innerHTML = `
     <div class="d-flex align-items-center gap-2 mb-2 flex-wrap no-print">
       <b>${pecas.length}</b> <span class="text-muted-2">peça(s)</span> ${chips}
@@ -224,17 +240,47 @@ function cardPeca(p, fav) {
       <div class="bib-card__code">${p.codigo}</div>
       <b class="bib-card__name">${p.nome}</b>
       <div class="cell-sub">${p.cliente || '—'} · ${p.familia || '—'}</div>
+      ${tiposChipsHtml(p)}
       <div class="d-flex justify-content-between align-items-center mt-2">
         <span class="cell-sub"><i class="bi bi-geo-alt"></i> ${p.planta || '—'}</span>${statusBadge(p.status)}
       </div>
     </div></div>`;
 }
 
+/* Etiquetas dos tipos de inspeção vinculados (§9). Mostra até 2 e resume o
+   restante em "+N"; o title traz a lista completa (nomes longos por extenso).
+   Peça legada sem vínculo recebe o marcador "Tipo de inspeção não configurado". */
+/* Na ficha há espaço: mostra TODOS os tipos com o nome completo. */
+function tiposFichaHtml(p) {
+  const slugs = BIB.tiposDaPeca(p);
+  if (!slugs.length) {
+    return `<span class="bib-chip bib-chip--warn"><i class="bi bi-exclamation-triangle"></i> ${escHtml(BIB.SEM_TIPOS_LABEL)}</span>
+      <div class="cell-sub mt-1">Edite a peça e selecione ao menos um tipo para que ela apareça nas auditorias.</div>`;
+  }
+  return `<div class="bib-tipos-row">${slugs.map(s => `<span class="bib-chip">${escHtml(BIB.nomeDoSlug(s, TIPOS_MAP))}</span>`).join('')}</div>`;
+}
+
+const TIPOS_CHIPS_VISIVEIS = 2;
+function tiposChipsHtml(p) {
+  const slugs = BIB.tiposDaPeca(p);
+  if (!slugs.length) {
+    return `<div class="bib-tipos-row"><span class="bib-chip bib-chip--warn" title="${escAttr(BIB.SEM_TIPOS_LABEL)}">
+      <i class="bi bi-exclamation-triangle"></i> ${escHtml(BIB.SEM_TIPOS_LABEL)}</span></div>`;
+  }
+  const nomes = slugs.map(s => BIB.nomeDoSlug(s, TIPOS_MAP));
+  const visiveis = slugs.slice(0, TIPOS_CHIPS_VISIVEIS)
+    .map((s, i) => `<span class="bib-chip" title="${escAttr(nomes[i])}">${escHtml(BIB.curtoDoSlug(s, TIPOS_MAP))}</span>`).join('');
+  const resto = slugs.length - TIPOS_CHIPS_VISIVEIS;
+  const maisChip = resto > 0
+    ? `<span class="bib-chip bib-chip--more" title="${escAttr(nomes.slice(TIPOS_CHIPS_VISIVEIS).join(' · '))}">+${resto}</span>` : '';
+  return `<div class="bib-tipos-row" title="${escAttr(nomes.join(' · '))}">${visiveis}${maisChip}</div>`;
+}
+
 /* ---------------------------------------------------------------- ficha ---- */
 async function renderFicha() {
   const f = await BIB.ficha(state.pecaId);
   if (!f) { state.view = 'catalogo'; toast('Peça não encontrada.', { type: 'warn' }); return render(); }
-  await loadCatalogos();
+  await Promise.all([loadCatalogos(), loadTiposInspecao()]);
   BIB.registrarRecente(USER.id, f.peca.id);
   const p = f.peca;
   const fav = await BIB.ehFavorito(USER.id, p.id);
@@ -323,6 +369,7 @@ function tabPane(tab, f) {
       ['Revisão do Desenho', p.revisao_desenho != null && p.revisao_desenho !== '' ? `Rev ${String(p.revisao_desenho).padStart(2, '0')}` : ''],
       ['Data da Revisão do Desenho', fmtDate(p.data_revisao_desenho)],
       ['Número da AD', p.numero_ad],
+      ['Tipos de inspeção aplicáveis', tiposFichaHtml(p)],
       ['Anexo do Desenho', anexo],
       ['Revisão do Cadastro', `Rev ${String(p.revisao_cadastro ?? p.revisao ?? 1).padStart(2, '0')}`],
       ['Criado em', fmtDate(p.created_at)], ['Atualizado em', fmtDate(p.updated_at)]
@@ -402,6 +449,8 @@ async function renderRecentes() {
 
 /* --------------------------------------------------------------- editor ---- */
 let edMetricas = [], edDocsNovos = [];
+/* Tipos de inspeção aplicáveis em edição (array de slugs canônicos, §2). */
+let edTipos = [];
 function abrirEditor(pecaId) { state.view = 'editor'; state.pecaId = pecaId; render(); }
 
 async function renderEditor() {
@@ -426,6 +475,9 @@ async function renderEditor() {
   edDocsNovos = [];
 
   const [cli, pla, fam] = await Promise.all(['bib_clientes', 'bib_plantas', 'bib_familias'].map(t => db.list(t)));
+  // Tipos de inspeção aplicáveis (§2) — catálogo vem da fonte única (insp_tipos).
+  const tiposCat = await BIB.listarTipos();
+  edTipos = BIB.tiposDaPeca(p);              // seleção atual (vazia em peça nova/legada)
   const opt = (arr, val) => `<option value="">—</option>` + arr.filter(o => o.ativo !== false).map(o => `<option ${o.nome === val ? 'selected' : ''}>${o.nome}</option>`).join('');
   const inp = (campo, label, val, type = 'text', req = false) => `<div class="col-md-4"><label class="form-label">${label}${req ? ' *' : ''}</label><input class="form-control" data-p="${campo}" type="${type}" value="${escAttr(val)}"${req ? ' required' : ''}></div>`;
   const selc = (campo, label, arr, val) => `<div class="col-md-4"><label class="form-label">${label}</label><select class="form-select" data-p="${campo}">${opt(arr, val)}</select></div>`;
@@ -454,6 +506,7 @@ async function renderEditor() {
         ${selc('cliente', 'Cliente', cli, p.cliente)}
         ${selc('familia', 'Família', fam, p.familia)}${plantaSelect(pla, p.planta)}
         ${inp('revisao_desenho', 'Revisão do Desenho', p.revisao_desenho, 'number', true)}${inp('data_revisao_desenho', 'Data da Revisão do Desenho', p.data_revisao_desenho, 'date', true)}${inp('numero_ad', 'Número da AD', p.numero_ad)}
+        ${tiposInspecaoField(tiposCat)}
         <div class="col-md-4"><label class="form-label">Status</label><select class="form-select" data-p="status">${DATA.BIB_STATUS.map(s => `<option ${s === p.status ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
         <div class="col-md-4"><label class="form-label">Revisão do Cadastro</label>
           <input class="form-control" value="Rev ${String(p.revisao_cadastro ?? p.revisao ?? 1).padStart(2, '0')}" disabled>
@@ -481,6 +534,7 @@ async function renderEditor() {
 
   const upImg = initEvidenceUpload($('#ed-img'), { label: 'Imagem principal da peça', multiple: false });
   renderEspecRows();
+  wireTiposInspecao(tiposCat);
 
   $('#ed-add-metrica').addEventListener('click', () => { edMetricas.push(blankSpec()); renderEspecRows(); focusRow(edMetricas.length - 1); });
 
@@ -490,6 +544,62 @@ async function renderEditor() {
 
   $('#ed-cancel').addEventListener('click', () => { if (isNew) { state.view = 'catalogo'; } else { state.view = 'ficha'; } render(); });
   $('#ed-save').addEventListener('click', () => salvar(isNew, p, f, upImg));
+}
+
+/* =============================== TIPOS DE INSPEÇÃO APLICÁVEIS (§2, §3, §13)
+   Seleção múltipla obrigatória. Sem texto livre: as opções vêm da fonte única
+   (insp_tipos via BIB.listarTipos). Cada opção selecionada vira um chip
+   removível; o estado fica em `edTipos` (array de slugs canônicos).
+   Ocupa 2 colunas no desktop (nomes longos como o do PPAP ficam legíveis) e
+   100% no mobile, seguindo a mesma grade Bootstrap do restante do formulário. */
+function tiposInspecaoField(tiposCat) {
+  return `<div class="col-md-8">
+    <label class="form-label" for="ed-tipos-add">Tipos de inspeção aplicáveis *</label>
+    <div class="bib-multi" id="ed-tipos-box">
+      <div class="bib-multi__chips" id="ed-tipos-chips"></div>
+      <select class="form-select bib-multi__add" id="ed-tipos-add">
+        <option value="">Adicionar tipo de inspeção…</option>
+        ${tiposCat.map(t => `<option value="${escAttr(t.slug)}">${escHtml(t.nome)}</option>`).join('')}
+      </select>
+    </div>
+    <small class="text-muted-2" style="font-size:11px">A peça só aparecerá nas auditorias dos tipos selecionados.</small>
+    <div class="bib-multi__err" id="ed-tipos-err" hidden></div>
+  </div>`;
+}
+
+/** Liga o componente: pinta os chips, adiciona e remove seleções. */
+function wireTiposInspecao(tiposCat) {
+  const chips = $('#ed-tipos-chips'), add = $('#ed-tipos-add');
+  if (!chips || !add) return;
+  const pintar = () => {
+    chips.innerHTML = edTipos.length
+      ? edTipos.map(s => {
+          const t = tiposCat.find(x => x.slug === s);
+          return `<span class="bib-chip" title="${escAttr(t?.nome || s)}">${escHtml(t?.curto || s)}
+            <button type="button" class="bib-chip__x" data-rmtipo="${escAttr(s)}" aria-label="Remover ${escAttr(t?.nome || s)}"><i class="bi bi-x"></i></button></span>`;
+        }).join('')
+      : `<span class="bib-multi__ph">Nenhum tipo selecionado</span>`;
+    // some do select o que já está escolhido (evita duplicidade)
+    Array.from(add.options).forEach(o => { if (o.value) o.hidden = edTipos.includes(o.value); });
+    $$('[data-rmtipo]', chips).forEach(b => b.addEventListener('click', () => {
+      edTipos = edTipos.filter(x => x !== b.dataset.rmtipo); pintar(); limparErroTipos();
+    }));
+  };
+  add.addEventListener('change', () => {
+    const v = add.value; add.value = '';
+    if (!v || edTipos.includes(v)) return;
+    edTipos = BIB.normalizarParaGravar([...edTipos, v]);   // ordem canônica
+    pintar(); limparErroTipos();
+  });
+  pintar();
+}
+const limparErroTipos = () => { const e = $('#ed-tipos-err'); if (e) { e.hidden = true; } $('#ed-tipos-box')?.classList.remove('is-invalid'); };
+/** Erro visual no próprio campo (§3 "visualmente no formulário"). */
+function mostrarErroTipos(msg) {
+  const e = $('#ed-tipos-err'), box = $('#ed-tipos-box');
+  if (e) { e.textContent = msg; e.hidden = false; }
+  box?.classList.add('is-invalid');
+  box?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 /* Tabela de Especificações — nova ordem: Cota · Característica · Quadrante ·
@@ -801,6 +911,17 @@ async function salvar(isNew, p, f, upImg) {
     $$('[data-p]').forEach(i => { patch[i.dataset.p] = i.value.trim(); });
     if (!patch.codigo || !patch.nome) { toast('Código e Nome são obrigatórios.', { type: 'warn' }); btn.disabled = false; return; }
 
+    /* Tipos de inspeção aplicáveis: obrigatório (§3). Valida ANTES do envio, com
+       destaque no próprio campo; a camada de serviço revalida em salvarPeca. */
+    const tiposNormalizados = BIB.normalizarParaGravar(edTipos);
+    const erroTipos = BIB.validarTiposInspecao(tiposNormalizados);
+    if (erroTipos) {
+      mostrarErroTipos(erroTipos);
+      toast(erroTipos, { type: 'warn', title: 'Tipos de inspeção' });
+      btn.disabled = false; return;
+    }
+    patch.tipos_inspecao = tiposNormalizados;
+
     // imagem principal (opcional)
     let imagemUrl = p.imagem || null;
     if (upImg.hasFiles()) {
@@ -810,7 +931,8 @@ async function salvar(isNew, p, f, upImg) {
 
     let peca;
     if (isNew) {
-      peca = await db.insert('bib_pecas', {
+      // via serviço: revalida o vínculo e tolera banco sem a coluna nova.
+      peca = await BIB.inserirPeca({
         ...patch, revisao: 1, revisao_cadastro: 1, ativo: patch.status !== 'Arquivado',
         imagem: imagemUrl, galeria: [], created_at: BIB.hoje(), updated_at: BIB.hoje(), created_by: USER.id
       });

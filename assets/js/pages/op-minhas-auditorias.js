@@ -11,7 +11,8 @@ import { db } from '../../../services/db.js';
 import { can, statusClass } from '../../../services/config.js';
 import * as INSP from '../../../services/inspecao.js';
 import * as ATIV from '../../../services/atividades.js';
-import { buscarParaInspecao, porId as pecaPorId } from '../../../services/biblioteca.js';
+import { buscarParaInspecao, porId as pecaPorId, contarPecasDoTipo,
+         tiposDaPeca, pecaAtendeTipo, nomeDoSlug } from '../../../services/biblioteca.js';
 import { BIB_IMG_PLACEHOLDER } from '../../../services/biblioteca-data.js';
 import { INSP_QUANTIDADES, INSP_STATUS, INSP_MOTIVOS_PAUSA } from '../../../services/inspecao-data.js';
 import { $, $$, el, toast, modal, confirmDialog, initials } from '../ui.js';
@@ -315,24 +316,37 @@ let SELECIONANDO = false; // trava anti-clique-duplo (§Teste 10)
 
 async function stepTipoPeca(host) {
   const r = R.rel;
+  const tipos = await INSP.tiposDisponiveis();
+  // §8 — quantas peças existem para ESTE tipo, antes de o auditor digitar.
+  const disponiveis = await contarPecasDoTipo(r.tipo_slug);
+  const semPecas = disponiveis === 0;
+  const podeCadastrar = can(USER.role, 'biblioteca', 'create');
   host.innerHTML = `
     <h3 class="insp-h"><i class="bi bi-diagram-3"></i> Tipo de inspeção e peça</h3>
     <div class="row g-3">
       <div class="col-md-5">
-        <label class="form-label">Tipo de inspeção</label>
-        <input class="form-control" value="${r.tipo_nome}" disabled>
-        <small class="text-muted-2">Definido na criação. ${r.is_dimensional ? 'Exige medição dimensional.' : ''}</small>
+        <label class="form-label">Tipo de inspeção *</label>
+        <select class="form-select" id="pc-tipo" ${VIEWONLY ? 'disabled' : ''}>
+          ${tipos.map(t => `<option value="${t.id}" ${t.id === r.tipo_id ? 'selected' : ''}>${escTitle(t.nome)}</option>`).join('')}
+        </select>
+        <small class="text-muted-2">Define quais peças da Biblioteca ficam disponíveis. ${r.is_dimensional ? 'Exige medição dimensional.' : ''}</small>
       </div>
       <div class="col-md-7">
         <label class="form-label">Selecionar peça * <span class="text-muted-2">(Biblioteca Técnica)</span></label>
-        <input class="form-control" id="pc-busca" placeholder="PN, nome, cliente, número da AD, revisão..." autocomplete="off" ${VIEWONLY ? 'disabled' : ''}>
+        <input class="form-control" id="pc-busca" placeholder="PN, nome, cliente, número da AD, revisão..." autocomplete="off" ${VIEWONLY || semPecas ? 'disabled' : ''}>
         <div id="pc-res" class="insp-search-res"></div>
-        <small class="text-muted-2">Pesquise por Part Number, nome, cliente, número da AD ou revisão do desenho. Somente peças ativas na Biblioteca Técnica.</small>
+        ${semPecas
+          ? `<div class="insp-blocker mt-2"><i class="bi bi-exclamation-triangle"></i>
+              <div>Nenhuma peça cadastrada para este tipo de inspeção. Verifique o cadastro na Biblioteca Técnica.
+              ${podeCadastrar ? `<div class="mt-2"><a class="rna-btn rna-btn-dark rna-btn-sm" href="biblioteca.html"><i class="bi bi-box-seam"></i> Cadastrar ou configurar peça</a></div>` : ''}</div></div>`
+          : `<small class="text-muted-2">Somente peças ativas e aplicáveis a <b>${escTitle(r.tipo_nome)}</b> (${disponiveis} disponível(is)). Pesquise por PN, nome, cliente, AD ou revisão.</small>`}
       </div>
     </div>
     <div id="pc-sel" class="mt-3">${pecaSelHtml(r)}</div>`;
 
   if (VIEWONLY) return;
+  $('#pc-tipo').addEventListener('change', e => trocarTipo(e.target.value, tipos));
+  if (semPecas) return;                               // campo desabilitado (§8)
   const inp = $('#pc-busca'), res = $('#pc-res');
   let t;
   inp.addEventListener('input', () => {
@@ -342,7 +356,8 @@ async function stepTipoPeca(host) {
     res.innerHTML = `<div class="text-muted-2 p-2"><span class="spinner-border spinner-border-sm"></span> Carregando Biblioteca Técnica...</div>`;
     t = setTimeout(async () => {
       try {
-        RESULTADOS = await buscarParaInspecao(q, 8);
+        // §11 — o recorte por tipo é aplicado no serviço; a tela nunca recebe peça incompatível.
+        RESULTADOS = await buscarParaInspecao(q, 8, { tipo: R.rel.tipo_slug });
       } catch (e) {
         INSP.logErro('Falha ao consultar a Biblioteca Técnica', e);
         RESULTADOS = [];
@@ -352,10 +367,45 @@ async function stepTipoPeca(host) {
       if (inp.value.trim() !== q) return;              // resposta velha: ignora
       res.innerHTML = RESULTADOS.length
         ? RESULTADOS.map(pecaItemHtml).join('')
-        : `<div class="text-muted-2 p-2"><i class="bi bi-search"></i> Nenhuma peça encontrada na Biblioteca Técnica.</div>`;
+        : `<div class="text-muted-2 p-2"><i class="bi bi-search"></i> Nenhuma peça de <b>${escTitle(R.rel.tipo_nome)}</b> encontrada para "${escTitle(q)}".</div>`;
       $$('.insp-search-item', res).forEach(it => it.addEventListener('click', () => selecionarPeca(it.dataset.id)));
     }, 250);
   });
+}
+
+/* §7 — Troca do tipo de inspeção. Se a peça já vinculada não for aplicável ao
+   novo tipo, o vínculo E todos os dados dependentes (snapshot das características
+   e medições) são limpos: nada de peça incompatível permanece carregado. */
+async function trocarTipo(tipoId, tipos) {
+  const tipo = tipos.find(t => t.id === tipoId);
+  if (!tipo || tipo.id === R.rel.tipo_id) return;
+  const peca = PECA_ATUAL;
+  const incompativel = !!(R.rel.peca_id && peca && !pecaAtendeTipo(peca, tipo.slug));
+  const aplicar = async () => {
+    const ok = await autosave(async () => {
+      await INSP.trocarTipoInspecao(R.rel.id, tipo, { limparPeca: incompativel || !!R.rel.peca_id && !peca });
+      await reload();
+    }, { contexto: 'Falha ao trocar o tipo de inspeção' });
+    if (!ok) return;
+    if (incompativel) {
+      PECA_ATUAL = null; RESULTADOS = [];
+      toast('A peça selecionada não é aplicável ao novo tipo de inspeção. Selecione outra peça.',
+        { type: 'warn', title: 'Peça removida', timeout: 8000 });
+    }
+    renderStep(); refreshBanner();
+  };
+  // Troca destrutiva (há medições) exige confirmação explícita do auditor.
+  const temMedicoes = R.caracteristicas.some(c => c.medicoes.length);
+  if (incompativel && temMedicoes) {
+    // O select volta ao tipo persistido enquanto a confirmação está aberta: se o
+    // auditor cancelar, a tela continua refletindo exatamente o que está salvo.
+    const sel = $('#pc-tipo'); if (sel) sel.value = R.rel.tipo_id;
+    return confirmDialog(
+      `A peça ${R.rel.peca_codigo || ''} não é aplicável a "${tipo.nome}". Trocar o tipo vai remover a peça e as medições já preenchidas. Deseja continuar?`,
+      aplicar,
+      { title: 'Trocar tipo de inspeção', okLabel: 'Trocar e limpar', danger: true });
+  }
+  aplicar();
 }
 
 /* Resultado da busca: PN, nome, cliente, revisão, AD, código interno, imagem e status. */

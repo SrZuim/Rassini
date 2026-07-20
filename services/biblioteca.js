@@ -5,6 +5,16 @@
    (funciona em modo demo ou Supabase sem alteração).
    ========================================================================== */
 import { db } from './db.js';
+import { pecaAtendeTipo, tiposDaPeca, semTiposConfigurados, normalizarSlug,
+         validarTiposInspecao as validarTiposInspecaoInterno,
+         normalizarParaGravar as normalizarParaGravarInterno } from './tipos-inspecao.js';
+
+/* Reexporta os helpers de tipo de inspeção: as páginas da Biblioteca já importam
+   este módulo, e reexportar evita que cada tela vá buscar a lista noutro lugar
+   (§12 — fonte única). A definição canônica vive em tipos-inspecao.js. */
+export { tiposDaPeca, semTiposConfigurados, pecaAtendeTipo, normalizarParaGravar,
+         validarTiposInspecao, MSG_TIPOS_OBRIGATORIO, SEM_TIPOS_LABEL,
+         listarTipos, mapaTipos, curtoDoSlug, nomeDoSlug } from './tipos-inspecao.js';
 
 /* Campos da peça indexados pela busca “estilo Google”.
    (Reestruturação: material/norma/especificacao/observacoes/quadrante saíram da
@@ -16,6 +26,33 @@ export function normaliza(txt) {
   return String(txt ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
 }
 
+/* ------------------------------------------- gravação tolerante a migration --
+   `bib_pecas.tipos_inspecao` só existe após database/fix_tipos_inspecao_peca.sql.
+   Enquanto a migration não roda, gravar a peça NÃO pode falhar: tenta completo,
+   detecta coluna ausente, avisa uma vez e regrava sem o campo (mesmo padrão de
+   inspecao.js/biblioteca.js). O vínculo passa a valer assim que o SQL rodar. */
+let _semColunaTipos = false;
+function ehErroDeColuna(e) {
+  return ['PGRST204', 'PGRST205', '42703', '42P01'].includes(String(e?.code || ''))
+    || /could not find the .*column|column .* does not exist|schema cache/i.test(`${e?.message || ''} ${e?.details || ''}`);
+}
+function avisarColunaAusente(e) {
+  _semColunaTipos = true;
+  console.warn('[BIB] bib_pecas não tem a coluna "tipos_inspecao" — peça gravada sem o vínculo. ' +
+    'Rode database/fix_tipos_inspecao_peca.sql no Supabase. Detalhe:', e?.message || e);
+}
+const semTipos = row => { const r = { ...row }; delete r.tipos_inspecao; return r; };
+
+/** Cria a peça garantindo a validação do vínculo (§3, camada de serviço). */
+export async function inserirPeca(row) {
+  const erro = validarTiposInspecaoInterno(row?.tipos_inspecao);
+  if (erro) throw new Error(erro);
+  const payload = { ...row, tipos_inspecao: normalizarParaGravarInterno(row.tipos_inspecao) };
+  if (_semColunaTipos) return db.insert('bib_pecas', semTipos(payload));
+  try { return await db.insert('bib_pecas', payload); }
+  catch (e) { if (!ehErroDeColuna(e)) throw e; avisarColunaAusente(e); return db.insert('bib_pecas', semTipos(payload)); }
+}
+
 /* ------------------------------------------------------------- consultas --- */
 /** Todas as peças; por padrão oculta arquivadas (ativo=false). */
 export async function listarPecas({ incluirArquivadas = false } = {}) {
@@ -24,7 +61,13 @@ export async function listarPecas({ incluirArquivadas = false } = {}) {
   return ativas.sort((a, b) => normaliza(a.codigo).localeCompare(normaliza(b.codigo)));
 }
 
-/** Busca textual + filtros. `q` casa em qualquer CAMPOS_BUSCA. */
+/** Busca textual + filtros. `q` casa em qualquer CAMPOS_BUSCA.
+    Filtros combinam entre si (§10): cliente + tipo_inspecao + status devolve só
+    quem atende aos três. `tipo_inspecao` é tratado à parte porque a peça guarda
+    um ARRAY de slugs — a comparação `p[campo] === valor` não se aplica.
+    Valor especial `__sem_tipo__` lista os registros legados ainda não
+    configurados (§5), para o administrador regularizá-los. */
+export const FILTRO_SEM_TIPO = '__sem_tipo__';
 export async function buscar(q = '', filtros = {}, opts = {}) {
   const termo = normaliza(q);
   let pecas = await listarPecas(opts);
@@ -33,6 +76,12 @@ export async function buscar(q = '', filtros = {}, opts = {}) {
   }
   for (const [campo, valor] of Object.entries(filtros)) {
     if (!valor) continue;
+    if (campo === 'tipo_inspecao') {
+      pecas = valor === FILTRO_SEM_TIPO
+        ? pecas.filter(semTiposConfigurados)
+        : pecas.filter(p => pecaAtendeTipo(p, valor));
+      continue;
+    }
     pecas = pecas.filter(p => p[campo] === valor);
   }
   return pecas;
@@ -66,10 +115,17 @@ const CAMPOS_BUSCA_INSPECAO = ['codigo', 'nome', 'cliente', 'familia', 'planta',
     podem ser auditadas. Casa Part Number, nome, cliente, família, planta,
     número da AD e revisão do desenho (aceita "21" e "Rev. 21").
     Ordena por relevância: PN exato → PN → nome → demais campos. */
-export async function buscarParaInspecao(q = '', limite = 8) {
+export async function buscarParaInspecao(q = '', limite = 8, { tipo = null } = {}) {
   const termo = normaliza(q);
   if (!termo) return [];
-  const pecas = (await listarPecas()).filter(p => !['Arquivado', 'Obsoleto'].includes(p.status));
+  /* §11 — o recorte por tipo é aplicado AQUI, no serviço, e não apenas na tela:
+     uma peça incompatível nunca chega ao front. Sem `tipo` informado nada é
+     listado (fail-closed): é melhor não sugerir nada do que sugerir peça errada. */
+  const alvo = normalizarSlug(tipo);
+  if (!alvo) return [];
+  const pecas = (await listarPecas())
+    .filter(p => !['Arquivado', 'Obsoleto'].includes(p.status))
+    .filter(p => pecaAtendeTipo(p, alvo));
   const rev = termo.replace(/^rev\.?\s*/, '');
   const revNum = /^\d+$/.test(rev) ? String(parseInt(rev, 10)) : null;
   const scored = [];
@@ -88,6 +144,17 @@ export async function buscarParaInspecao(q = '', limite = 8) {
   }
   scored.sort((a, b) => a.score - b.score || normaliza(a.p.codigo).localeCompare(normaliza(b.p.codigo)));
   return scored.slice(0, limite).map(s => s.p);
+}
+
+/** Quantas peças AUDITÁVEIS existem para um tipo de inspeção. Base do estado
+    "Nenhuma peça cadastrada para este tipo de inspeção" (§8) — consultado antes
+    de habilitar o campo de busca, sem depender de o auditor digitar algo. */
+export async function contarPecasDoTipo(tipo) {
+  const alvo = normalizarSlug(tipo);
+  if (!alvo) return 0;
+  return (await listarPecas())
+    .filter(p => !['Arquivado', 'Obsoleto'].includes(p.status))
+    .filter(p => pecaAtendeTipo(p, alvo)).length;
 }
 
 /** Ficha completa (peça + métricas + pontos + documentos + histórico + versões). */
@@ -234,6 +301,13 @@ export function diffPeca(antes, depois) {
 export async function salvarRevisao(pecaId, patch, usuario) {
   const antes = await db.get('bib_pecas', pecaId);
   if (!antes) throw new Error('Peça não encontrada');
+  // §3 — a obrigatoriedade também é garantida na camada de serviço, não só no
+  // formulário: nenhum caminho de gravação deixa a peça sem vínculo.
+  if ('tipos_inspecao' in patch) {
+    const erro = validarTiposInspecaoInterno(patch.tipos_inspecao);
+    if (erro) throw new Error(erro);
+    patch = { ...patch, tipos_inspecao: normalizarParaGravarInterno(patch.tipos_inspecao) };
+  }
   const mudancas = diffPeca(antes, patch);
   const novaRev = (antes.revisao || 1) + 1;
 
@@ -245,9 +319,17 @@ export async function salvarRevisao(pecaId, patch, usuario) {
   });
 
   // revisao (compat) e revisao_cadastro (novo nome explícito) caminham juntas.
-  const atualizado = await db.update('bib_pecas', pecaId, {
-    ...patch, revisao: novaRev, revisao_cadastro: novaRev, updated_at: hoje()
-  });
+  const payload = { ...patch, revisao: novaRev, revisao_cadastro: novaRev, updated_at: hoje() };
+  let atualizado;
+  if (_semColunaTipos) atualizado = await db.update('bib_pecas', pecaId, semTipos(payload));
+  else {
+    try { atualizado = await db.update('bib_pecas', pecaId, payload); }
+    catch (e) {
+      if (!ehErroDeColuna(e)) throw e;
+      avisarColunaAusente(e);
+      atualizado = await db.update('bib_pecas', pecaId, semTipos(payload));
+    }
+  }
 
   for (const m of mudancas) {
     await db.insert('bib_historico', {

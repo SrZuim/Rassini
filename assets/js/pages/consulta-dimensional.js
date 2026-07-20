@@ -14,6 +14,7 @@ import * as INSP from '../../../services/inspecao.js';
 import { INSP_STATUS } from '../../../services/inspecao-data.js';
 import { fontesConsultaDimensional, pnsDoCliente, revisoesDoPN, fmtRevisao } from '../../../services/consulta-filtros.js';
 import { comboFiltro } from '../rna-combo.js';
+import { nomeDoSlug } from '../../../services/tipos-inspecao.js';
 import { $, $$, toast } from '../ui.js';
 
 const ctx = await mountShell();
@@ -289,6 +290,8 @@ async function abrirRelatorio(relId, autoPrint = false) {
 
       <div class="insp-rep-section"><div class="insp-rep-sec-t">Identificação da inspeção</div>
         <div class="insp-rep-grid">
+          ${cell('Tipo de inspeção', rel.tipo_nome)}
+          ${cell('Peça aplicável a', tiposVinculoTexto(rel))}
           ${cell('Auditor', rel.auditor_nome)} ${cell('Matrícula', rel.auditor_matricula)}
           ${cell('Início', dataBR(rel.started_iso) + ' ' + horaBR(rel.started_iso))} ${cell('Conclusão', rel.completed_iso ? dataBR(rel.completed_iso) + ' ' + horaBR(rel.completed_iso) : '—')}
           ${cell('Duração', INSP.fmtDuracao(rel.duracao_seg))}
@@ -355,3 +358,10 @@ async function abrirRelatorio(relId, autoPrint = false) {
 }
 const cell = (l, v) => `<div class="insp-rep-cell"><span class="insp-info-l">${l}</span><span class="insp-info-v">${(v === 0 || v) ? v : '—'}</span></div>`;
 const dash = v => (v == null || v === '') ? '—' : String(v).replace('.', ',');
+/* §14 — vínculo peça × tipos de inspeção COMO ERA no momento da auditoria
+   (snapshot em peca_tipos_inspecao). Relatório antigo não muda se a peça for
+   reconfigurada depois na Biblioteca Técnica. */
+function tiposVinculoTexto(rel) {
+  const arr = Array.isArray(rel.peca_tipos_inspecao) ? rel.peca_tipos_inspecao : [];
+  return arr.length ? arr.map(s => nomeDoSlug(s)).join(' · ') : '—';
+}
