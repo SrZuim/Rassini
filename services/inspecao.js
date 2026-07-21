@@ -11,6 +11,7 @@
 import { db } from './db.js';
 import { ficha, catalogosEspec, ehInformativo, ehAtributo } from './biblioteca.js';
 import { pecaAtendeTipo, tiposDaPeca } from './tipos-inspecao.js';
+import { fmtMedida } from './formato.js';
 import { PLANTA_SIGLAS, INSP_STATUS } from './inspecao-data.js';
 
 export function nowISO() { return new Date().toISOString(); }
@@ -730,7 +731,7 @@ export async function criarPendenciaDoRelatorio(rel, user) {
   const ref = rel.completed_iso || rel.started_iso || nowISO();
   const dataBR = ref.slice(0, 10).split('-').reverse().join('/');
   const horaBR = ref.slice(11, 16);
-  const val = v => (v == null || v === '') ? '—' : String(v).replace('.', ',');
+  const val = v => fmtMedida(v);          // §M07 — padrão 00,00 (fonte única)
   const detalhes = reprovadas.map(c => ({
     caracteristica: c.caracteristica, cota: c.cota ?? '—', classe: c.classe_defeito || null,
     limite: `${val(c.minimo)} a ${val(c.maximo)} ${c.unidade || ''}`.trim(),

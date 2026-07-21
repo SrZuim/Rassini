@@ -7,7 +7,7 @@ import { AREA_SUPERVISOR, porArea, properNome } from '../../../services/funciona
 import { $, $$, toast, confirmDialog, initials } from '../ui.js';
 
 const ctx = await mountShell();
-let USER, TIMER;
+let USER;   // TIMER removido: não há mais cronômetro na tela do plantão (§M02)
 if (ctx) { USER = ctx.user; render(); }
 
 function saudacao() { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; }
@@ -19,7 +19,6 @@ function head() {
 }
 
 async function render() {
-  clearInterval(TIMER);
   const plantao = await ATIV.plantaoAtivo(USER.id);
   if (!plantao) return renderIniciar();
 
@@ -39,7 +38,6 @@ async function render() {
         <div class="rna-avatar" style="width:52px;height:52px;font-size:18px">${initials(USER.nome)}</div>
         <div class="flex-fill" style="min-width:200px"><h2 style="margin:0;font-size:20px">${saudacao()}, ${primeiroNome(USER.nome)} 👋</h2>
           <small class="text-muted-2">${plantao.turno} · ${plantao.planta || ''} · iniciado ${plantao.hora || ''}</small></div>
-        <div class="op-timer" id="op-timer" title="Tempo de plantão">00:00:00</div>
         <button class="rna-btn rna-btn-dark" id="op-finalizar"><i class="bi bi-stop-fill"></i> Finalizar Plantão</button>
       </div>
     </div>
@@ -63,13 +61,11 @@ async function render() {
         <div class="rna-card__body p-0">${ultimas([...execs, ...execsChk])}</div></div></div>
     </div>`;
 
-  const startMs = new Date(plantao.inicio_iso || Date.now()).getTime();
-  const tick = () => {
-    const s = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
-    const el = $('#op-timer'); if (el) el.textContent = `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor(s % 3600 / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
-  };
-  tick(); TIMER = setInterval(tick, 1000);
-
+  /* §M02 — o cronômetro NÃO é mais exibido ao auditor (nem o setInterval que o
+     atualizava, o que também poupa um timer por segundo na página). O registro
+     de tempo continua integral: `inicio_iso` na abertura e `fim_iso` +
+     `duracao_seg` no fechamento (ver finalizar). As métricas ficam visíveis
+     apenas na Administração — ver config.podeVerMetricasTempo. */
   $('#op-finalizar').addEventListener('click', () => finalizar(plantao, fin));
 }
 
@@ -104,7 +100,21 @@ function finalizar(plantao, fin) {
     return;
   }
   confirmDialog('Finalizar o plantão atual? Todas as atividades obrigatórias estão concluídas.', async () => {
-    await db.update('plantoes', plantao.id, { status: 'Encerrado', fim_iso: ATIV.nowISO() });
+    /* Registro de tempo (§M02): antes só gravávamos fim_iso. A duração total
+       passa a ser calculada e persistida aqui — é o insumo de produtividade e
+       tempo médio da Administração, mesmo sem cronômetro na tela do auditor. */
+    const fimIso = ATIV.nowISO();
+    const inicioMs = new Date(plantao.inicio_iso || fimIso).getTime();
+    const duracaoSeg = Math.max(0, Math.round((new Date(fimIso).getTime() - inicioMs) / 1000));
+    const nucleo = { status: 'Encerrado', fim_iso: fimIso };
+    try {
+      await db.update('plantoes', plantao.id, { ...nucleo, duracao_seg: duracaoSeg });
+    } catch (e) {
+      // Banco sem a coluna nova: encerra o plantão mesmo assim (a duração
+      // permanece derivável de inicio_iso/fim_iso). Ver fix_lote1_melhorias.sql.
+      console.warn('[PLANTÃO] duracao_seg não gravada (coluna ausente?):', e?.message || e);
+      await db.update('plantoes', plantao.id, nucleo);
+    }
     await db.log({ usuario: USER.nome, acao: 'Finalizou plantão (Gestão Operacional)', entidade: 'plantao', antes: 'Aberto', depois: 'Encerrado' });
     toast('Plantão finalizado.', { type: 'ok' }); render();
   }, { title: 'Finalizar plantão', okLabel: 'Finalizar', danger: true });

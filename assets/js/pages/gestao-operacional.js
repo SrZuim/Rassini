@@ -14,6 +14,8 @@ import { charts, PALETTE } from '../charts.js';
 import { $, $$, el, toast, modal, confirmDialog } from '../ui.js';
 
 let USER, CAN_EDIT, CAN_DELETE;
+/* §M03 — só Administrador e Supervisor veem a coluna de auditores atribuídos. */
+let VER_AUDITORES = false;
 const state = { tab: 'rotinas', view: 'lista', ativId: null, modeloId: null };
 const ABAS = [
   ['rotinas', 'bi-list-check', 'Rotinas'], ['modelos', 'bi-diagram-3-fill', 'Modelos de Rotina'], ['checklists', 'bi-ui-checks', 'Checklists'], ['categorias', 'bi-tags', 'Categorias'], ['tipos', 'bi-collection', 'Tipos de Atividades'],
@@ -24,7 +26,8 @@ function curTipo() { return state.tab === 'checklists' ? 'checklist' : 'rotina';
 const _cfg = (obs = 'nao', foto = 'nao', pend = false) => ({ observacao: obs, foto, criar_pendencia: !!pend });
 
 const ctx = await mountShell();
-if (ctx) { USER = ctx.user; CAN_EDIT = can(USER.role, 'gestao_op', 'edit'); CAN_DELETE = can(USER.role, 'gestao_op', 'delete'); render(); }
+if (ctx) { USER = ctx.user; CAN_EDIT = can(USER.role, 'gestao_op', 'edit'); CAN_DELETE = can(USER.role, 'gestao_op', 'delete');
+  VER_AUDITORES = ['admin', 'supervisor'].includes(USER.role); render(); }
 
 function head(extra = '') {
   return `<div class="rna-page-head"><div>
@@ -54,8 +57,14 @@ function render() {
 async function renderLista(tipo) {
   const L = TIPO_LABEL[tipo];
   const ativs = (await db.list('op_atividades')).filter(a => a.tipo_slug === tipo && !a.is_template);
+  /* §M03 — Auditor(es) Atribuído(s): derivado de op_atribuicoes a cada render,
+     então criar/remover atribuição já reflete aqui. Visível só p/ admin e
+     supervisor (a coluna expõe a alocação da equipe). Uma única leitura em
+     lote evita N+1 consultas. */
+  const auditoresBy = VER_AUDITORES ? await ATIV.auditoresPorAtividade(ativs.map(a => a.id)) : {};
   const linha = a => `<tr>
     <td class="cell-strong">${a.nome}<div class="cell-sub">${a.categoria || ''}</div></td>
+    ${VER_AUDITORES ? `<td>${auditoresCell(auditoresBy[a.id] || [])}</td>` : ''}
     <td class="cell-sub">${a.frequencia || '—'}${a.horario ? ` · ${a.horario}` : ''}</td>
     <td>${a.obrigatoria ? '<span class="rna-badge badge-crit">Sim</span>' : '<span class="rna-badge badge-na">Não</span>'}</td>
     <td><span class="rna-badge ${a.status === 'publicada' ? 'badge-ok' : a.status === 'arquivada' ? 'badge-na' : 'badge-warn'}">${a.status}</span></td>
@@ -65,14 +74,31 @@ async function renderLista(tipo) {
       <button class="rna-btn rna-btn-ghost rna-btn-sm" data-arch="${a.id}" title="${a.status === 'arquivada' ? 'Publicar' : 'Arquivar'}"><i class="bi ${a.status === 'arquivada' ? 'bi-upload' : 'bi-archive'}"></i></button>
       ${CAN_DELETE ? `<button class="rna-btn rna-btn-ghost rna-btn-sm" data-del="${a.id}"><i class="bi bi-trash text-danger"></i></button>` : ''}` : ''}</td></tr>`;
   mount(`<div class="rna-card"><div class="rna-card__head"><h3><i class="bi ${L.icon}"></i> ${L.plur} <span class="rna-badge badge-info">${ativs.length}</span></h3></div>
-    <div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table"><thead><tr><th>${L.Sing}</th><th>Frequência</th><th>Obrig.</th><th>Status</th><th></th></tr></thead>
-      <tbody>${ativs.length ? ativs.map(linha).join('') : `<tr><td colspan="5"><div class="empty-state"><i class="bi bi-inbox"></i><div>Nenhum(a) ${L.sing}. Clique em “Novo(a) ${L.sing}”.</div></div></td></tr>`}</tbody></table></div></div>`,
+    <div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table"><thead><tr><th>${L.Sing}</th>${VER_AUDITORES ? '<th>Auditor(es) Atribuído(s)</th>' : ''}<th>Frequência</th><th>Obrig.</th><th>Status</th><th></th></tr></thead>
+      <tbody>${ativs.length ? ativs.map(linha).join('') : `<tr><td colspan="${VER_AUDITORES ? 6 : 5}"><div class="empty-state"><i class="bi bi-inbox"></i><div>Nenhum(a) ${L.sing}. Clique em “Novo(a) ${L.sing}”.</div></div></td></tr>`}</tbody></table></div></div>`,
     CAN_EDIT ? `<button class="rna-btn rna-btn-primary" id="btn-nova"><i class="bi bi-plus-lg"></i> Novo(a) ${L.sing}</button>` : '');
   $('#btn-nova')?.addEventListener('click', () => { state.ativId = null; state.view = 'editor'; render(); });
   $$('[data-edit]').forEach(b => b.addEventListener('click', () => { state.ativId = b.dataset.edit; state.view = 'editor'; render(); }));
   $$('[data-dup]').forEach(b => b.addEventListener('click', () => duplicar(b.dataset.dup)));
   $$('[data-arch]').forEach(b => b.addEventListener('click', () => toggleArquivo(b.dataset.arch)));
   $$('[data-del]').forEach(b => b.addEventListener('click', () => excluir(b.dataset.del)));
+}
+
+/* Célula "Auditor(es) Atribuído(s)" (§M03): lista todos os nomes; mostra os 3
+   primeiros e resume o excedente em "+N" (o title traz a lista completa).
+   Sem atribuição, deixa claro em vez de exibir um traço ambíguo. */
+const AUDITORES_VISIVEIS = 3;
+/* Escapa nome de usuário para conteúdo e atributo title (dado vindo do cadastro). */
+const escHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const escAttr = escHtml;
+function auditoresCell(lista) {
+  if (!lista.length) return `<span class="cell-sub"><i class="bi bi-person-dash"></i> Nenhum auditor atribuído</span>`;
+  const nomes = lista.map(a => a.nome);
+  const chips = nomes.slice(0, AUDITORES_VISIVEIS)
+    .map(n => `<span class="bib-chip">${escHtml(n)}</span>`).join('');
+  const resto = nomes.length - AUDITORES_VISIVEIS;
+  const mais = resto > 0 ? `<span class="bib-chip bib-chip--more" title="${escAttr(nomes.slice(AUDITORES_VISIVEIS).join(' · '))}">+${resto}</span>` : '';
+  return `<div class="bib-tipos-row" style="margin-top:0" title="${escAttr(nomes.join(' · '))}">${chips}${mais}</div>`;
 }
 
 /* ======================= MODELOS DE ROTINA (§22) ===========================

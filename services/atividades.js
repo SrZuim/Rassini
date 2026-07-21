@@ -43,6 +43,39 @@ export function matchAtribuicao(a, user, plantao) {
   }
 }
 
+/* ================================= AUDITORES ATRIBUÍDOS (§M03) ==============
+   Resolve as regras de op_atribuicoes em NOMES concretos, para a Gestão
+   Operacional mostrar quem executa cada atividade. Reaproveita `matchAtribuicao`
+   — a mesma função que o motor usa ao montar o plantão — para que a coluna nunca
+   divirja de quem realmente recebe a atividade. Como o resultado deriva de
+   op_atribuicoes a cada leitura, criar ou remover uma atribuição já reflete
+   automaticamente, sem cache a invalidar. */
+export async function auditoresDaAtividade(atividadeId, { usuarios = null, atribuicoes = null } = {}) {
+  const users = usuarios || await db.list('usuarios');
+  const atrs  = atribuicoes || await db.list('op_atribuicoes', { filter: { atividade_id: atividadeId } });
+  const doAtivo = atrs.filter(a => a.atividade_id === atividadeId);
+  const ativos = users.filter(u => u.ativo !== false && u.status !== 'inativo');
+  const achados = new Map();                       // id → { nome, via }
+  for (const atr of doAtivo) {
+    for (const u of ativos) {
+      // plantão fictício com a planta/turno da regra: reusa o matcher oficial
+      const plantaoRef = { planta: atr.planta || u.planta, turno: atr.turno };
+      if (!matchAtribuicao(atr, u, plantaoRef)) continue;
+      if (atr.alvo_tipo === 'planta_turno' && atr.planta && u.planta && atr.planta !== u.planta) continue;
+      if (!achados.has(u.id)) achados.set(u.id, { id: u.id, nome: u.nome || u.email || u.id, via: atr.alvo_tipo });
+    }
+  }
+  return [...achados.values()].sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+}
+
+/** Versão em lote: evita N+1 ao montar a listagem da Gestão Operacional. */
+export async function auditoresPorAtividade(atividadeIds) {
+  const [usuarios, atribuicoes] = await Promise.all([db.list('usuarios'), db.list('op_atribuicoes')]);
+  const out = {};
+  for (const id of atividadeIds) out[id] = await auditoresDaAtividade(id, { usuarios, atribuicoes });
+  return out;
+}
+
 /** Traduz a Frequência (Construtor Visual) para o tipo de agenda do motor. */
 export function agendaDeFrequencia(freq) {
   return { 'Diária': 'diaria', 'Semanal': 'semanal', 'Mensal': 'mensal', 'Por turno': 'por_turno', 'Sob demanda': 'sob_demanda', 'A cada X horas': 'a_cada_x_horas' }[freq] || 'diaria';

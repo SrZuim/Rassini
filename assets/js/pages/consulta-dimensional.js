@@ -9,12 +9,13 @@
    do relatório — aqui é somente leitura; legados sem número ganham fallback visual.
    ========================================================================== */
 import { mountShell } from '../app.js';
-import { BRAND } from '../../../services/config.js';
+import { BRAND, podeVerMetricasTempo } from '../../../services/config.js';
 import * as INSP from '../../../services/inspecao.js';
 import { INSP_STATUS } from '../../../services/inspecao-data.js';
 import { fontesConsultaDimensional, pnsDoCliente, revisoesDoPN, fmtRevisao } from '../../../services/consulta-filtros.js';
 import { comboFiltro } from '../rna-combo.js';
 import { nomeDoSlug } from '../../../services/tipos-inspecao.js';
+import { fmtMedida } from '../../../services/formato.js';
 import { $, $$, toast } from '../ui.js';
 
 const ctx = await mountShell();
@@ -294,7 +295,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
           ${cell('Peça aplicável a', tiposVinculoTexto(rel))}
           ${cell('Auditor', rel.auditor_nome)} ${cell('Matrícula', rel.auditor_matricula)}
           ${cell('Início', dataBR(rel.started_iso) + ' ' + horaBR(rel.started_iso))} ${cell('Conclusão', rel.completed_iso ? dataBR(rel.completed_iso) + ' ' + horaBR(rel.completed_iso) : '—')}
-          ${cell('Duração', INSP.fmtDuracao(rel.duracao_seg))}
+          ${podeVerMetricasTempo(USER.role) ? cell('Duração', INSP.fmtDuracao(rel.duracao_seg)) : ''}
         </div></div>
 
       <div class="insp-rep-section"><div class="insp-rep-sec-t">Resultados das medições</div>
@@ -357,7 +358,8 @@ async function abrirRelatorio(relId, autoPrint = false) {
   if (autoPrint) setTimeout(() => window.print(), 500);   // Imprimir direto (botão da lista)
 }
 const cell = (l, v) => `<div class="insp-rep-cell"><span class="insp-info-l">${l}</span><span class="insp-info-v">${(v === 0 || v) ? v : '—'}</span></div>`;
-const dash = v => (v == null || v === '') ? '—' : String(v).replace('.', ',');
+/* §M07 — valores medidos/nominais/tolerâncias no padrão 00,00 (fonte única). */
+const dash = v => fmtMedida(v);
 /* §14 — vínculo peça × tipos de inspeção COMO ERA no momento da auditoria
    (snapshot em peca_tipos_inspecao). Relatório antigo não muda se a peça for
    reconfigurada depois na Biblioteca Técnica. */

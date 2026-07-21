@@ -2,7 +2,7 @@
 import { mountShell } from '../app.js';
 import { db } from '../../../services/db.js';
 import { charts, PALETTE } from '../charts.js';
-import { statusClass } from '../../../services/config.js';
+import { statusClass, podeVerMetricasTempo } from '../../../services/config.js';
 import { $ } from '../ui.js';
 
 const ctx = await mountShell();
@@ -83,7 +83,7 @@ async function render(user) {
     <div class="row g-3 mb-3">
       <div class="col-lg-8">
         <div class="rna-card"><div class="rna-card__head"><h3><i class="bi bi-activity"></i> Execução de rotinas por hora</h3>
-          <span class="rna-badge badge-yellow">Tempo médio ${tempoMedio} min</span></div>
+          ${podeVerMetricasTempo(user.role) ? `<span class="rna-badge badge-yellow">Tempo médio ${tempoMedio} min</span>` : ''}</div>
           <div class="rna-card__body"><div style="height:280px"><canvas id="ch-exec"></canvas></div></div></div>
       </div>
       <div class="col-lg-4">

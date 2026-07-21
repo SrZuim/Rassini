@@ -8,6 +8,7 @@ import { db } from '../../../services/db.js';
 import { can, SUPABASE } from '../../../services/config.js';
 import * as BIB from '../../../services/biblioteca.js';
 import * as DATA from '../../../services/biblioteca-data.js';
+import { fmtMedida } from '../../../services/formato.js';
 const TIPO_ESPEC = DATA.BIB_TIPO_ESPEC;
 const TIPO_ESPEC_MAP = DATA.BIB_TIPO_ESPEC_MAP;
 import { charts, PALETTE } from '../charts.js';
@@ -387,7 +388,7 @@ function tabPane(tab, f) {
     <div class="rna-card"><div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table"><thead><tr>
       <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Referência</th><th>Nominal</th><th>Tol. mín</th><th>Tol. máx</th><th>Un.</th><th>Equipamento de Medição</th><th>Quem Mede</th><th>Observação</th></tr></thead><tbody>
       ${f.metricas.map(m => { const fora = BIB.foraDePadrao(m); const t = TIPO_ESPEC_MAP[m.tipo_especificacao]; return `<tr class="${fora ? 'bib-metric--fora' : ''}">
-        <td class="cell-strong">${fmtVal(m.cota)}</td>
+        <td class="cell-strong">${fmtCota(m.cota)}</td>
         <td class="cell-strong">${MAP.car[m.caracteristica_id] || '—'}${t ? ` <span class="bib-tipo-badge" title="${t.titulo}">${t.titulo}</span>` : ''}${fora ? ' <i class="bi bi-exclamation-triangle-fill text-danger" title="Fora do padrão"></i>' : ''}</td>
         <td class="cell-sub">${m.quadrante || '—'}</td>
         <td class="cell-sub">${m.referencia || '—'}</td>
@@ -478,7 +479,16 @@ async function renderEditor() {
   // Tipos de inspeção aplicáveis (§2) — catálogo vem da fonte única (insp_tipos).
   const tiposCat = await BIB.listarTipos();
   edTipos = BIB.tiposDaPeca(p);              // seleção atual (vazia em peça nova/legada)
-  const opt = (arr, val) => `<option value="">—</option>` + arr.filter(o => o.ativo !== false).map(o => `<option ${o.nome === val ? 'selected' : ''}>${o.nome}</option>`).join('');
+  /* Catálogos: só as opções ATIVAS aparecem para novos cadastros. Mas se a peça
+     já usa um valor hoje inativo (ex.: cliente "Randon", fora da lista oficial
+     §M05), ele entra como opção LEGADA — do contrário, abrir a peça para editar
+     apagaria silenciosamente o vínculo. Mesmo tratamento já dado a Planta. */
+  const opt = (arr, val) => {
+    const ativos = arr.filter(o => o.ativo !== false);
+    const legado = val && !ativos.some(o => o.nome === val) ? `<option selected>${escHtml(val)}</option>` : '';
+    return `<option value="">—</option>` + legado
+      + ativos.map(o => `<option ${o.nome === val ? 'selected' : ''}>${o.nome}</option>`).join('');
+  };
   const inp = (campo, label, val, type = 'text', req = false) => `<div class="col-md-4"><label class="form-label">${label}${req ? ' *' : ''}</label><input class="form-control" data-p="${campo}" type="${type}" value="${escAttr(val)}"${req ? ' required' : ''}></div>`;
   const selc = (campo, label, arr, val) => `<div class="col-md-4"><label class="form-label">${label}</label><select class="form-select" data-p="${campo}">${opt(arr, val)}</select></div>`;
   // Planta — lista fixa (catálogo). Inclui o valor legado como opção extra p/ não
@@ -1073,7 +1083,10 @@ function cardTabela(pares) {
   return `<div class="rna-card"><div class="rna-card__body p-0"><table class="rna-table bib-kv"><tbody>${pares.map(([k, v]) => `<tr><th>${k}</th><td>${v == null || v === '' ? '<span class="cell-sub">—</span>' : v}</td></tr>`).join('')}</tbody></table></div></div>`;
 }
 function emptyState(msg) { return `<div class="empty-state"><i class="bi bi-inbox"></i><div>${msg}</div></div>`; }
-function fmtVal(v) { return v == null || v === '' ? '—' : String(v).replace('.', ','); }
+/* §M07 — padrão 00,00 (fonte única). EXCEÇÃO: a Cota é identificador da
+   característica no desenho, não medida — segue como inteiro. */
+function fmtVal(v) { return fmtMedida(v); }
+function fmtCota(v) { return (v == null || v === '') ? '—' : String(v); }
 function fmtDateTime(iso) { if (!iso) return '—'; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 function fmtBytes(n) { if (!n) return ''; const kb = n / 1024; return kb < 1024 ? `${Math.round(kb)} KB` : `${(kb / 1024).toFixed(1)} MB`; }
 function escHtml(s) { return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }

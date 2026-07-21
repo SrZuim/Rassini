@@ -9,16 +9,85 @@
    ========================================================================== */
 
 /* ------------------------------------------------------------- catálogos --- */
+/* ----------------------------------------------------------- CLIENTES (§M05)
+   Lista OFICIAL, extraída de "novo_relatrio_16-07-2026.xlsx" (16/07/2026).
+   Da planilha (57 linhas) foram descartados, conforme a regra do requisito:
+     • 1 registro com nome vazio (código 1012943928);
+     • 1 registro "GTS Equipamentos" com status Concluído — note que a versão
+       ATIVA "Gts Equipamentos" permanece (era duplicata por caixa alta).
+   Restaram 55 clientes ativos. "FRUM " teve o espaço final removido.
+
+   LEGADOS: clientes que existiam no cadastro antigo e ainda são referenciados
+   por peças permanecem aqui como `ativo:false` — não aparecem em novos
+   cadastros/filtros, mas mantêm a peça antiga íntegra e rastreável (o vínculo
+   peça→cliente é por NOME). Ver database/fix_clientes_oficiais.sql. */
 export const BIB_CLIENTES = [
-  { id:'cl1', nome:'Volvo',          ativo:true },
-  { id:'cl2', nome:'Scania',         ativo:true },
-  { id:'cl3', nome:'Mercedes-Benz',  ativo:true },
-  { id:'cl4', nome:'Volkswagen',     ativo:true },
-  { id:'cl5', nome:'Ford',           ativo:true },
-  { id:'cl6', nome:'Randon',         ativo:true },
-  { id:'cl7', nome:'DAF',            ativo:true },
-  { id:'cl8', nome:'Iveco',          ativo:true }
+  { id:'cl01', nome:'ADR Eixos',             ativo:true },
+  { id:'cl02', nome:'BMB',                   ativo:true },
+  { id:'cl03', nome:'Boero',                 ativo:true },
+  { id:'cl04', nome:'BPW',                   ativo:true },
+  { id:'cl05', nome:'BYD',                   ativo:true },
+  { id:'cl06', nome:'CAOA Montadora',        ativo:true },
+  { id:'cl07', nome:'Combat Armor',          ativo:true },
+  { id:'cl08', nome:'DAF',                   ativo:true },
+  { id:'cl09', nome:'DEVA Veículos',         ativo:true },
+  { id:'cl10', nome:'FACCHINI',              ativo:true },
+  { id:'cl11', nome:'Ford',                  ativo:true },
+  { id:'cl12', nome:'FOTON',                 ativo:true },
+  { id:'cl13', nome:'Freios Farj',           ativo:true },
+  { id:'cl14', nome:'FRUM',                  ativo:true },
+  { id:'cl15', nome:'General Motors',        ativo:true },
+  { id:'cl16', nome:'Grunner',               ativo:true },
+  { id:'cl17', nome:'Grupo Traton',          ativo:true },
+  { id:'cl18', nome:'Gts Equipamentos',      ativo:true },
+  { id:'cl19', nome:'GUERRA',                ativo:true },
+  { id:'cl20', nome:'GWM Motors',            ativo:true },
+  { id:'cl21', nome:'Haldex',                ativo:true },
+  { id:'cl22', nome:'Hiero',                 ativo:true },
+  { id:'cl23', nome:'Hitachi',               ativo:true },
+  { id:'cl24', nome:'Honda',                 ativo:true },
+  { id:'cl25', nome:'Hyundai',               ativo:true },
+  { id:'cl26', nome:'Iveco',                 ativo:true },
+  { id:'cl27', nome:'Kia Motors',            ativo:true },
+  { id:'cl28', nome:'KLL',                   ativo:true },
+  { id:'cl29', nome:'Knorr Bremse',          ativo:true },
+  { id:'cl30', nome:'Librepar',              ativo:true },
+  { id:'cl31', nome:'Marcopolo',             ativo:true },
+  { id:'cl32', nome:'Marelli',               ativo:true },
+  { id:'cl33', nome:'Master',                ativo:true },
+  { id:'cl34', nome:'Mercedes Benz',         ativo:true },
+  { id:'cl35', nome:'Mercedes Benz AR',      ativo:true },
+  { id:'cl36', nome:'Mitsubishi',            ativo:true },
+  { id:'cl37', nome:'Muller',                ativo:true },
+  { id:'cl38', nome:'NHK',                   ativo:true },
+  { id:'cl39', nome:'NIJU',                  ativo:true },
+  { id:'cl40', nome:'Nissan',                ativo:true },
+  { id:'cl41', nome:'Rassini México',        ativo:true },
+  { id:'cl42', nome:'Reposição',             ativo:true },
+  { id:'cl43', nome:'RUMO',                  ativo:true },
+  { id:'cl44', nome:'Scania',                ativo:true },
+  { id:'cl45', nome:'Schomacker',            ativo:true },
+  { id:'cl46', nome:'Stellantis',            ativo:true },
+  { id:'cl47', nome:'Suspensys',             ativo:true },
+  { id:'cl48', nome:'Suzuki',                ativo:true },
+  { id:'cl49', nome:'Tenneco',               ativo:true },
+  { id:'cl50', nome:'Toyota',                ativo:true },
+  { id:'cl51', nome:'VK',                    ativo:true },
+  { id:'cl52', nome:'Volkswagen Automóveis', ativo:true },
+  { id:'cl53', nome:'Volkswagen TB',         ativo:true },
+  { id:'cl54', nome:'Volvo',                 ativo:true },
+  { id:'cl55', nome:'ZF Group',              ativo:true },
+  // LEGADO — fora da lista oficial, preservado inativo por ter peça vinculada.
+  { id:'cl_legado_randon', nome:'Randon',    ativo:false }
 ];
+
+/* Renomeações aplicadas às peças já cadastradas (§M05 "não perder relacionamento
+   existente"): o cliente é o MESMO, apenas grafado de outro jeito na lista nova.
+   Consumido pela migração (fix_clientes_oficiais.sql) e pelo seed demo. */
+export const BIB_CLIENTES_RENOMEADOS = {
+  'Mercedes-Benz': 'Mercedes Benz',      // lista oficial não usa hífen
+  'Volkswagen':    'Volkswagen TB'       // lista oficial separa TB / Automóveis
+};
 
 /* PLANTA — lista fixa (2 opções canônicas). Sem texto livre. */
 export const BIB_PLANTAS = [
@@ -153,7 +222,7 @@ export const BIB_PECAS_DEFAULT = [
   },
   {
     id:'bp03', codigo:'LM-206', nome:'Lâmina Principal 2ª',
-    cliente:'Mercedes-Benz', familia:'Lâmina', quadrante:'',
+    cliente:'Mercedes Benz', familia:'Lâmina', quadrante:'',
     peso:'11,7 kg', material:'SAE 5160', acabamento:'Jateado', cor:'Natural',
     status:'Em revisão', planta:'Rio de Janeiro – Nova Iguaçu', norma:'ABNT NBR 6329', especificacao:'ET-LM-206 Rev.A',
     revisao_desenho:1, data_revisao_desenho:'2026-06-22', numero_ad:'AD-2026-0203',
@@ -173,7 +242,7 @@ export const BIB_PECAS_DEFAULT = [
   },
   {
     id:'bp05', codigo:'HC-118', nome:'Mola Helicoidal Traseira',
-    cliente:'Volkswagen', familia:'Mola Helicoidal', quadrante:'',
+    cliente:'Volkswagen TB', familia:'Mola Helicoidal', quadrante:'',
     peso:'4,8 kg', material:'SAE 9254', acabamento:'Pintura epóxi', cor:'Preto fosco',
     status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'SAE J157', especificacao:'ET-HC-118 Rev.A',
     revisao_desenho:1, data_revisao_desenho:'2026-02-05', numero_ad:'AD-2026-0031',

@@ -11,6 +11,7 @@
    O auditor nunca escolhe o resultado — ele é derivado das funções abaixo.
    ========================================================================== */
 import { db } from './db.js';
+import { fmtMedida } from './formato.js';
 
 /* ============================================================ TIPOS DE RESPOSTA
    `numerico` = participa de validação por faixa. `texto_livre` = informativo. */
@@ -91,10 +92,9 @@ export function num(v) {
   const n = parseFloat(s);
   return Number.isNaN(n) ? null : n;
 }
-/** Exibe número no padrão pt-BR (vírgula decimal). */
+/** Exibe número no padrão pt-BR 00,00 (§M07 — delega à fonte única). */
 export function fmtNum(v) {
-  const n = num(v);
-  return n == null ? '—' : String(n).replace('.', ',');
+  return fmtMedida(v);
 }
 
 /* ========================================================= ESPECIFICAÇÃO (texto)

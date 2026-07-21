@@ -52,7 +52,11 @@ export const MODULES = [
      navegação/portal, mas o módulo permanece no RBAC para a tela de execução
      continuar acessível a quem roda plantão (auditor/admin). */
   { id:'op_checklists', label:'Checklist (execução)',  short:'Checklist',           page:'op-meus-checklists.html', icon:'bi-ui-checks',     group:'Operações',   color:'orange', desc:'Execução de checklists do plantão.', hidden:true },
-  { id:'op_auditorias', label:'Minhas Auditorias',    short:'Minhas Auditorias',   page:'op-minhas-auditorias.html', icon:'bi-rulers',      group:'Operações',   color:'blue',   desc:'Inspeções dimensionais: medições, cálculo automático, classes de defeito e relatório.' },
+  /* Renomeado de "Minhas Auditorias" → "Meus Relatórios Dimensionais" (só
+     nomenclatura: id, page, RBAC e rotas seguem inalterados). O `short` fica
+     "Meus Rel. Dimensionais" para não se confundir no menu com o módulo
+     `consulta_dim` ("Rel. Dimensionais"), que é a consulta corporativa. */
+  { id:'op_auditorias', label:'Meus Relatórios Dimensionais', short:'Meus Rel. Dimensionais', page:'op-minhas-auditorias.html', icon:'bi-rulers',      group:'Operações',   color:'blue',   desc:'Inspeções dimensionais: medições, cálculo automático, classes de defeito e relatório.' },
   { id:'op_pendencias', label:'Pendências',           short:'Pendências',          page:'op-pendencias.html', icon:'bi-exclamation-circle',group:'Operações',   color:'red',    desc:'Suas pendências abertas.' },
   { id:'op_historico',  label:'Histórico',            short:'Histórico',           page:'op-historico.html',  icon:'bi-clock-history',     group:'Operações',   color:'gray',   desc:'Histórico das suas atividades.' },
   { id:'diario',        label:'Diário de Bordo',      short:'Diário',              page:'diario.html',        icon:'bi-journal-text',      group:'Operação',    color:'gray',   desc:'Registro cronológico das atividades.' },
@@ -119,6 +123,14 @@ export function can(role, moduleId, action='view') {
   const perms = (RBAC[role] || {})[moduleId];
   return Array.isArray(perms) && perms.includes(action);
 }
+
+/* ------------------------------------------------- MÉTRICAS DE TEMPO (§M02)
+   O cronômetro saiu da tela do auditor, mas o sistema CONTINUA registrando
+   início, fim, duração total, tempo por atividade e tempo por relatório —
+   apenas a EXIBIÇÃO é restrita. Cronometrar o auditor na tela dele pressiona o
+   trabalho; a métrica serve à gestão, não ao operador.
+   Regra única (não duplicar em cada página): só Administração vê. */
+export function podeVerMetricasTempo(role) { return role === 'admin'; }
 
 /* ----------------------------------------------------------------- domínio */
 export const TURNOS = ['1º Turno (06:00–14:20)', '2º Turno (14:20–22:40)', '3º Turno (22:40–06:00)', 'Administrativo'];

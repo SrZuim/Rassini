@@ -1,5 +1,6 @@
 /* ==========================================================================
-   Minhas Auditorias — Inspeção Dimensional (Operações)
+   Meus Relatórios Dimensionais — Inspeção Dimensional (Operações)
+   (renomeado de "Minhas Auditorias"; arquivo/rota/RBAC mantidos)
    Assistente por etapas: Tipo e peça → Identificação → Amostras → Medições →
    Revisão → Resultado. Cálculo automático (§9-11), autosave (§19), classes de
    defeito (§12-16), tratamento de reprovação + pendência (§17), finalização e
@@ -8,7 +9,8 @@
    ========================================================================== */
 import { mountShell } from '../app.js';
 import { db } from '../../../services/db.js';
-import { can, statusClass } from '../../../services/config.js';
+import { can, statusClass, podeVerMetricasTempo } from '../../../services/config.js';
+import { fmtMedida } from '../../../services/formato.js';
 import * as INSP from '../../../services/inspecao.js';
 import * as ATIV from '../../../services/atividades.js';
 import { buscarParaInspecao, porId as pecaPorId, contarPecasDoTipo,
@@ -58,8 +60,8 @@ async function renderList() {
   const cont = $('#rna-content');
   cont.innerHTML = `
     <div class="rna-page-head">
-      <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Operações <i class="bi bi-chevron-right"></i> Minhas Auditorias</div>
-      <h1>Minhas Auditorias</h1><p>Inspeções dimensionais: medições, cálculo automático e relatório.</p></div>
+      <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Operações <i class="bi bi-chevron-right"></i> Meus Relatórios Dimensionais</div>
+      <h1>Meus Relatórios Dimensionais</h1><p>Inspeções dimensionais: medições, cálculo automático e relatório.</p></div>
       ${podeCriar ? `<button class="rna-btn rna-btn-primary" id="btn-nova"><i class="bi bi-plus-lg"></i> Nova inspeção</button>` : ''}
     </div>
     ${!PLANTAO ? `<div class="rna-card mb-3" style="border-left:4px solid var(--rna-yellow)"><div class="rna-card__body d-flex flex-wrap align-items-center gap-2">
@@ -71,7 +73,7 @@ async function renderList() {
       ${mini(ind.aprovadas, 'Aprovadas', 'ic-soft-green', 'bi-check2-circle')}
       ${mini(ind.reprovadas, 'Reprovadas', 'ic-soft-red', 'bi-x-octagon')}
       ${mini(ind.pendencias, 'Pendências geradas', 'ic-soft-yellow', 'bi-exclamation-triangle')}
-      ${mini(INSP.fmtDuracao(ind.tempoMedio), 'Tempo médio/insp.', 'ic-soft-blue', 'bi-stopwatch')}
+      ${podeVerMetricasTempo(USER.role) ? mini(INSP.fmtDuracao(ind.tempoMedio), 'Tempo médio/insp.', 'ic-soft-blue', 'bi-stopwatch') : ''}
       ${mini(ind.taxaAprovacao + '%', 'Taxa de aprovação', 'ic-soft-green', 'bi-graph-up-arrow')}
       ${mini(ind.taxaReprovacao + '%', 'Taxa de reprovação', 'ic-soft-red', 'bi-graph-down-arrow')}
       ${mini(emAndamento, 'Em andamento', 'ic-soft-yellow', 'bi-hourglass-split')}
@@ -182,7 +184,7 @@ function paintWizard() {
   const r = R.rel;
   $('#rna-content').innerHTML = `
     <div class="rna-page-head">
-      <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> <a href="op-minhas-auditorias.html" id="bc-back">Minhas Auditorias</a><i class="bi bi-chevron-right"></i> ${r.numero}</div>
+      <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> <a href="op-minhas-auditorias.html" id="bc-back">Meus Relatórios Dimensionais</a><i class="bi bi-chevron-right"></i> ${r.numero}</div>
       <h1>${VIEWONLY ? 'Relatório de inspeção' : 'Inspeção dimensional'} <span class="insp-num">${r.numero}</span></h1>
       <p>${r.tipo_nome} ${r.peca_codigo ? '· ' + r.peca_codigo + ' — ' + r.peca_nome : ''}</p></div>
       <div class="d-flex align-items-center gap-2">
@@ -648,7 +650,9 @@ function linhaMedicao(c, qtd) {
     <td class="insp-status-cell">${informativo ? statusReferenciaHtml(c) : statusCellHtml(c.resultado)}</td>
   </tr>`;
 }
-const fmt = v => (v == null || v === '') ? '—' : String(v).replace('.', ',');
+/* §M07 — padrão brasileiro 00,00 vindo da fonte única (services/formato.js).
+   Cota/OP/lote/revisão NÃO passam por aqui: são identificadores. */
+const fmt = v => fmtMedida(v);
 /* Escapa texto livre (observação da Biblioteca) p/ conteúdo e atributo title. */
 const escTitle = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const cellCls = r => r === 'aprovado' ? 'is-ok' : r === 'reprovado' ? 'is-crit' : '';
