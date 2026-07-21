@@ -14,7 +14,8 @@ import { fmtMedida } from '../../../services/formato.js';
 import * as INSP from '../../../services/inspecao.js';
 import * as ATIV from '../../../services/atividades.js';
 import { buscarParaInspecao, porId as pecaPorId, contarPecasDoTipo,
-         tiposDaPeca, pecaAtendeTipo, nomeDoSlug } from '../../../services/biblioteca.js';
+         tiposDaPeca, pecaAtendeTipo, nomeDoSlug,
+         checarColunaTipos, MSG_MIGRACAO_TIPOS } from '../../../services/biblioteca.js';
 import { BIB_IMG_PLACEHOLDER } from '../../../services/biblioteca-data.js';
 import { INSP_QUANTIDADES, INSP_STATUS, INSP_MOTIVOS_PAUSA } from '../../../services/inspecao-data.js';
 import { $, $$, el, toast, modal, confirmDialog, initials } from '../ui.js';
@@ -319,9 +320,22 @@ let SELECIONANDO = false; // trava anti-clique-duplo (§Teste 10)
 async function stepTipoPeca(host) {
   const r = R.rel;
   const tipos = await INSP.tiposDisponiveis();
-  // §8 — quantas peças existem para ESTE tipo, antes de o auditor digitar.
-  const disponiveis = await contarPecasDoTipo(r.tipo_slug);
-  const semPecas = disponiveis === 0;
+  /* §8 — quantas peças existem para ESTE tipo, antes de o auditor digitar.
+     FALHA ≠ VAZIO (§5.1): se a consulta à Biblioteca der erro (rede, RLS, sessão
+     expirada), dizer "nenhuma peça cadastrada" manda o auditor cadastrar peça
+     que já existe. Os dois casos têm mensagem e tratamento próprios. */
+  let disponiveis = 0, erroBiblioteca = null;
+  try {
+    disponiveis = await contarPecasDoTipo(r.tipo_slug);
+  } catch (e) {
+    erroBiblioteca = e;
+    INSP.logErro('Falha ao consultar a Biblioteca Técnica', e);
+  }
+  const semPecas = !erroBiblioteca && disponiveis === 0;
+  const bloqueado = !!erroBiblioteca || semPecas;
+  /* Causa provável do "zero peças": o banco ainda não tem a coluna do vínculo.
+     Sem isso a tela culpa o cadastro, que na verdade está correto. */
+  const migracaoPendente = semPecas ? !(await checarColunaTipos()) : false;
   const podeCadastrar = can(USER.role, 'biblioteca', 'create');
   host.innerHTML = `
     <h3 class="insp-h"><i class="bi bi-diagram-3"></i> Tipo de inspeção e peça</h3>
@@ -335,11 +349,17 @@ async function stepTipoPeca(host) {
       </div>
       <div class="col-md-7">
         <label class="form-label">Selecionar peça * <span class="text-muted-2">(Biblioteca Técnica)</span></label>
-        <input class="form-control" id="pc-busca" placeholder="PN, nome, cliente, número da AD, revisão..." autocomplete="off" ${VIEWONLY || semPecas ? 'disabled' : ''}>
+        <input class="form-control" id="pc-busca" placeholder="PN, nome, cliente, número da AD, revisão..." autocomplete="off" ${VIEWONLY || bloqueado ? 'disabled' : ''}>
         <div id="pc-res" class="insp-search-res"></div>
-        ${semPecas
+        ${erroBiblioteca
+          ? `<div class="insp-blocker mt-2"><i class="bi bi-exclamation-octagon"></i>
+              <div>Não foi possível consultar a Biblioteca Técnica. ${escTitle(INSP.mensagemErro(erroBiblioteca))}
+              <div class="mt-2"><button class="rna-btn rna-btn-dark rna-btn-sm" id="pc-retry"><i class="bi bi-arrow-clockwise"></i> Tentar novamente</button></div></div></div>`
+          : semPecas
           ? `<div class="insp-blocker mt-2"><i class="bi bi-exclamation-triangle"></i>
-              <div>Nenhuma peça cadastrada para este tipo de inspeção. Verifique o cadastro na Biblioteca Técnica.
+              <div>${migracaoPendente
+                  ? `A Biblioteca Técnica não consegue informar os tipos de inspeção das peças. ${escTitle(MSG_MIGRACAO_TIPOS)}`
+                  : 'Nenhuma peça cadastrada para este tipo de inspeção. Verifique o cadastro na Biblioteca Técnica.'}
               ${podeCadastrar ? `<div class="mt-2"><a class="rna-btn rna-btn-dark rna-btn-sm" href="biblioteca.html"><i class="bi bi-box-seam"></i> Cadastrar ou configurar peça</a></div>` : ''}</div></div>`
           : `<small class="text-muted-2">Somente peças ativas e aplicáveis a <b>${escTitle(r.tipo_nome)}</b> (${disponiveis} disponível(is)). Pesquise por PN, nome, cliente, AD ou revisão.</small>`}
       </div>
@@ -348,7 +368,9 @@ async function stepTipoPeca(host) {
 
   if (VIEWONLY) return;
   $('#pc-tipo').addEventListener('change', e => trocarTipo(e.target.value, tipos));
-  if (semPecas) return;                               // campo desabilitado (§8)
+  // Erro de consulta é recuperável: refaz só esta etapa, sem recarregar a tela.
+  $('#pc-retry')?.addEventListener('click', () => stepTipoPeca(host));
+  if (bloqueado) return;                              // campo desabilitado (§8)
   const inp = $('#pc-busca'), res = $('#pc-res');
   let t;
   inp.addEventListener('input', () => {

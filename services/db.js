@@ -72,7 +72,18 @@ export const db = {
     return structuredClone(rows);
   },
 
+  /* Leitura de UM registro. Em Supabase vai direto pelo id (`.eq`), em vez de
+     baixar a tabela inteira e filtrar no navegador — este método está no caminho
+     quente de salvar peça, abrir ficha e reabrir relatório, e o scan completo era
+     a maior parte do tempo de salvamento na Biblioteca. */
   async get(table, id) {
+    if (!id) return null;
+    if (SUPABASE.enabled) {
+      const sb = await getSupabase();
+      const { data, error } = await sb.from(table).select('*').eq('id', id).maybeSingle();
+      if (error) throw error;
+      return data || null;
+    }
     const rows = await this.list(table);
     return rows.find(r => r.id === id) || null;
   },

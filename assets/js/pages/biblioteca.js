@@ -462,6 +462,7 @@ async function renderEditor() {
   await loadCatalogos();
   // enriquece especificações com nomes resolvidos (para os combos)
   edMetricas = f ? f.metricas.map(m => ({
+    id: m.id,                              // usado no diff do salvamento (não recria o que não mudou)
     cota: m.cota ?? '', quadrante: m.quadrante || '',
     tipo_especificacao: m.tipo_especificacao || 'TOLERANCIA',
     caracteristica_id: m.caracteristica_id || null, caracteristica_nome: MAP.car[m.caracteristica_id] || '',
@@ -478,6 +479,9 @@ async function renderEditor() {
   const [cli, pla, fam] = await Promise.all(['bib_clientes', 'bib_plantas', 'bib_familias'].map(t => db.list(t)));
   // Tipos de inspeção aplicáveis (§2) — catálogo vem da fonte única (insp_tipos).
   const tiposCat = await BIB.listarTipos();
+  /* Avisa ANTES de o usuário preencher o formulário, não depois de salvar: se o
+     banco está atrás da migration, o vínculo não tem onde ser gravado. */
+  const migracaoTiposOk = await BIB.checarColunaTipos();
   edTipos = BIB.tiposDaPeca(p);              // seleção atual (vazia em peça nova/legada)
   /* Catálogos: só as opções ATIVAS aparecem para novos cadastros. Mas se a peça
      já usa um valor hoje inativo (ex.: cliente "Randon", fora da lista oficial
@@ -516,7 +520,7 @@ async function renderEditor() {
         ${selc('cliente', 'Cliente', cli, p.cliente)}
         ${selc('familia', 'Família', fam, p.familia)}${plantaSelect(pla, p.planta)}
         ${inp('revisao_desenho', 'Revisão do Desenho', p.revisao_desenho, 'number', true)}${inp('data_revisao_desenho', 'Data da Revisão do Desenho', p.data_revisao_desenho, 'date', true)}${inp('numero_ad', 'Número da AD', p.numero_ad)}
-        ${tiposInspecaoField(tiposCat)}
+        ${tiposInspecaoField(tiposCat, migracaoTiposOk)}
         <div class="col-md-4"><label class="form-label">Status</label><select class="form-select" data-p="status">${DATA.BIB_STATUS.map(s => `<option ${s === p.status ? 'selected' : ''}>${s}</option>`).join('')}</select></div>
         <div class="col-md-4"><label class="form-label">Revisão do Cadastro</label>
           <input class="form-control" value="Rev ${String(p.revisao_cadastro ?? p.revisao ?? 1).padStart(2, '0')}" disabled>
@@ -562,9 +566,10 @@ async function renderEditor() {
    removível; o estado fica em `edTipos` (array de slugs canônicos).
    Ocupa 2 colunas no desktop (nomes longos como o do PPAP ficam legíveis) e
    100% no mobile, seguindo a mesma grade Bootstrap do restante do formulário. */
-function tiposInspecaoField(tiposCat) {
+function tiposInspecaoField(tiposCat, migracaoOk = true) {
   return `<div class="col-md-8">
     <label class="form-label" for="ed-tipos-add">Tipos de inspeção aplicáveis *</label>
+    ${migracaoOk ? '' : `<div class="bib-multi__err mb-2"><i class="bi bi-database-exclamation"></i> ${escHtml(BIB.MSG_MIGRACAO_TIPOS)}</div>`}
     <div class="bib-multi" id="ed-tipos-box">
       <div class="bib-multi__chips" id="ed-tipos-chips"></div>
       <select class="form-select bib-multi__add" id="ed-tipos-add">
@@ -914,12 +919,27 @@ function renderDocList() {
   $$('[data-docdel]', box).forEach(b => b.addEventListener('click', () => { edDocsNovos.splice(+b.dataset.docdel, 1); renderDocList(); }));
 }
 
+/* Trava de reentrância do salvamento. `btn.disabled` sozinho não bastava: o
+   handler é assíncrono e um segundo clique disparado antes do primeiro `await`
+   (ou um Enter no formulário) entrava de novo e duplicava toda a gravação. */
+let salvandoPeca = false;
+
 async function salvar(isNew, p, f, upImg) {
-  const btn = $('#ed-save'); btn.disabled = true;
+  if (salvandoPeca) return;
+  salvandoPeca = true;
+  const btn = $('#ed-save');
+  const btnHtml = btn.innerHTML;
+  btn.disabled = true; btn.setAttribute('aria-busy', 'true');
+  btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando…';
+  const soltarBotao = () => {
+    salvandoPeca = false;
+    if (!btn.isConnected) return;          // a tela já trocou (sucesso): nada a restaurar
+    btn.disabled = false; btn.removeAttribute('aria-busy'); btn.innerHTML = btnHtml;
+  };
   try {
     const patch = {};
     $$('[data-p]').forEach(i => { patch[i.dataset.p] = i.value.trim(); });
-    if (!patch.codigo || !patch.nome) { toast('Código e Nome são obrigatórios.', { type: 'warn' }); btn.disabled = false; return; }
+    if (!patch.codigo || !patch.nome) { toast('Código e Nome são obrigatórios.', { type: 'warn' }); soltarBotao(); return; }
 
     /* Tipos de inspeção aplicáveis: obrigatório (§3). Valida ANTES do envio, com
        destaque no próprio campo; a camada de serviço revalida em salvarPeca. */
@@ -928,7 +948,7 @@ async function salvar(isNew, p, f, upImg) {
     if (erroTipos) {
       mostrarErroTipos(erroTipos);
       toast(erroTipos, { type: 'warn', title: 'Tipos de inspeção' });
-      btn.disabled = false; return;
+      soltarBotao(); return;
     }
     patch.tipos_inspecao = tiposNormalizados;
 
@@ -951,9 +971,9 @@ async function salvar(isNew, p, f, upImg) {
       peca = await BIB.salvarRevisao(p.id, { ...patch, imagem: imagemUrl, ativo: patch.status !== 'Arquivado' }, USER);
     }
 
-    // especificações: calcula limites pelo tipo, resolve catálogos e substitui o conjunto.
+    /* Especificações: calcula limites pelo tipo e resolve catálogos. A ordem e a
+       decisão de inserir/atualizar/remover ficam em `sincronizarMetricas`. */
     const specsRows = [];
-    let ord = 1;
     for (const m of edMetricas) {
       const vazia = !(m.caracteristica_nome || '').trim() && !String(m.cota ?? '').trim()
         && numOrNull(m.nominal) == null && numOrNull(m.tol_min) == null && numOrNull(m.tol_max) == null && !(m.referencia || '').trim();
@@ -963,6 +983,8 @@ async function salvar(isNew, p, f, upImg) {
       const lim = BIB.calcularLimites(m);
       const info = BIB.ehInformativo(m.tipo_especificacao), attr = BIB.ehAtributo(m.tipo_especificacao);
       specsRows.push({
+        // `id` só existe em linha que já estava no banco — é a chave do diff.
+        id: m.id || null,
         peca_id: peca.id, cota: numOrNull(m.cota), quadrante: (m.quadrante || '').trim() || null,
         tipo_especificacao: m.tipo_especificacao || 'TOLERANCIA',
         caracteristica_id: await resolveCat('car', m.caracteristica_nome),
@@ -972,27 +994,80 @@ async function salvar(isNew, p, f, upImg) {
         tol_simetrica: m.simetrica ? numOrNull(m.tol_simetrica) : null,
         tol_min: lim.tol_min, tol_max: lim.tol_max,
         unidade: m.unidade || '', equipamento_id: await resolveCat('eq', m.equipamento_nome), quem_mede_id: await resolveCat('qm', m.quem_mede_nome),
-        observacao: m.observacao || '', ordem: ord++,
+        observacao: m.observacao || '',
         // Exige o registro do valor medido na auditoria (só em REFERENCIA — os
         // demais tipos já exigem todas as medições). Ver fix_referencia_mensuravel.sql.
         obrigatorio: info ? !!m.obrigatorio : false
       });
     }
-    await substituir('bib_metricas', peca.id, specsRows, r => r);
+    /* Especificações e documentos são independentes entre si — vão juntos.
+       `allSettled` não serve aqui: sucesso parcial silencioso deixaria a ficha
+       inconsistente sem ninguém saber. Se qualquer um falhar, o catch reporta. */
+    await Promise.all([
+      sincronizarMetricas(peca.id, specsRows),
+      ...edDocsNovos.map(async file => {
+        const url = await uploadArquivo(file, peca.id);
+        return db.insert('bib_documentos', { peca_id: peca.id, nome: file.name, categoria: 'Outro', versao: '—', data: BIB.hoje(), responsavel: USER.nome, descricao: '', url, tipo: (file.name.split('.').pop() || '').toLowerCase(), tamanho: fmtBytes(file.size) });
+      })
+    ]);
 
-    // documentos novos
-    for (const file of edDocsNovos) {
-      const url = await uploadArquivo(file, peca.id);
-      await db.insert('bib_documentos', { peca_id: peca.id, nome: file.name, categoria: 'Outro', versao: '—', data: BIB.hoje(), responsavel: USER.nome, descricao: '', url, tipo: (file.name.split('.').pop() || '').toLowerCase(), tamanho: fmtBytes(file.size) });
+    /* §4.8 — sucesso só é anunciado como sucesso quando o banco gravou TUDO.
+       Se a coluna do vínculo não existe, a peça foi salva mas os tipos não:
+       isso é um aviso, não um "salvo com sucesso". */
+    if (peca.tipos_nao_gravados) {
+      toast(BIB.MSG_MIGRACAO_TIPOS, { type: 'warn', title: 'Salvo parcialmente' });
+    } else {
+      toast(isNew ? 'Peça cadastrada com sucesso.' : `Revisão salva (Rev ${String(peca.revisao).padStart(2, '0')}).`, { type: 'ok', title: 'Biblioteca' });
     }
-
-    toast(isNew ? 'Peça cadastrada com sucesso.' : `Revisão salva (Rev ${String(peca.revisao).padStart(2, '0')}).`, { type: 'ok', title: 'Biblioteca' });
     state.view = 'ficha'; state.pecaId = peca.id; render();
   } catch (err) {
-    console.error('[biblioteca] salvar', err);
+    console.error('[biblioteca] salvar', { message: err?.message, code: err?.code, details: err?.details, hint: err?.hint, err });
     toast('Erro ao salvar. ' + (err?.message || ''), { type: 'crit' });
-    btn.disabled = false;
+  } finally {
+    soltarBotao();
   }
+}
+
+/* Sincroniza as especificações da peça por DIFERENÇA, em vez de apagar todas e
+   reinserir. O modelo antigo custava (1 + N_antigas + N_novas) round-trips em
+   série a cada salvamento — numa peça com 20 cotas, ~41 requisições, mesmo quando
+   só o tipo de inspeção mudou. Além de lento, era arriscado: as linhas eram
+   apagadas antes de as novas entrarem, então uma falha no meio perdia as cotas.
+   Agora: linha inalterada não gera requisição; alterada vira UPDATE; nova vira
+   INSERT; removida vira DELETE — e tudo em paralelo. */
+async function sincronizarMetricas(pecaId, linhas) {
+  const existentes = await db.list('bib_metricas', { filter: { peca_id: pecaId } });
+  const porId = new Map(existentes.map(r => [r.id, r]));
+  const mantidos = new Set();
+  const ops = [];
+
+  linhas.forEach((linha, i) => {
+    const { id, ...campos } = linha;
+    campos.ordem = i + 1;
+    const atual = id ? porId.get(id) : null;
+    if (!atual) { ops.push(inserirTolerante('bib_metricas', campos)); return; }
+    mantidos.add(id);
+    if (mudou(atual, campos)) ops.push(atualizarTolerante('bib_metricas', id, campos));
+  });
+  for (const r of existentes) if (!mantidos.has(r.id)) ops.push(db.remove('bib_metricas', r.id));
+
+  await Promise.all(ops);
+}
+
+/* Compara só os campos que serão gravados: o registro do banco traz colunas
+   extras (created_at, etc.) que não devem contar como alteração.
+   `''` e `null` são o MESMO "vazio" aqui — o formulário devolve string vazia
+   onde o banco guarda null, e tratá-los como diferentes faria toda linha parecer
+   alterada, anulando o ganho do diff. */
+function mudou(atual, campos) {
+  const vazio = v => v == null || v === '';
+  return Object.keys(campos).some(k => {
+    const a = atual[k], b = campos[k];
+    if (vazio(a) && vazio(b)) return false;
+    if (vazio(a) !== vazio(b)) return true;
+    if (typeof a === 'number' || typeof b === 'number') return Number(a) !== Number(b);
+    return JSON.stringify(a) !== JSON.stringify(b);
+  });
 }
 
 /* Colunas opcionais criadas por migrations posteriores. Como `substituir` APAGA
@@ -1001,15 +1076,16 @@ async function salvar(isNew, p, f, upImg) {
    avisa uma vez e regrava sem ela (mesmo padrão de inspecao.js). */
 const COLUNAS_OPCIONAIS = ['obrigatorio'];
 let _semColunasOpcionais = false;
+const ehErroDeSchema = e =>
+  ['PGRST204', 'PGRST205', '42703', '42P01'].includes(String(e?.code || ''))
+  || /could not find the .*column|column .* does not exist|schema cache/i.test(`${e?.message || ''} ${e?.details || ''}`);
 async function inserirTolerante(tabela, row) {
   const semOpcionais = () => { const r = { ...row }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
   if (_semColunasOpcionais) return db.insert(tabela, semOpcionais());
   try {
     return await db.insert(tabela, row);
   } catch (e) {
-    const schema = ['PGRST204', 'PGRST205', '42703', '42P01'].includes(String(e?.code || ''))
-      || /could not find the .*column|column .* does not exist|schema cache/i.test(`${e?.message || ''} ${e?.details || ''}`);
-    if (!schema) throw e;
+    if (!ehErroDeSchema(e)) throw e;
     _semColunasOpcionais = true;
     console.warn(`[BIB] ${tabela} não tem ${COLUNAS_OPCIONAIS.join('/')} — gravando sem esses campos. ` +
       'Rode database/fix_referencia_mensuravel.sql no Supabase para normalizar o banco. Detalhe:', e?.message || e);
@@ -1017,11 +1093,19 @@ async function inserirTolerante(tabela, row) {
   }
 }
 
-async function substituir(tabela, pecaId, itens, mapFn) {
-  const existentes = await db.list(tabela, { filter: { peca_id: pecaId } });
-  for (const e of existentes) await db.remove(tabela, e.id);
-  let ord = 1;
-  for (const it of itens) await inserirTolerante(tabela, mapFn(it, ord++));
+/* Mesma tolerância do insert, para o UPDATE do diff de especificações. */
+async function atualizarTolerante(tabela, id, patch) {
+  const semOpcionais = () => { const r = { ...patch }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
+  if (_semColunasOpcionais) return db.update(tabela, id, semOpcionais());
+  try {
+    return await db.update(tabela, id, patch);
+  } catch (e) {
+    if (!ehErroDeSchema(e)) throw e;
+    _semColunasOpcionais = true;
+    console.warn(`[BIB] ${tabela} não tem ${COLUNAS_OPCIONAIS.join('/')} — gravando sem esses campos. ` +
+      'Rode database/fix_referencia_mensuravel.sql no Supabase. Detalhe:', e?.message || e);
+    return db.update(tabela, id, semOpcionais());
+  }
 }
 
 async function excluirPeca(pecaId) {

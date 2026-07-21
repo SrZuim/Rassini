@@ -38,19 +38,61 @@ function ehErroDeColuna(e) {
 }
 function avisarColunaAusente(e) {
   _semColunaTipos = true;
-  console.warn('[BIB] bib_pecas não tem a coluna "tipos_inspecao" — peça gravada sem o vínculo. ' +
+  console.warn('[BIB] bib_pecas não tem a coluna "tipos_inspecao" — peça gravada SEM o vínculo. ' +
     'Rode database/fix_tipos_inspecao_peca.sql no Supabase. Detalhe:', e?.message || e);
 }
 const semTipos = row => { const r = { ...row }; delete r.tipos_inspecao; return r; };
 
-/** Cria a peça garantindo a validação do vínculo (§3, camada de serviço). */
+/** Mensagem única para o usuário quando a migration do vínculo está pendente.
+    A gravação degradada NÃO pode ser anunciada como sucesso (§4.8): a peça é
+    salva, mas o tipo de inspeção não — e sem ele a peça não aparece em nenhum
+    relatório dimensional. Quem chama precisa dizer isso na tela. */
+export const MSG_MIGRACAO_TIPOS =
+  'Os tipos de inspeção NÃO foram gravados: o banco ainda não tem a coluna "tipos_inspecao". ' +
+  'Rode database/fix_tipos_inspecao_peca.sql no Supabase — até lá a peça não aparecerá nos relatórios dimensionais.';
+
+/** true quando já se sabe que o banco está atrás da migration do vínculo. */
+export function migracaoTiposPendente() { return _semColunaTipos; }
+
+/** Preflight barato (1 requisição, cacheado): a coluna do vínculo existe?
+    Chamado pelas telas que dependem do vínculo para avisar ANTES de o usuário
+    perder trabalho, em vez de descobrir só no erro do salvamento. Em modo demo
+    (localStorage) a coluna sempre "existe". */
+let _preflight = null;
+export function checarColunaTipos() {
+  if (_semColunaTipos) return Promise.resolve(false);
+  if (!_preflight) {
+    _preflight = (async () => {
+      try {
+        const { SUPABASE } = await import('./config.js');
+        if (!SUPABASE.enabled) return true;
+        const { getSupabase } = await import('./supabaseClient.js');
+        const sb = await getSupabase();
+        const { error } = await sb.from('bib_pecas').select('tipos_inspecao').limit(1);
+        if (error && ehErroDeColuna(error)) { avisarColunaAusente(error); return false; }
+        return true;                       // inclui erro de RLS/rede: não é falta de coluna
+      } catch { return true; }             // na dúvida não alarma; o save reporta o erro real
+    })();
+  }
+  return _preflight;
+}
+
+/** Cria a peça garantindo a validação do vínculo (§3, camada de serviço).
+    Quando a coluna não existe, a peça é gravada mesmo assim (não se perde o
+    cadastro), mas o retorno vem marcado com `tipos_nao_gravados` para a tela
+    reportar o que realmente aconteceu. */
 export async function inserirPeca(row) {
   const erro = validarTiposInspecaoInterno(row?.tipos_inspecao);
   if (erro) throw new Error(erro);
   const payload = { ...row, tipos_inspecao: normalizarParaGravarInterno(row.tipos_inspecao) };
-  if (_semColunaTipos) return db.insert('bib_pecas', semTipos(payload));
+  const degradado = async e => {
+    if (e) avisarColunaAusente(e);
+    const p = await db.insert('bib_pecas', semTipos(payload));
+    return { ...p, tipos_nao_gravados: true };
+  };
+  if (_semColunaTipos) return degradado(null);
   try { return await db.insert('bib_pecas', payload); }
-  catch (e) { if (!ehErroDeColuna(e)) throw e; avisarColunaAusente(e); return db.insert('bib_pecas', semTipos(payload)); }
+  catch (e) { if (!ehErroDeColuna(e)) throw e; return degradado(e); }
 }
 
 /* ------------------------------------------------------------- consultas --- */
@@ -279,7 +321,7 @@ export function registrarRecente(userId, pecaId) {
 
 /* --------------------------------------------------------- versionamento --- */
 /* Campos da peça acompanhados no diff do histórico (apenas informações da peça). */
-const CAMPOS_HIST = ['codigo','nome','cliente','familia','status','planta','revisao_desenho','data_revisao_desenho','numero_ad'];
+const CAMPOS_HIST = ['codigo','nome','cliente','familia','status','planta','revisao_desenho','data_revisao_desenho','numero_ad','tipos_inspecao'];
 
 /** Diferença campo-a-campo entre a peça antes e depois (para o histórico). */
 export function diffPeca(antes, depois) {
@@ -311,39 +353,44 @@ export async function salvarRevisao(pecaId, patch, usuario) {
   const mudancas = diffPeca(antes, patch);
   const novaRev = (antes.revisao || 1) + 1;
 
-  // snapshot da versão ANTERIOR (permite “restaurar”)
-  await db.insert('bib_versoes', {
-    peca_id: pecaId, revisao: antes.revisao || 1, snapshot: antes,
-    usuario: usuario?.nome || 'Sistema', quando: nowISO(),
-    resumo: mudancas.length ? `${mudancas.length} campo(s) alterado(s)` : 'Revisão salva'
-  });
-
   // revisao (compat) e revisao_cadastro (novo nome explícito) caminham juntas.
   const payload = { ...patch, revisao: novaRev, revisao_cadastro: novaRev, updated_at: hoje() };
-  let atualizado;
-  if (_semColunaTipos) atualizado = await db.update('bib_pecas', pecaId, semTipos(payload));
-  else {
-    try { atualizado = await db.update('bib_pecas', pecaId, payload); }
+  let degradado = false;
+  const gravar = async () => {
+    if (_semColunaTipos) { degradado = true; return db.update('bib_pecas', pecaId, semTipos(payload)); }
+    try { return await db.update('bib_pecas', pecaId, payload); }
     catch (e) {
       if (!ehErroDeColuna(e)) throw e;
-      avisarColunaAusente(e);
-      atualizado = await db.update('bib_pecas', pecaId, semTipos(payload));
+      avisarColunaAusente(e); degradado = true;
+      return db.update('bib_pecas', pecaId, semTipos(payload));
     }
-  }
+  };
 
-  for (const m of mudancas) {
-    await db.insert('bib_historico', {
+  /* O snapshot da versão anterior e a trilha do histórico não dependem do
+     resultado do UPDATE (usam `antes`/`mudancas`, já em memória). Rodavam em
+     série, somando um round-trip por campo alterado ao tempo de salvamento —
+     agora vão junto com a gravação. A peça só é dada como salva se o UPDATE
+     concluir: `Promise.all` rejeita com o primeiro erro. */
+  const trilha = [
+    // snapshot da versão ANTERIOR (permite “restaurar”)
+    db.insert('bib_versoes', {
+      peca_id: pecaId, revisao: antes.revisao || 1, snapshot: antes,
+      usuario: usuario?.nome || 'Sistema', quando: nowISO(),
+      resumo: mudancas.length ? `${mudancas.length} campo(s) alterado(s)` : 'Revisão salva'
+    }),
+    ...mudancas.map(m => db.insert('bib_historico', {
       peca_id: pecaId, usuario: usuario?.nome || 'Sistema', quando: nowISO(),
       acao: 'Editou', campo: m.campo, antes: m.antes, depois: m.depois, revisao: novaRev
-    });
-  }
+    }))
+  ];
   if (!mudancas.length) {
-    await db.insert('bib_historico', {
+    trilha.push(db.insert('bib_historico', {
       peca_id: pecaId, usuario: usuario?.nome || 'Sistema', quando: nowISO(),
       acao: 'Revisão', campo: '—', antes: '—', depois: `Rev ${String(novaRev).padStart(2,'0')}`, revisao: novaRev
-    });
+    }));
   }
-  return atualizado;
+  const [atualizado] = await Promise.all([gravar(), ...trilha]);
+  return degradado ? { ...atualizado, tipos_nao_gravados: true } : atualizado;
 }
 
 /** Registra a criação de uma peça no histórico. */
