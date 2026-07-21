@@ -70,16 +70,30 @@ comment on column insp_relatorios.peca_tipos_inspecao is
 -- ------------------------------------------------------- 3) Tipos ativos -----
 -- Garante que os 7 tipos canônicos existam (não sobrescreve nome/ordem de quem
 -- já customizou pelo Admin — só insere o que estiver faltando).
+--
+-- ATENÇÃO (corrigido em 21/07/2026): a versão anterior usava
+-- `on conflict (id) do nothing`, que só cobre a PK. Como o banco de produção já
+-- tinha os 7 tipos com ids PRÓPRIOS (gerados pela aplicação, não 'it1'..'it7'),
+-- o id não conflitava mas o slug sim, e a UNIQUE `insp_tipos_slug_key` abortava
+-- a migration inteira com 23505 — derrubando junto os ALTER TABLE da seção 1,
+-- porque o SQL Editor roda tudo em UMA transação. Resultado: parecia que a
+-- migration havia rodado, e nenhuma coluna era criada.
+--
+-- Agora o filtro é por NOT EXISTS em slug E em id: idempotente sejam quais forem
+-- os ids que a produção usa, e sem depender de qual constraint existe.
 insert into insp_tipos (id, slug, nome, is_dimensional, ordem, ativo)
-values
-  ('it1','vda65',       'Auditoria VDA 6.5',                                true, 1, true),
-  ('it2','layout',      'Inspeção de Layout',                               true, 2, true),
-  ('it3','final',       'Inspeção Final',                                   true, 3, true),
-  ('it4','ppap',        'PPAP — Processo de Aprovação de Peça de Produção', true, 4, true),
-  ('it5','durabilidade','Relatório para Durabilidade',                      true, 5, true),
-  ('it6','ride',        'Relatório para Ride',                              true, 6, true),
-  ('it7','fisico_dim',  'Teste Físico e Dimensional',                       true, 7, true)
-on conflict (id) do nothing;
+select v.id, v.slug, v.nome, v.is_dimensional, v.ordem, true
+  from (values
+    ('it1','vda65',       'Auditoria VDA 6.5',                               true, 1),
+    ('it2','layout',      'Inspeção de Layout',                              true, 2),
+    ('it3','final',       'Inspeção Final',                                  true, 3),
+    ('it4','ppap',        'PPAP — Processo de Aprovação de Peça de Produção', true, 4),
+    ('it5','durabilidade','Relatório para Durabilidade',                     true, 5),
+    ('it6','ride',        'Relatório para Ride',                             true, 6),
+    ('it7','fisico_dim',  'Teste Físico e Dimensional',                      true, 7)
+  ) as v(id, slug, nome, is_dimensional, ordem)
+ where not exists (select 1 from insp_tipos t where t.slug = v.slug)
+   and not exists (select 1 from insp_tipos t where t.id   = v.id);
 
 -- =============================================================================
 -- 4) BACKFILL ASSISTIDO dos cadastros legados (§5) — REVISE ANTES DE RODAR

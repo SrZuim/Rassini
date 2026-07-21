@@ -152,6 +152,10 @@ function timeline(hist) {
 /* -------------------------------------------------------------- catálogo --- */
 async function renderCatalogo() {
   const tiposCat = await loadTiposInspecao().then(() => BIB.listarTipos());
+  /* Definido AQUI, de forma síncrona: `barraLoteHtml` (chamada por
+     refreshResults) precisa da lista já pronta, e preenchê-la dentro do aviso
+     assíncrono deixava o seletor do lote vazio numa corrida. */
+  BIB_TIPOS_CACHE = tiposCat;
   const filtrosHtml = FILTROS_DEF.map(([campo, label, tabela]) => `
     <select class="form-select form-select-sm bib-filter" data-filtro="${campo}" style="max-width:190px">
       <option value="">${label}: todos</option>
@@ -175,7 +179,10 @@ async function renderCatalogo() {
       </select>
       <label class="bib-arch"><input type="checkbox" id="bib-arch" ${state.incluirArquivadas ? 'checked' : ''}> Incluir arquivadas</label>
     </div>
+    <div id="bib-pendentes" class="no-print"></div>
     <div id="bib-results"></div>`);
+
+  renderAvisoPendentes();
 
   // filtro por tipo de inspeção (§9) — combina com os demais filtros (§10)
   $('#bib-filtro-tipo').addEventListener('change', e => { state.filtros.tipo_inspecao = e.target.value; refreshResults(); });
@@ -199,10 +206,83 @@ async function renderCatalogo() {
   input.addEventListener('focus', refreshSuggest);
   document.addEventListener('click', (e) => { if (!e.target.closest('.bib-search')) suggest.hidden = true; }, { once: false });
   $('#bib-clear')?.addEventListener('click', () => { state.q = ''; renderCatalogo(); });
-  $('#bib-arch')?.addEventListener('change', (e) => { state.incluirArquivadas = e.target.checked; refreshResults(); });
+  $('#bib-arch')?.addEventListener('change', (e) => { state.incluirArquivadas = e.target.checked; renderAvisoPendentes(); refreshResults(); });
 
   refreshResults();
   input.focus();
+}
+
+/* ===================== COMPATIBILIDADE DOS CADASTROS LEGADOS (§6, §8) ========
+   Peça cadastrada antes do vínculo existir fica sem tipo e, por isso, fora de
+   toda auditoria. Em vez de deixar isso invisível (o admin só descobria quando o
+   auditor reclamava), o catálogo mostra o contador e leva ao filtro das
+   pendentes, onde é possível configurá-las em lote. */
+async function renderAvisoPendentes() {
+  const box = $('#bib-pendentes'); if (!box) return;
+  if (!can(USER.role, 'biblioteca', 'edit')) { box.innerHTML = ''; return; }
+  let n = 0;
+  try { n = await BIB.contarSemTipos({ incluirArquivadas: state.incluirArquivadas }); }
+  catch { box.innerHTML = ''; return; }        // erro de consulta não vira alarme falso
+  if (!n) { box.innerHTML = ''; return; }
+  const jaFiltrando = state.filtros.tipo_inspecao === BIB.FILTRO_SEM_TIPO;
+  box.innerHTML = `<div class="bib-pend"><i class="bi bi-exclamation-triangle"></i>
+    <div><b>${n}</b> peça(s) sem tipo de inspeção configurado — não aparecem em nenhum relatório dimensional.
+    ${jaFiltrando ? '' : `<button class="rna-btn rna-btn-dark rna-btn-sm ms-2" id="bib-ver-pend">Ver pendentes</button>`}</div></div>`;
+  $('#bib-ver-pend')?.addEventListener('click', () => {
+    state.filtros.tipo_inspecao = BIB.FILTRO_SEM_TIPO;
+    const sel = $('#bib-filtro-tipo'); if (sel) sel.value = BIB.FILTRO_SEM_TIPO;
+    refreshResults();
+  });
+}
+let BIB_TIPOS_CACHE = [];
+
+/* Barra de configuração em lote — só aparece no filtro das pendentes. Aplica ao
+   CONJUNTO FILTRADO, então o admin restringe antes por cliente/família/planta e
+   confirma vendo a contagem. Nada é atribuído automaticamente. */
+function barraLoteHtml(pecas) {
+  if (state.filtros.tipo_inspecao !== BIB.FILTRO_SEM_TIPO) return '';
+  if (!can(USER.role, 'biblioteca', 'edit') || !pecas.length) return '';
+  return `<div class="bib-pend bib-pend--acao no-print">
+    <div class="flex-grow-1">
+      <b>Configurar em lote</b>
+      <div class="cell-sub">Aplica os tipos escolhidos às <b>${pecas.length}</b> peça(s) listadas acima. Cada peça ganha nova revisão e registro no histórico.</div>
+    </div>
+    <select class="form-select form-select-sm" id="bib-lote-tipos" multiple size="4" style="max-width:280px">
+      ${BIB_TIPOS_CACHE.map(t => `<option value="${escAttr(t.slug)}">${escHtml(t.nome)}</option>`).join('')}
+    </select>
+    <button class="rna-btn rna-btn-primary rna-btn-sm" id="bib-lote-ok">Aplicar</button>
+  </div>`;
+}
+
+function wireBarraLote(box, pecas) {
+  const btn = $('#bib-lote-ok', box); if (!btn) return;
+  btn.addEventListener('click', () => {
+    const sel = $('#bib-lote-tipos', box);
+    const tipos = Array.from(sel.selectedOptions).map(o => o.value);
+    if (!tipos.length) { toast(BIB.MSG_TIPOS_OBRIGATORIO, { type: 'warn' }); return; }
+    const nomes = tipos.map(s => BIB.nomeDoSlug(s, TIPOS_MAP)).join(', ');
+    confirmDialog(
+      `Aplicar <b>${escHtml(nomes)}</b> a <b>${pecas.length}</b> peça(s)? Cada uma ganhará uma nova revisão.`,
+      async () => {
+        btn.disabled = true; btn.textContent = 'Aplicando…';
+        try {
+          const { ok, falhas } = await BIB.configurarTiposEmLote(pecas, tipos, USER);
+          if (falhas.length) {
+            console.error('[biblioteca] lote — falhas', falhas);
+            toast(`${ok} peça(s) configurada(s); ${falhas.length} falharam (ver console).`, { type: 'warn', title: 'Concluído parcialmente' });
+          } else {
+            toast(`${ok} peça(s) configurada(s).`, { type: 'ok', title: 'Biblioteca' });
+          }
+        } catch (e) {
+          console.error('[biblioteca] lote', e);
+          toast('Não foi possível configurar em lote. ' + (e?.message || ''), { type: 'crit' });
+        } finally {
+          renderCatalogo();
+        }
+      },
+      { title: 'Configurar tipos em lote', okLabel: 'Aplicar' }
+    );
+  });
 }
 
 async function refreshSuggest() {
@@ -228,8 +308,10 @@ async function refreshResults() {
     <div class="d-flex align-items-center gap-2 mb-2 flex-wrap no-print">
       <b>${pecas.length}</b> <span class="text-muted-2">peça(s)</span> ${chips}
     </div>
-    ${pecas.length ? `<div class="bib-grid">${pecas.map(p => cardPeca(p, favs.includes(p.id))).join('')}</div>` : emptyState('Nenhuma peça encontrada. Ajuste a busca ou os filtros.')}`;
+    ${pecas.length ? `<div class="bib-grid">${pecas.map(p => cardPeca(p, favs.includes(p.id))).join('')}</div>` : emptyState('Nenhuma peça encontrada. Ajuste a busca ou os filtros.')}
+    ${barraLoteHtml(pecas)}`;
   wireCards(box);
+  wireBarraLote(box, pecas);
   $$('[data-rmfiltro]', box).forEach(b => b.addEventListener('click', () => { state.filtros[b.dataset.rmfiltro] = ''; const sel = $(`.bib-filter[data-filtro="${b.dataset.rmfiltro}"]`); if (sel) sel.value = ''; refreshResults(); }));
 }
 

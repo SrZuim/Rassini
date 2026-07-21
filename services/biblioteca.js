@@ -129,6 +129,45 @@ export async function buscar(q = '', filtros = {}, opts = {}) {
   return pecas;
 }
 
+/* =========================================== COMPATIBILIDADE DOS CADASTROS ===
+   Peças cadastradas antes do vínculo existir ficam com `tipos_inspecao` vazio e
+   NÃO aparecem em auditoria alguma (fail-closed, §5). O caminho de regularização
+   é assistido — nunca automático: atribuir tipo a peça sem informação confiável
+   recria exatamente o risco de seleção errada que o vínculo elimina. */
+
+/** Quantas peças ainda não têm vínculo configurado (contador administrativo §8). */
+export async function contarSemTipos({ incluirArquivadas = false } = {}) {
+  return (await listarPecas({ incluirArquivadas })).filter(semTiposConfigurados).length;
+}
+
+/** Aplica o MESMO conjunto de tipos a um lote de peças já filtrado pelo
+    administrador (por cliente/família/planta). Passa por `salvarRevisao`, então
+    cada peça ganha snapshot da versão anterior e linha de histórico — a migração
+    fica rastreável e reversível pela tela de versões, peça a peça.
+    Só grava o vínculo: nenhum outro campo do cadastro é tocado.
+    Devolve `{ ok, falhas: [{ peca, erro }] }` — sucesso parcial é reportado, não
+    engolido. */
+export async function configurarTiposEmLote(pecas, tipos, usuario) {
+  const erro = validarTiposInspecaoInterno(tipos);
+  if (erro) throw new Error(erro);
+  const alvo = normalizarParaGravarInterno(tipos);
+  const falhas = [];
+  let ok = 0;
+  // Em blocos: paralelismo suficiente para não demorar, sem inundar o PostgREST.
+  const LOTE = 5;
+  for (let i = 0; i < pecas.length; i += LOTE) {
+    const bloco = pecas.slice(i, i + LOTE);
+    const res = await Promise.allSettled(
+      bloco.map(p => salvarRevisao(p.id, { tipos_inspecao: alvo }, usuario))
+    );
+    res.forEach((r, j) => {
+      if (r.status === 'fulfilled' && !r.value?.tipos_nao_gravados) ok++;
+      else falhas.push({ peca: bloco[j], erro: r.reason || new Error(MSG_MIGRACAO_TIPOS) });
+    });
+  }
+  return { ok, falhas };
+}
+
 /** Sugestões (autocomplete) enquanto digita — no máx. `limite`. */
 export async function sugestoes(q = '', limite = 8) {
   const termo = normaliza(q);

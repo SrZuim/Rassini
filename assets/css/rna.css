@@ -861,6 +861,13 @@ body.kiosk .rna-content { padding: 26px; }
 .bib-multi__add:focus{ outline:none; }
 .bib-multi__err{ color:var(--rna-crit); font-size:12px; font-weight:600; margin-top:4px; }
 
+/* Cadastros legados sem tipo de inspeção: aviso do catálogo + barra de lote. */
+.bib-pend{ display:flex; align-items:center; gap:10px; margin-bottom:12px; padding:10px 12px;
+  border:1px solid var(--rna-yellow-600); border-left-width:4px; border-radius:10px;
+  background:rgba(245,197,24,.10); font-size:13px; }
+.bib-pend > .bi{ font-size:18px; color:var(--rna-yellow-600); }
+.bib-pend--acao{ margin-top:14px; margin-bottom:0; flex-wrap:wrap; }
+
 /* Quadrante (localização no desenho técnico) — somente leitura */
 .insp-quadrante{ font-weight:650; font-size:12.5px; color:var(--rna-graphite); white-space:nowrap; text-align:center; }
 
