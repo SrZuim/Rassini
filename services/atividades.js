@@ -6,6 +6,7 @@
    Toda persistência passa por db.js (demo ou Supabase, sem alteração).
    ========================================================================== */
 import { db } from './db.js';
+import { aplicarRegras, contextoDoPlantao } from './regras-atividades.js';
 
 /* Prioridade da atribuição (hierarquia). Extensível: novos alvos entram aqui
    sem alterar o resolvedor. Ex.: setor:70, linha:80, maquina:90, equipe:40. */
@@ -98,8 +99,19 @@ export function venceHoje(agenda, dataISO, turno) {
   }
 }
 
-/** Atividades publicadas de um tipo, atribuídas a este usuário e vencidas hoje. */
-export async function resolverAtribuidas(user, plantao, tipoSlug = 'rotina') {
+/** Atividades publicadas de um tipo, atribuídas a este usuário e vencidas hoje.
+
+    Três perguntas, nesta ordem (§M06):
+      1. QUEM faz?     → matchAtribuicao (op_atribuicoes)
+      2. VENCE hoje?   → venceHoje (op_agenda)
+      3. SE APLICA?    → regras condicionais + grupo exclusivo (op_atividades)
+
+    O passo 3 é a novidade. Atividade sem condições e sem grupo passa direto,
+    então todo o cadastro existente continua se comportando como antes.
+
+    `opts.diagnostico` devolve também o porquê de cada descarte — usado pela
+    pré-visualização da Gestão Operacional. */
+export async function resolverAtribuidas(user, plantao, tipoSlug = 'rotina', opts = {}) {
   const [ativs, atrs, ags] = await Promise.all([
     db.list('op_atividades'), db.list('op_atribuicoes'), db.list('op_agenda')
   ]);
@@ -116,8 +128,20 @@ export async function resolverAtribuidas(user, plantao, tipoSlug = 'rotina') {
     if (!venceHoje((agBy[a.id] || [])[0], plantao?.data, plantao?.turno)) continue;
     out.push({ ...a, _prioridade: prio });
   }
-  out.sort((x, y) => y._prioridade - x._prioridade || String(x.codigo || '').localeCompare(String(y.codigo || '')));
-  return out;
+
+  // 3) regras condicionais — avaliadas ANTES de gerar o plantão (§M06)
+  const contexto = contextoDoPlantao(plantao);
+  const { atividades, diagnostico } = aplicarRegras(out, contexto);
+
+  atividades.sort((x, y) => y._prioridade - x._prioridade || String(x.codigo || '').localeCompare(String(y.codigo || '')));
+  return opts.diagnostico ? { atividades, diagnostico, contexto } : atividades;
+}
+
+/** Pré-visualização para a Gestão Operacional: o que ESTE contexto geraria, com
+    a justificativa de cada inclusão/descarte. Não grava nada. */
+export async function simularPlantao(user, { contexto = {}, tipoSlug = 'rotina', planta = '', turno = '', data = null } = {}) {
+  const plantaoFicticio = { planta, turno, data: data || hoje(), contexto };
+  return resolverAtribuidas(user, plantaoFicticio, tipoSlug, { diagnostico: true });
 }
 
 /** Monta as execuções do plantão (idempotente): cria as que ainda faltam. */

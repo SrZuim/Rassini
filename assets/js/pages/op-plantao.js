@@ -4,6 +4,7 @@ import { db } from '../../../services/db.js';
 import * as ATIV from '../../../services/atividades.js';
 import { TURNOS, PLANTAS } from '../../../services/config.js';
 import { AREA_SUPERVISOR, porArea, properNome } from '../../../services/funcionarios.js';
+import { listarTipos } from '../../../services/tipos-inspecao.js';
 import { $, $$, toast, confirmDialog, initials } from '../ui.js';
 
 const ctx = await mountShell();
@@ -124,7 +125,21 @@ async function renderIniciar() {
   const funcionarios = await db.list('funcionarios');
   const sups = porArea(funcionarios, AREA_SUPERVISOR).map(f => properNome(f.nome));
   const now = new Date();
+  /* §M06 — catálogos do CONTEXTO do plantão. É este contexto que o motor de
+     regras usa para decidir quais rotinas entram (ex.: cliente Scania, banho de
+     Magnaflux em uso). Todos opcionais: sem contexto, só as rotinas sem
+     condição entram — o cadastro antigo segue funcionando igual. */
+  const [clientes, substancias, processos, maquinas, linhas] = await Promise.all([
+    db.list('bib_clientes').catch(() => []), db.list('op_substancias').catch(() => []),
+    db.list('op_processos').catch(() => []), db.list('maquinas').catch(() => []),
+    db.list('linhas').catch(() => [])
+  ]);
+  const ativos = arr => arr.filter(x => x.ativo !== false);
   const sel = (id, opts) => `<select class="form-select" id="${id}">${opts.map(o => `<option>${o}</option>`).join('')}</select>`;
+  const selCtx = (id, label, itens, campo = 'nome') => `<div class="col-md-4"><label class="form-label">${label}</label>
+    <select class="form-select op-ctx" id="${id}"><option value="">— Não se aplica —</option>
+      ${ativos(itens).map(x => `<option>${escHtml(x[campo] || x.nome)}</option>`).join('')}</select></div>`;
+
   $('#rna-content').innerHTML = head() + `
     <div class="rna-card"><div class="rna-card__head"><h3><i class="bi bi-box-arrow-in-right"></i> Iniciar Plantão</h3></div>
       <div class="rna-card__body"><form id="op-form" class="row g-3">
@@ -132,22 +147,82 @@ async function renderIniciar() {
         <div class="col-md-6"><label class="form-label">Turno *</label>${sel('f-turno', TURNOS)}</div>
         <div class="col-md-6"><label class="form-label">Planta *</label>${sel('f-planta', PLANTAS)}</div>
         <div class="col-md-6"><label class="form-label">Supervisor</label>${sel('f-sup', sups.length ? sups : ['—'])}</div>
-        <div class="col-12"><p class="text-muted-2" style="font-size:12.5px;margin:0"><i class="bi bi-info-circle"></i> Ao iniciar, o sistema carrega automaticamente as atividades atribuídas a você (por usuário, cargo ou planta+turno) e você as executa em qualquer ordem. O fechamento só é liberado quando todas as obrigatórias estiverem concluídas.</p></div>
+
+        <div class="col-12"><hr class="my-1"><b style="font-size:14px"><i class="bi bi-sliders"></i> Contexto do plantão</b>
+          <div class="text-muted-2" style="font-size:12.5px">Define quais rotinas condicionais se aplicam ao seu turno. Deixe em branco o que não se aplicar.</div></div>
+        ${selCtx('f-cliente',     'Cliente',          clientes)}
+        ${selCtx('f-processo',    'Processo',         processos)}
+        ${selCtx('f-linha',       'Linha',            linhas)}
+        ${selCtx('f-maquina',     'Máquina',          maquinas, 'tag')}
+        ${selCtx('f-substancia',  'Substância',       substancias)}
+        ${selCtx('f-tipo-insp',   'Tipo de inspeção', await tiposInspecaoCtx())}
+
+        <div class="col-12"><div id="op-previa" class="insp-blocker" style="display:none"></div></div>
+        <div class="col-12"><p class="text-muted-2" style="font-size:12.5px;margin:0"><i class="bi bi-info-circle"></i> Ao iniciar, o sistema carrega automaticamente as atividades atribuídas a você (por usuário, cargo ou planta+turno) e aplica as regras do contexto acima. O fechamento só é liberado quando todas as obrigatórias estiverem concluídas.</p></div>
         <div class="col-12 pt-1"><button type="submit" class="rna-btn rna-btn-primary rna-btn-xl"><i class="bi bi-play-fill"></i> Iniciar Plantão</button></div>
       </form></div></div>`;
 
+  /* Prévia ao vivo: mostra quantas rotinas o contexto atual geraria, antes de
+     abrir o plantão. Evita o auditor descobrir só depois que escolheu errado. */
+  const previa = async () => {
+    const box = $('#op-previa');
+    const ctx = coletarContexto();
+    const temCtx = Object.values(ctx).some(Boolean);
+    if (!temCtx) { box.style.display = 'none'; return; }
+    const { atividades } = await ATIV.simularPlantao(USER, {
+      contexto: ctx, planta: $('#f-planta').value, turno: $('#f-turno').value
+    });
+    box.style.display = 'flex';
+    box.innerHTML = `<i class="bi bi-list-check"></i> <div>Com este contexto você receberá <b>${atividades.length} rotina(s)</b>${atividades.length ? `: ${atividades.map(a => escHtml(a.nome)).join(' · ')}` : '.'}</div>`;
+  };
+  $$('.op-ctx').forEach(s => s.addEventListener('change', previa));
+  $('#f-planta').addEventListener('change', previa);
+  $('#f-turno').addEventListener('change', previa);
+
   $('#op-form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const contexto = coletarContexto();
     const reg = {
       usuario: USER.id, usuario_nome: USER.nome, data: now.toISOString().slice(0, 10),
       hora: now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
       turno: $('#f-turno').value, planta: $('#f-planta').value, supervisor: $('#f-sup').value,
+      linha: contexto.linha || '',
       dispositivo: 'Web', categoria_checklist: null, status: 'Aberto', inicio_iso: ATIV.nowISO()
     };
-    const p = await db.insert('plantoes', reg);
+    /* `contexto` é coluna nova (§M06): grava com fallback para não impedir a
+       abertura do plantão num banco que ainda não rodou a migration. */
+    let p;
+    try {
+      p = await db.insert('plantoes', { ...reg, contexto });
+    } catch (err) {
+      console.warn('[PLANTÃO] contexto não gravado (coluna ausente?):', err?.message || err);
+      p = await db.insert('plantoes', reg);
+    }
     await db.log({ usuario: USER.nome, acao: `Iniciou plantão (${reg.turno})`, entidade: 'plantao', antes: '—', depois: 'Aberto' });
-    await ATIV.montarPlantao(USER, p, 'rotina');
-    toast('Plantão iniciado! Atividades atribuídas carregadas.', { type: 'ok', title: 'Plantão' });
+    const n = await ATIV.montarPlantao(USER, p, 'rotina');
+    toast(`Plantão iniciado! ${n} atividade(s) carregada(s) conforme o contexto.`, { type: 'ok', title: 'Plantão' });
     render();
   });
 }
+
+/* Lê os selects de contexto. Chave = slug do campo em REGRA_CAMPOS. */
+function coletarContexto() {
+  return {
+    cliente:       $('#f-cliente')?.value || '',
+    processo:      $('#f-processo')?.value || '',
+    linha:         $('#f-linha')?.value || '',
+    maquina:       $('#f-maquina')?.value || '',
+    substancia:    $('#f-substancia')?.value || '',
+    tipo_inspecao: $('#f-tipo-insp')?.value || ''
+  };
+}
+
+/* Tipos de inspeção: mesma fonte única já usada pela Biblioteca e Auditorias. */
+async function tiposInspecaoCtx() {
+  try { return (await listarTipos()).map(t => ({ nome: t.nome, ativo: true })); }
+  catch { return []; }
+}
+
+/* Declaração de função (hoisted) de propósito: `render()` é chamado durante a
+   inicialização do módulo, antes desta linha — um `const` cairia em TDZ. */
+function escHtml(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }

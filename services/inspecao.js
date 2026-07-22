@@ -12,6 +12,7 @@ import { db } from './db.js';
 import { ficha, catalogosEspec, ehInformativo, ehAtributo } from './biblioteca.js';
 import { pecaAtendeTipo, tiposDaPeca } from './tipos-inspecao.js';
 import { fmtMedida } from './formato.js';
+import * as AMOSTRAS from './insp-amostras.js';
 import { PLANTA_SIGLAS, INSP_STATUS } from './inspecao-data.js';
 
 export function nowISO() { return new Date().toISOString(); }
@@ -455,7 +456,7 @@ export async function trocarTipoInspecao(relatorioId, tipo, { limparPeca = false
 
 /* ============================================================ MEDIÇÕES (§8-9)
    Autosave: grava a medição, recalcula a característica e o resultado geral. */
-export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valor) {
+export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valor, user = null) {
   const car = await lerCaracteristica(caracteristicaId);
   if (!car) return null;
   // REFERENCIA também é medida e registrada (§Referência): avaliarMedicao devolve
@@ -465,10 +466,21 @@ export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valo
     : avaliarMedicao(valor, car.minimo, car.maximo, car.tipo_especificacao);
   const existentes = await db.list('insp_medicoes', { filter: { caracteristica_id: caracteristicaId } });
   const ex = existentes.find(m => m.amostra === amostra);
+  /* §M04 — AUTORIA POR MEDIÇÃO. Com vários auditores no mesmo relatório, saber
+     "quem mediu o quê" deixa de ser detalhe e vira rastreabilidade: cada valor
+     carrega o auditor, a data e a hora. Campos best-effort (ver migration). */
   const payload = { relatorio_id: relatorioId, caracteristica_id: caracteristicaId, amostra, valor: (valor ?? ''), resultado, medido_iso: nowISO() };
+  if (user) { payload.medido_por = user.id; payload.medido_por_nome = user.nome || ''; }
   let novo;
-  if (ex) { novo = await db.update('insp_medicoes', ex.id, payload); }
-  else { novo = await db.insert('insp_medicoes', payload); }
+  if (ex) { novo = await gravarMedicao('update', ex.id, payload); }
+  else { novo = await gravarMedicao('insert', null, payload); }
+  /* Trilha de ALTERAÇÃO (§M04 "inclusive alterações posteriores"): só quando o
+     valor muda de fato, para o histórico não encher de repetições. */
+  if (user && ex && String(ex.valor ?? '') !== String(valor ?? '')) {
+    await registrarHistoricoMedicao(relatorioId, user, car, amostra, ex.valor, valor);
+  } else if (user && !ex && String(valor ?? '') !== '') {
+    await registrarHistoricoMedicao(relatorioId, user, car, amostra, null, valor);
+  }
   await recalcularCaracteristica(caracteristicaId);
   await recalcularRelatorio(relatorioId);
   // evento p/ o Monitoramento
@@ -476,6 +488,37 @@ export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valo
   await registrarEvento({ relatorio: { id: relatorioId, auditor_id: car.relatorio_id }, tipo_evento: evTipo, caracteristica_id: caracteristicaId, amostra, metadata: { valor, resultado } });
   if (resultado === 'reprovado') await registrarEvento({ relatorio: { id: relatorioId }, tipo_evento: 'measurement_rejected', caracteristica_id: caracteristicaId, amostra, metadata: { valor } });
   return novo;
+}
+
+/* Grava a medição tolerando a ausência das colunas de autoria (§M04): num banco
+   que ainda não rodou fix_amostras_colaborativas.sql, o VALOR precisa ser salvo
+   de qualquer forma — a medição é o dado crítico; a autoria é o complemento. */
+let _semColunasAutoria = false;
+async function gravarMedicao(op, id, payload) {
+  const semAutoria = () => { const p = { ...payload }; delete p.medido_por; delete p.medido_por_nome; return p; };
+  const exec = p => op === 'update' ? db.update('insp_medicoes', id, p) : db.insert('insp_medicoes', p);
+  if (_semColunasAutoria) return exec(semAutoria());
+  try {
+    return await exec(payload);
+  } catch (e) {
+    if (!ehErroDeSchema(e)) throw e;
+    _semColunasAutoria = true;
+    console.warn('[INSP] insp_medicoes sem medido_por/medido_por_nome — gravando sem a autoria. ' +
+      'Rode database/fix_amostras_colaborativas.sql. Detalhe:', e?.message || e);
+    return exec(semAutoria());
+  }
+}
+
+/* Uma linha de histórico por alteração de medição, com autor, amostra e cota.
+   Reusa `insp_historico` (mesma trilha do relatório) em vez de criar tabela
+   nova: a tela de histórico já sabe renderizar este formato. */
+async function registrarHistoricoMedicao(relatorioId, user, car, amostra, antes, depois) {
+  const campo = `Cota ${car.cota ?? '—'} · ${car.caracteristica || ''} · Peça ${amostra}`;
+  const fmtv = v => (v == null || v === '') ? '—' : String(v);
+  try {
+    await registrarHistorico(relatorioId, user, antes == null ? 'Mediu' : 'Alterou medição',
+      campo, fmtv(antes), fmtv(depois));
+  } catch (e) { console.warn('[INSP] Histórico da medição não gravado:', e?.message || e); }
 }
 
 export async function recalcularCaracteristica(caracteristicaId) {
@@ -550,6 +593,40 @@ export async function carregarRelatorio(relatorioId) {
 export async function meusRelatorios(userId) {
   return (await db.list('insp_relatorios')).filter(r => r.auditor_id === userId)
     .sort((a, b) => String(b.started_iso).localeCompare(String(a.started_iso)));
+}
+
+/* ================================== RELATÓRIOS COLABORATIVOS (§M04) =========
+   A inspeção deixa de ser trabalho de uma pessoa só: um relatório EM ANDAMENTO
+   fica visível para todos os auditores autorizados, para que a medição das
+   amostras possa ser dividida (João mede P1, Maria P2, Carlos P3).
+
+   Regra de visibilidade:
+     • os MEUS relatórios, em qualquer status (inclusive finalizados);
+     • os DE OUTROS que estejam em andamento/rascunho — abertos à colaboração.
+   Relatório finalizado de outro auditor NÃO entra aqui: consultá-lo é papel da
+   tela de Relatórios Dimensionais, que tem o seu próprio controle de acesso.
+
+   `_colaborativo` marca a linha que veio de outro auditor, para a UI diferenciar. */
+export function relatorioEmAndamento(r) {
+  return r?.status === 'em_andamento' || r?.status === 'rascunho';
+}
+
+export async function relatoriosVisiveis(userId, { incluirColaborativos = true } = {}) {
+  const todos = await db.list('insp_relatorios');
+  const meus = todos.filter(r => r.auditor_id === userId).map(r => ({ ...r, _colaborativo: false }));
+  const outros = incluirColaborativos
+    ? todos.filter(r => r.auditor_id !== userId && relatorioEmAndamento(r)).map(r => ({ ...r, _colaborativo: true }))
+    : [];
+  return [...meus, ...outros].sort((a, b) => String(b.started_iso).localeCompare(String(a.started_iso)));
+}
+
+/** Um auditor pode MEDIR neste relatório? Dono sempre; os demais só enquanto
+    estiver em andamento (finalizado é somente leitura para todos, §21). */
+export function podeColaborar(rel, user) {
+  if (!rel || !user) return false;
+  if (String(rel.status).startsWith('finalizada') || rel.status === 'revisada') return false;
+  if (rel.auditor_id === user.id) return true;
+  return ['auditor', 'supervisor', 'admin'].includes(user.role);
 }
 
 /* ============================================ CONSULTA CORPORATIVA (§27-30)
@@ -665,6 +742,26 @@ export async function validarFinalizacao(relatorioId) {
      sempre conclui e gera relatório; havendo reprovação, o tratamento (classe,
      observação, ações) é opcional e a pendência é criada automaticamente ao
      finalizar (ver finalizar → criarPendenciaDoRelatorio). */
+
+  /* §M04 — trabalho colaborativo: só finaliza com TODAS as amostras concluídas
+     e NENHUMA em edição. Finalizar com um colega ainda medindo descartaria o
+     trabalho dele e congelaria um relatório pela metade. Tolerante: se a tabela
+     de amostras ainda não existe (migration pendente), a validação antiga vale. */
+  try {
+    const amostras = await AMOSTRAS.estadoAmostras(relatorioId, qtd);
+    const emEdicao = amostras.filter(a => a._travaAtiva);
+    if (emEdicao.length) {
+      faltas.push({ etapa: 'Medições', msg: `${emEdicao.length} peça(s) em edição por outro auditor: ${
+        emEdicao.map(a => `Peça ${a.amostra} (${a.bloqueado_nome || 'auditor'})`).join(', ')}. Aguarde a liberação.` });
+    }
+    const naoConcluidas = amostras.filter(a => a.status !== 'concluida');
+    if (naoConcluidas.length) {
+      faltas.push({ etapa: 'Medições', msg: `${naoConcluidas.length} peça(s) sem conclusão: ${
+        naoConcluidas.map(a => `Peça ${a.amostra}`).join(', ')}. Conclua cada peça medida.` });
+    }
+  } catch (e) {
+    console.warn('[INSP] Validação de amostras colaborativas ignorada (migration pendente?):', e?.message || e);
+  }
   return { ok: faltas.length === 0, faltas };
 }
 

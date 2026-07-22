@@ -69,6 +69,27 @@ export const OP_ALVO_TIPOS = [
   // Futuros (arquitetura pronta): setor, linha, maquina, processo, equipe
 ];
 
+/* ------------------------------------------------ SUBSTÂNCIAS (§M06) -------
+   Catálogo editável, usado como contexto do plantão e nas regras condicionais.
+   Os dois primeiros são os banhos reais já citados no modelo Magnaflux
+   (services/rotinas-modelos.js) — antes eram dois ITENS da mesma rotina; com as
+   regras, cada substância passa a ter a sua rotina e só a que está em uso
+   aparece no plantão. */
+export const OP_SUBSTANCIAS = [
+  { id: 'sub-1', nome: 'Magnaflux ML-500WB',  ativo: true },
+  { id: 'sub-2', nome: 'Metalcheck CLY-2000', ativo: true },
+  { id: 'sub-3', nome: 'Magnaglo 14HF',       ativo: true }
+];
+
+/* Processos — contexto do plantão (§M06). Editável como os demais catálogos. */
+export const OP_PROCESSOS = [
+  { id: 'prc-1', nome: 'Estamparia',           ativo: true },
+  { id: 'prc-2', nome: 'Tratamento Térmico',   ativo: true },
+  { id: 'prc-3', nome: 'Montagem',             ativo: true },
+  { id: 'prc-4', nome: 'Usinagem',             ativo: true },
+  { id: 'prc-5', nome: 'Ensaio Não Destrutivo',ativo: true }
+];
+
 /* Rotinas = AÇÃO ÚNICA (config de Concluir). Colunas técnicas antigas continuam
    nas tabelas (compatibilidade), mas não são usadas pela interface do construtor. */
 export const OP_ATIVIDADES = [
@@ -107,6 +128,70 @@ export const OP_ATIVIDADES = [
     obrigatoria: true, status: 'publicada', is_template: false, anexos: [],
     created_by: 'u1', created_at: '2026-01-05', updated_at: '2026-01-05'
   },
+  /* ---------------------------------------------------------------- §M06
+     Exemplos REAIS de regras condicionais, com os dois padrões do requisito.
+
+     (a) GRUPO "velocidade_esteira" — duas rotinas mutuamente exclusivas.
+         Cliente Scania → só a ROT-010. Qualquer outro cliente → só a ROT-011.
+         A ROT-011 é a genérica (fallback) e por isso tem prioridade menor: se
+         ambas casassem, a mais específica vence. */
+  {
+    id: 'ativ-rot-010', tipo_slug: 'rotina', nome: 'Velocidade da Esteira — Scania', codigo: 'ROT-010',
+    descricao: 'Parâmetro de esteira específico dos produtos Scania.', categoria: 'Processo',
+    planta: '', setor: '', turno: '', responsavel: 'todos', cargo: 'auditor',
+    frequencia: 'Diária', horario: '07:30',
+    exec_observacao: 'opcional', exec_foto: 'nao', permite_na: false,
+    obrigatoria: true, status: 'publicada', is_template: false, anexos: [],
+    grupo_regra: 'velocidade_esteira', exclusivo_por_grupo: true, prioridade_regra: 100,
+    condicoes: [{ campo: 'cliente', operador: 'igual', valor: 'Scania' }],
+    created_by: 'u1', created_at: '2026-07-20', updated_at: '2026-07-20'
+  },
+  {
+    id: 'ativ-rot-011', tipo_slug: 'rotina', nome: 'Velocidade da Esteira — Demais Clientes', codigo: 'ROT-011',
+    descricao: 'Parâmetro de esteira padrão dos demais clientes.', categoria: 'Processo',
+    planta: '', setor: '', turno: '', responsavel: 'todos', cargo: 'auditor',
+    frequencia: 'Diária', horario: '07:30',
+    exec_observacao: 'opcional', exec_foto: 'nao', permite_na: false,
+    obrigatoria: true, status: 'publicada', is_template: false, anexos: [],
+    grupo_regra: 'velocidade_esteira', exclusivo_por_grupo: true, prioridade_regra: 10,
+    condicoes: [{ campo: 'cliente', operador: 'diferente', valor: 'Scania' }],
+    created_by: 'u1', created_at: '2026-07-20', updated_at: '2026-07-20'
+  },
+  /* (b) GRUPO "magnaflux" — uma rotina por substância; só a que está em uso
+         no plantão aparece. Mesma prioridade: o que decide é a condição. */
+  {
+    id: 'ativ-rot-020', tipo_slug: 'rotina', nome: 'Magnaflux — ML-500WB', codigo: 'ROT-020',
+    descricao: 'Concentração do banho de partícula magnética ML-500WB.', categoria: 'Qualidade',
+    planta: '', setor: '', turno: '', responsavel: 'todos', cargo: 'auditor',
+    frequencia: 'Diária', horario: '09:00',
+    exec_observacao: 'opcional', exec_foto: 'nao', permite_na: false,
+    obrigatoria: true, status: 'publicada', is_template: false, anexos: [],
+    grupo_regra: 'magnaflux', exclusivo_por_grupo: true, prioridade_regra: 50,
+    condicoes: [{ campo: 'substancia', operador: 'igual', valor: 'Magnaflux ML-500WB' }],
+    created_by: 'u1', created_at: '2026-07-20', updated_at: '2026-07-20'
+  },
+  {
+    id: 'ativ-rot-021', tipo_slug: 'rotina', nome: 'Magnaflux — Metalcheck CLY-2000', codigo: 'ROT-021',
+    descricao: 'Concentração do banho de partícula magnética CLY-2000.', categoria: 'Qualidade',
+    planta: '', setor: '', turno: '', responsavel: 'todos', cargo: 'auditor',
+    frequencia: 'Diária', horario: '09:00',
+    exec_observacao: 'opcional', exec_foto: 'nao', permite_na: false,
+    obrigatoria: true, status: 'publicada', is_template: false, anexos: [],
+    grupo_regra: 'magnaflux', exclusivo_por_grupo: true, prioridade_regra: 50,
+    condicoes: [{ campo: 'substancia', operador: 'igual', valor: 'Metalcheck CLY-2000' }],
+    created_by: 'u1', created_at: '2026-07-20', updated_at: '2026-07-20'
+  },
+  {
+    id: 'ativ-rot-022', tipo_slug: 'rotina', nome: 'Magnaflux — Magnaglo 14HF', codigo: 'ROT-022',
+    descricao: 'Concentração do banho de partícula magnética Magnaglo 14HF.', categoria: 'Qualidade',
+    planta: '', setor: '', turno: '', responsavel: 'todos', cargo: 'auditor',
+    frequencia: 'Diária', horario: '09:00',
+    exec_observacao: 'opcional', exec_foto: 'nao', permite_na: false,
+    obrigatoria: true, status: 'publicada', is_template: false, anexos: [],
+    grupo_regra: 'magnaflux', exclusivo_por_grupo: true, prioridade_regra: 50,
+    condicoes: [{ campo: 'substancia', operador: 'igual', valor: 'Magnaglo 14HF' }],
+    created_by: 'u1', created_at: '2026-07-20', updated_at: '2026-07-20'
+  },
   {
     id: 'tpl-rot-setup', tipo_slug: 'rotina', nome: 'Template — Setup de Máquina', codigo: 'TPL-SETUP',
     descricao: 'Modelo reutilizável de rotina de setup.', categoria: 'Setup',
@@ -133,14 +218,26 @@ export const OP_ATRIBUICOES = [
   { id: 'atr-1', atividade_id: 'ativ-rot-001', alvo_tipo: 'planta_turno', alvo_valor: '', planta: 'Planta Rio Nova Iguaçu', turno: '', prioridade: 10 },
   { id: 'atr-2', atividade_id: 'ativ-rot-002', alvo_tipo: 'cargo',        alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 },
   { id: 'atr-3', atividade_id: 'ativ-rot-003', alvo_tipo: 'usuario',      alvo_valor: 'u3', planta: '', turno: '', prioridade: 100 },
-  { id: 'atr-chk-1', atividade_id: 'ativ-chk-001', alvo_tipo: 'cargo',    alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 }
+  { id: 'atr-chk-1', atividade_id: 'ativ-chk-001', alvo_tipo: 'cargo',    alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 },
+  /* §M06 — as rotinas condicionais são atribuídas ao cargo normalmente; o que
+     decide se entram no plantão são as CONDIÇÕES da atividade, não a atribuição. */
+  { id: 'atr-10',  atividade_id: 'ativ-rot-010', alvo_tipo: 'cargo', alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 },
+  { id: 'atr-11',  atividade_id: 'ativ-rot-011', alvo_tipo: 'cargo', alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 },
+  { id: 'atr-20',  atividade_id: 'ativ-rot-020', alvo_tipo: 'cargo', alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 },
+  { id: 'atr-21',  atividade_id: 'ativ-rot-021', alvo_tipo: 'cargo', alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 },
+  { id: 'atr-22',  atividade_id: 'ativ-rot-022', alvo_tipo: 'cargo', alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 }
 ];
 
 export const OP_AGENDA = [
   { id: 'ag-1', atividade_id: 'ativ-rot-001', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' },
   { id: 'ag-2', atividade_id: 'ativ-rot-002', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' },
   { id: 'ag-3', atividade_id: 'ativ-rot-003', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' },
-  { id: 'ag-chk-1', atividade_id: 'ativ-chk-001', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' }
+  { id: 'ag-chk-1', atividade_id: 'ativ-chk-001', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' },
+  { id: 'ag-10', atividade_id: 'ativ-rot-010', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' },
+  { id: 'ag-11', atividade_id: 'ativ-rot-011', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' },
+  { id: 'ag-20', atividade_id: 'ativ-rot-020', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' },
+  { id: 'ag-21', atividade_id: 'ativ-rot-021', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' },
+  { id: 'ag-22', atividade_id: 'ativ-rot-022', tipo: 'diaria', dias: [], intervalo_horas: null, ref: '' }
 ];
 
 /* Mapa nome→default para o seeding/reset (estilo CATALOGOS).
@@ -156,5 +253,8 @@ export const GESTAO_OP = {
   op_agenda:           OP_AGENDA,
   op_execucao:         [],
   op_execucao_itens:   [],
-  op_pendencias:       []
+  op_pendencias:       [],
+  /* §M06 — catálogos de contexto das regras condicionais */
+  op_substancias:      OP_SUBSTANCIAS,
+  op_processos:        OP_PROCESSOS
 };

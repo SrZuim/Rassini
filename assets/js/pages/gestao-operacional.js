@@ -10,6 +10,8 @@ import { can, PLANTAS, TURNOS } from '../../../services/config.js';
 import * as ATIV from '../../../services/atividades.js';
 import * as DATA from '../../../services/gestao-op-data.js';
 import * as ROT from '../../../services/rotinas.js';
+import * as REGRAS from '../../../services/regras-atividades.js';
+import { listarTipos } from '../../../services/tipos-inspecao.js';
 import { charts, PALETTE } from '../charts.js';
 import { $, $$, el, toast, modal, confirmDialog } from '../ui.js';
 
@@ -63,7 +65,7 @@ async function renderLista(tipo) {
      lote evita N+1 consultas. */
   const auditoresBy = VER_AUDITORES ? await ATIV.auditoresPorAtividade(ativs.map(a => a.id)) : {};
   const linha = a => `<tr>
-    <td class="cell-strong">${a.nome}<div class="cell-sub">${a.categoria || ''}</div></td>
+    <td class="cell-strong">${a.nome}<div class="cell-sub">${a.categoria || ''}</div>${regraChip(a)}</td>
     ${VER_AUDITORES ? `<td>${auditoresCell(auditoresBy[a.id] || [])}</td>` : ''}
     <td class="cell-sub">${a.frequencia || '—'}${a.horario ? ` · ${a.horario}` : ''}</td>
     <td>${a.obrigatoria ? '<span class="rna-badge badge-crit">Sim</span>' : '<span class="rna-badge badge-na">Não</span>'}</td>
@@ -99,6 +101,20 @@ function auditoresCell(lista) {
   const resto = nomes.length - AUDITORES_VISIVEIS;
   const mais = resto > 0 ? `<span class="bib-chip bib-chip--more" title="${escAttr(nomes.slice(AUDITORES_VISIVEIS).join(' · '))}">+${resto}</span>` : '';
   return `<div class="bib-tipos-row" style="margin-top:0" title="${escAttr(nomes.join(' · '))}">${chips}${mais}</div>`;
+}
+
+/* Selo de regra condicional na listagem (§M06): deixa visível, sem abrir a
+   rotina, que ela só aparece em certos contextos e a que grupo exclusivo
+   pertence. Rotina sem regra não ganha selo — a lista continua limpa. */
+function regraChip(a) {
+  const conds = REGRAS.normalizarCondicoes(a.condicoes);
+  const grupo = String(a.grupo_regra || '').trim();
+  if (!conds.length && !grupo) return '';
+  const desc = REGRAS.descreverCondicoes(a);
+  const selos = [];
+  if (conds.length) selos.push(`<span class="bib-chip" title="${escAttr(desc)}"><i class="bi bi-funnel"></i> ${conds.length} condição(ões)</span>`);
+  if (grupo) selos.push(`<span class="bib-chip bib-chip--more" title="Grupo exclusivo — só a de maior prioridade entra no plantão">${escAttr(grupo)} · P${a.prioridade_regra ?? 0}</span>`);
+  return `<div class="bib-tipos-row" style="margin-top:4px">${selos.join('')}</div>`;
 }
 
 /* ======================= MODELOS DE ROTINA (§22) ===========================
@@ -459,6 +475,26 @@ async function modeloJaExecutado(modeloId) {
 
 /* ============================ CONSTRUTOR DE ROTINA ========================= */
 let R = {}, C = {}, edItens = [], USUARIOS = [];
+
+/* §M06 — catálogos que alimentam os valores das condições e a lista de grupos
+   já usados. Carregados uma vez por abertura do editor. */
+let CTX_CATALOGOS = {};
+let GRUPOS_EXISTENTES = [];
+async function carregarCatalogosContexto() {
+  const nomes = arr => arr.filter(x => x.ativo !== false).map(x => x.nome).filter(Boolean);
+  const [clientes, substancias, processos, maquinas, linhas, tipos, ativs] = await Promise.all([
+    db.list('bib_clientes').catch(() => []), db.list('op_substancias').catch(() => []),
+    db.list('op_processos').catch(() => []), db.list('maquinas').catch(() => []),
+    db.list('linhas').catch(() => []), listarTipos().catch(() => []),
+    db.list('op_atividades').catch(() => [])
+  ]);
+  CTX_CATALOGOS = {
+    cliente: nomes(clientes), substancia: nomes(substancias), processo: nomes(processos),
+    maquina: maquinas.map(m => m.tag || m.nome).filter(Boolean), linha: nomes(linhas),
+    tipo_inspecao: tipos.map(t => t.nome).filter(Boolean)
+  };
+  GRUPOS_EXISTENTES = [...new Set(ativs.map(a => String(a.grupo_regra || '').trim()).filter(Boolean))].sort();
+}
 function respLabel(r) { return r === 'todos' ? 'Todos os auditores' : (USUARIOS.find(u => u.id === r)?.nome || r); }
 function radioExec(field, val) {
   return `<div class="op-radios">${DATA.OP_EXEC_OPCOES.map(o => `<label class="op-radio ${o.slug === val ? 'active' : ''}"><input type="radio" name="${field}" value="${o.slug}" ${o.slug === val ? 'checked' : ''}> ${o.nome}</label>`).join('')}</div>`;
@@ -468,7 +504,11 @@ async function renderBuilderRotina() {
   const isNew = !state.ativId;
   let a = { tipo_slug: 'rotina', status: 'rascunho', obrigatoria: true, frequencia: 'Diária', horario: '', exec_observacao: 'opcional', exec_foto: 'opcional', permite_na: true, responsavel: 'todos' };
   if (!isNew) a = await db.get('op_atividades', state.ativId) || a;
-  R = { nome: a.nome || '', descricao: a.descricao || '', categoria: a.categoria || '', frequencia: a.frequencia || 'Diária', horario: a.horario || '', planta: a.planta || '', turno: a.turno || '', setor: a.setor || '', responsavel: a.responsavel || 'todos', exec_observacao: a.exec_observacao || 'opcional', exec_foto: a.exec_foto || 'opcional', permite_na: a.permite_na !== false, obrigatoria: a.obrigatoria !== false, status: a.status || 'rascunho', modelo_id: a.modelo_id || '' };
+  R = { nome: a.nome || '', descricao: a.descricao || '', categoria: a.categoria || '', frequencia: a.frequencia || 'Diária', horario: a.horario || '', planta: a.planta || '', turno: a.turno || '', setor: a.setor || '', responsavel: a.responsavel || 'todos', exec_observacao: a.exec_observacao || 'opcional', exec_foto: a.exec_foto || 'opcional', permite_na: a.permite_na !== false, obrigatoria: a.obrigatoria !== false, status: a.status || 'rascunho', modelo_id: a.modelo_id || '',
+    /* §M06 — regras condicionais (quando a rotina se aplica) */
+    condicoes: REGRAS.normalizarCondicoes(a.condicoes), grupo_regra: a.grupo_regra || '',
+    prioridade_regra: a.prioridade_regra ?? 0, exclusivo_por_grupo: a.exclusivo_por_grupo !== false };
+  await carregarCatalogosContexto();
   /* Rotina personalizada = sem modelo, com itens próprios (§13). */
   R.personalizada = !isNew && !a.modelo_id;
   mItens = (!isNew && !a.modelo_id) ? (await ROT.itensDoModelo(a.id)).map(clone) : [];
@@ -512,6 +552,7 @@ async function renderBuilderRotina() {
           <div class="col-md-6"><label class="form-label">Responsável</label><select class="form-select" data-r="responsavel">${respOpt}</select></div>
           <div class="col-12"><small class="text-muted-2">Define quem verá a rotina. Responsável específico tem prioridade; senão Planta+Turno; senão todos os auditores.</small></div>
         </div></div></div>
+        ${cardRegras(R)}
         <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-sliders"></i> Configuração da execução</h3></div><div class="rna-card__body">
           <div class="mb-3"><label class="form-label">Observação</label>${radioExec('exec_observacao', R.exec_observacao)}</div>
           <div class="mb-3"><label class="form-label">Foto</label>${radioExec('exec_foto', R.exec_foto)}</div>
@@ -536,8 +577,91 @@ async function renderBuilderRotina() {
   $('#ed-cancel').addEventListener('click', () => { state.view = 'lista'; render(); });
   $('#ed-save').addEventListener('click', () => salvarRotina(isNew));
   $('#mi-add').addEventListener('click', () => itemModeloModal(null));
+  wireRegras(R);
   initSeletorModelo();
   renderRotinaPreview();
+}
+
+/* ==================== REGRAS CONDICIONAIS DA ATIVIDADE (§M06) ===============
+   "Quando esta rotina se aplica?" — complementa a atribuição, que define
+   "quem executa". Sem condições e sem grupo, a rotina se comporta como antes. */
+function cardRegras(R) {
+  R.condicoes = REGRAS.normalizarCondicoes(R.condicoes);
+  return `
+    <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-funnel"></i> Quando esta rotina se aplica</h3>
+      <button class="rna-btn rna-btn-ghost rna-btn-sm" id="rg-add"><i class="bi bi-plus-lg"></i> Adicionar condição</button></div>
+      <div class="rna-card__body">
+        <div id="rg-lista"></div>
+        <div class="divider"></div>
+        <div class="row g-3">
+          <div class="col-md-5"><label class="form-label">Grupo exclusivo</label>
+            <input class="form-control" data-rg="grupo_regra" value="${esc(R.grupo_regra)}" placeholder="Ex.: velocidade_esteira" list="rg-grupos">
+            <datalist id="rg-grupos">${GRUPOS_EXISTENTES.map(g => `<option value="${esc(g)}">`).join('')}</datalist>
+            <small class="text-muted-2" style="font-size:11.5px">Rotinas do mesmo grupo <b>nunca aparecem juntas</b>: só entra a de maior prioridade entre as que atendem ao contexto.</small></div>
+          <div class="col-md-3"><label class="form-label">Prioridade</label>
+            <input class="form-control" type="number" data-rg="prioridade_regra" value="${R.prioridade_regra ?? 0}" min="0" step="10">
+            <small class="text-muted-2" style="font-size:11.5px">Maior vence no grupo.</small></div>
+          <div class="col-md-4 d-flex align-items-center">
+            <label class="form-check"><input type="checkbox" class="form-check-input" data-rg="exclusivo_por_grupo" ${R.exclusivo_por_grupo !== false ? 'checked' : ''}>
+              <span class="ms-1">Exclusiva no grupo</span></label></div>
+        </div>
+        <div class="insp-blocker mt-3" id="rg-resumo"></div>
+      </div></div>`;
+}
+
+function wireRegras(R) {
+  const lista = $('#rg-lista');
+  const catalogoDe = campo => (CTX_CATALOGOS[campo] || []);
+
+  const pintar = () => {
+    lista.innerHTML = R.condicoes.length ? R.condicoes.map((c, i) => {
+      const opts = catalogoDe(c.campo);
+      const valorHtml = opts.length
+        ? `<select class="form-select form-select-sm" data-rc="valor" data-i="${i}">
+             <option value="">— selecione —</option>
+             ${opts.map(o => `<option ${o === c.valor ? 'selected' : ''}>${esc(o)}</option>`).join('')}
+             ${c.valor && !opts.includes(c.valor) ? `<option selected>${esc(c.valor)}</option>` : ''}
+           </select>`
+        : `<input class="form-control form-control-sm" data-rc="valor" data-i="${i}" value="${esc(c.valor)}" placeholder="Valor">`;
+      return `<div class="row g-2 align-items-end mb-2">
+        <div class="col-md-4"><select class="form-select form-select-sm" data-rc="campo" data-i="${i}">
+          ${REGRAS.REGRA_CAMPOS.map(f => `<option value="${f.slug}" ${f.slug === c.campo ? 'selected' : ''}>${f.nome}</option>`).join('')}</select></div>
+        <div class="col-md-3"><select class="form-select form-select-sm" data-rc="operador" data-i="${i}">
+          ${REGRAS.REGRA_OPERADORES.map(o => `<option value="${o.slug}" ${o.slug === (c.operador || 'igual') ? 'selected' : ''}>${o.nome}</option>`).join('')}</select></div>
+        <div class="col-md-4">${valorHtml}</div>
+        <div class="col-md-1 text-end"><button class="rna-btn rna-btn-ghost rna-btn-sm" data-rc-del="${i}" title="Remover"><i class="bi bi-trash text-danger"></i></button></div>
+      </div>`;
+    }).join('') : `<div class="text-muted-2" style="font-size:13px"><i class="bi bi-globe"></i> Sem condições — esta rotina se aplica a <b>todos</b> os contextos.</div>`;
+
+    $$('[data-rc]', lista).forEach(el => el.addEventListener('change', () => {
+      const i = +el.dataset.i;
+      R.condicoes[i][el.dataset.rc] = el.value;
+      if (el.dataset.rc === 'campo') R.condicoes[i].valor = '';   // catálogo muda com o campo
+      pintar(); resumo();
+    }));
+    $$('[data-rc-del]', lista).forEach(b => b.addEventListener('click', () => {
+      R.condicoes.splice(+b.dataset.rcDel, 1); pintar(); resumo();
+    }));
+    resumo();
+  };
+
+  const resumo = () => {
+    const box = $('#rg-resumo');
+    const g = String(R.grupo_regra || '').trim();
+    box.innerHTML = `<i class="bi bi-info-circle"></i> <div>${REGRAS.descreverCondicoes(R)}${
+      g ? ` · Grupo exclusivo <b>${esc(g)}</b>, prioridade ${R.prioridade_regra ?? 0}` : ''}</div>`;
+  };
+
+  $('#rg-add').addEventListener('click', () => {
+    R.condicoes.push({ campo: 'cliente', operador: 'igual', valor: '' });
+    pintar();
+  });
+  $$('[data-rg]').forEach(inp => inp.addEventListener(inp.type === 'checkbox' ? 'change' : 'input', () => {
+    const f = inp.dataset.rg;
+    R[f] = inp.type === 'checkbox' ? inp.checked : (f === 'prioridade_regra' ? Number(inp.value) || 0 : inp.value);
+    resumo();
+  }));
+  pintar();
 }
 function markRadios() { $$('.op-radio').forEach(l => l.classList.toggle('active', l.querySelector('input').checked)); }
 
@@ -701,9 +825,30 @@ async function salvarRotina(isNew) {
       modelo_id: R.modelo_id || null,
       modelo_versao: modeloSel ? (modeloSel.versao || 1) : null
     };
+    /* §M06 — regras condicionais. Descarta condição sem valor (linha em branco
+       deixada pelo administrador) para não gravar critério impossível de casar. */
+    const regras = {
+      condicoes: REGRAS.normalizarCondicoes(R.condicoes).filter(c => String(c.valor ?? '').trim() !== ''),
+      grupo_regra: String(R.grupo_regra || '').trim(),
+      prioridade_regra: Number(R.prioridade_regra) || 0,
+      exclusivo_por_grupo: R.exclusivo_por_grupo !== false
+    };
     let ativ;
-    if (isNew) ativ = await db.insert('op_atividades', { ...patch, is_template: false, anexos: [], created_by: USER.id, created_at: ATIV.hoje() });
-    else ativ = await db.update('op_atividades', state.ativId, patch);
+    /* Colunas de regra podem não existir num banco atrás das migrations: grava
+       com fallback para o núcleo, sem impedir o cadastro da rotina. */
+    const gravar = async (extra) => isNew
+      ? db.insert('op_atividades', { ...patch, ...extra, is_template: false, anexos: [], created_by: USER.id, created_at: ATIV.hoje() })
+      : db.update('op_atividades', state.ativId, { ...patch, ...extra });
+    try {
+      ativ = await gravar(regras);
+    } catch (e) {
+      const schema = ['PGRST204', 'PGRST205', '42703'].includes(String(e?.code || ''))
+        || /could not find the .*column|column .* does not exist|schema cache/i.test(`${e?.message || ''} ${e?.details || ''}`);
+      if (!schema) throw e;
+      console.warn('[GESTÃO OP] Colunas de regra ausentes — rotina salva SEM as condições. Rode database/fix_regras_atividades.sql. Detalhe:', e?.message || e);
+      ativ = await gravar({});
+      toast('Rotina salva, mas as regras condicionais NÃO foram gravadas: o banco ainda não tem as colunas (rode fix_regras_atividades.sql).', { type: 'warn', title: 'Regras não salvas', timeout: 9000 });
+    }
 
     /* Itens próprios existem só na rotina PERSONALIZADA. Com modelo vinculado, os
        itens vivem no modelo — não são copiados (evita duplicidade e divergência). */

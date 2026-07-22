@@ -16,6 +16,7 @@ import { fontesConsultaDimensional, pnsDoCliente, revisoesDoPN, fmtRevisao } fro
 import { comboFiltro } from '../rna-combo.js';
 import { nomeDoSlug } from '../../../services/tipos-inspecao.js';
 import { fmtMedida } from '../../../services/formato.js';
+import * as AMOSTRAS from '../../../services/insp-amostras.js';
 import { $, $$, toast } from '../ui.js';
 
 const ctx = await mountShell();
@@ -258,7 +259,11 @@ async function abrirRelatorio(relId, autoPrint = false) {
   if (!data) { toast('Relatório não encontrado.', { type: 'crit' }); return renderConsulta(); }
   const { rel, caracteristicas, acoes } = data;
   const [resumo, hist] = await Promise.all([INSP.resumoRelatorio(relId), INSP.historicoDe(relId)]);
+  /* §M04 — rastreabilidade por peça (auditor, horários, tempo, resultado).
+     Tolerante: relatório anterior à melhoria simplesmente não exibe a seção. */
+  const amostras = await AMOSTRAS.estadoAmostras(relId, rel.quantidade).catch(() => []);
   const acaoBy = Object.fromEntries(acoes.map(a => [a.caracteristica_id, a]));
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const s = INSP_STATUS[rel.status] || { label: rel.status, badge: 'badge-na' };
   const horaBR = iso => (iso || '').slice(11, 16);
   const numero = numeroDe(rel);
@@ -297,6 +302,21 @@ async function abrirRelatorio(relId, autoPrint = false) {
           ${cell('Início', dataBR(rel.started_iso) + ' ' + horaBR(rel.started_iso))} ${cell('Conclusão', rel.completed_iso ? dataBR(rel.completed_iso) + ' ' + horaBR(rel.completed_iso) : '—')}
           ${podeVerMetricasTempo(USER.role) ? cell('Duração', INSP.fmtDuracao(rel.duracao_seg)) : ''}
         </div></div>
+
+      ${amostras.length ? `<div class="insp-rep-section"><div class="insp-rep-sec-t">Medição por peça</div>
+        <table class="insp-mtable insp-rep-table"><thead><tr>
+          <th>Peça</th><th>Auditor responsável</th><th>Início</th><th>Conclusão</th>${podeVerMetricasTempo(USER.role) ? '<th>Tempo</th>' : ''}<th>Resultado</th><th>Observação</th>
+        </tr></thead><tbody>
+        ${amostras.map(a => `<tr>
+          <td>Peça ${a.amostra}</td>
+          <td>${esc(a.auditor_nome || '—')}${a.concluido_por_nome && a.concluido_por_nome !== a.auditor_nome ? `<div class="cell-sub">Concluída por ${esc(a.concluido_por_nome)}</div>` : ''}</td>
+          <td>${a.inicio_iso ? dataBR(a.inicio_iso) + ' ' + horaBR(a.inicio_iso) : '—'}</td>
+          <td>${a.fim_iso ? dataBR(a.fim_iso) + ' ' + horaBR(a.fim_iso) : '—'}</td>
+          ${podeVerMetricasTempo(USER.role) ? `<td>${a.duracao_seg != null ? INSP.fmtDuracao(a.duracao_seg) : '—'}</td>` : ''}
+          <td>${a.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovada</span>' : a.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovada</span>' : '—'}</td>
+          <td class="cell-sub">${esc(a.observacao || '—')}</td></tr>`).join('')}
+        </tbody></table>
+        <div class="cell-sub mt-1">Rastreabilidade da inspeção colaborativa: cada peça registra o auditor responsável, os horários e o resultado apurado.</div></div>` : ''}
 
       <div class="insp-rep-section"><div class="insp-rep-sec-t">Resultados das medições</div>
         <div class="insp-table-wrap"><table class="insp-mtable insp-rep-table"><thead><tr>

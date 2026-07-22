@@ -838,6 +838,20 @@ body.kiosk .rna-content { padding: 26px; }
 .insp-minput.is-ref{ border-color:rgba(43,108,176,.45); }
 .insp-minput.is-ref:focus{ border-color:var(--rna-info); box-shadow:0 0 0 3px rgba(43,108,176,.12); }
 .insp-tipo-tag.insp-tipo-obrig{ background:rgba(226,59,59,.12); color:var(--rna-crit); }
+
+/* ---- §M04 Inspeção colaborativa: posse da amostra (coluna "Peça N") --------
+   A cor comunica o estado sem depender de texto: âmbar = alguém está medindo,
+   verde/azul = é a minha coluna. Campo bloqueado fica visivelmente inerte, para
+   o auditor entender que precisa "Assumir" antes de digitar. */
+.insp-mtable th.insp-samp.is-locked{ background:rgba(224,165,0,.10); }
+.insp-mtable th.insp-samp.is-mine{ background:rgba(43,108,176,.10); box-shadow:inset 0 -2px 0 var(--rna-info); }
+.insp-mtable th.insp-samp .cell-sub{ font-weight:500; }
+.insp-amostra-btn{ padding:1px 8px; font-size:11px; }
+.insp-minput.is-bloqueada, .insp-attr.is-bloqueada{
+  background:var(--rna-gray-100); color:var(--rna-gray); cursor:not-allowed; border-style:dashed; }
+@media (max-width: 640px){
+  .insp-mtable th.insp-samp .insp-amostra-btn{ width:100%; }
+}
 /* ---- Tipos de inspeção aplicáveis: chips + seleção múltipla (Biblioteca) ----
    Reaproveita as variáveis de tema do RNA One (mesmas bordas, raios e foco dos
    demais campos). Responsivo: os chips quebram linha e o campo ocupa 100%. */

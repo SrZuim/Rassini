@@ -12,6 +12,7 @@ import { db } from '../../../services/db.js';
 import { can, statusClass, podeVerMetricasTempo } from '../../../services/config.js';
 import { fmtMedida } from '../../../services/formato.js';
 import * as INSP from '../../../services/inspecao.js';
+import * as AMOSTRAS from '../../../services/insp-amostras.js';
 import * as ATIV from '../../../services/atividades.js';
 import { buscarParaInspecao, porId as pecaPorId, contarPecasDoTipo,
          tiposDaPeca, pecaAtendeTipo, nomeDoSlug,
@@ -27,6 +28,7 @@ const ETAPAS = ['Tipo e peça', 'Identificação', 'Amostras', 'Medições', 'Re
 // abre já com ?rel= (route → openWizard roda durante a init, antes das seções abaixo).
 let USER, PLANTAO, USUARIOS = [], CLASSES = [];
 let R, STEP = 0, VIEWONLY = false;   // wizard
+let COLABORANDO = false;             // §M04 — relatório em andamento de outro auditor
 let LOCAL;                            // modelo local de cálculo (medições)
 let saveT;                           // timer do autosave
 let PECA_ATUAL = null;                // peça da Biblioteca vinculada (dados atuais)
@@ -54,9 +56,14 @@ window.addEventListener('popstate', route);
 
 /* ============================================================== LISTA (§26) */
 async function renderList() {
-  const rels = await INSP.meusRelatorios(USER.id);
-  const ind = await INSP.indicadoresAuditorias(rels);
-  const emAndamento = rels.filter(r => r.status === 'em_andamento' || r.status === 'rascunho').length;
+  /* §M04 — inclui os relatórios EM ANDAMENTO de outros auditores, abertos à
+     colaboração. Os indicadores continuam calculados só sobre os MEUS, para não
+     misturar a produtividade de terceiros na minha tela. */
+  const rels = await INSP.relatoriosVisiveis(USER.id);
+  const meus = rels.filter(r => !r._colaborativo);
+  const ind = await INSP.indicadoresAuditorias(meus);
+  const emAndamento = meus.filter(r => r.status === 'em_andamento' || r.status === 'rascunho').length;
+  const colaborativos = rels.filter(r => r._colaborativo).length;
   const podeCriar = can(USER.role, 'op_auditorias', 'create');
   const cont = $('#rna-content');
   cont.innerHTML = `
@@ -96,7 +103,8 @@ function tabela(rels) {
       const s = st(r.status);
       const fin = String(r.status).startsWith('finalizada') || r.status === 'revisada';
       return `<tr>
-      <td class="cell-strong">${r.numero}</td>
+      <td class="cell-strong">${r.numero}
+        ${r._colaborativo ? `<div class="cell-sub" title="Relatório de outro auditor, aberto para medição colaborativa"><span class="rna-badge badge-info"><i class="bi bi-people-fill"></i> Colaborativo</span> ${escTitle(r.auditor_nome || '')}</div>` : ''}</td>
       <td><span class="cell-sub">${r.tipo_nome || '—'}</span></td>
       <td>${r.cliente || '—'}<div class="cell-sub">${r.peca_nome || '—'}</div></td>
       <td>${r.peca_codigo || '—'}<div class="cell-sub">Rev ${r.revisao_desenho ?? '—'}</div></td>
@@ -110,7 +118,7 @@ function tabela(rels) {
           <a class="rna-btn rna-btn-ghost rna-btn-sm" href="consulta-dimensional.html?rel=${r.id}" title="Abrir relatório"><i class="bi bi-file-earmark-text"></i> Relatório</a>
           <a class="rna-btn rna-btn-ghost rna-btn-sm" href="consulta-dimensional.html?rel=${r.id}&print=1" title="Imprimir relatório"><i class="bi bi-printer"></i> Imprimir</a>
           ${r.status === 'finalizada_reprovada' ? `<a class="rna-btn rna-btn-dark rna-btn-sm" href="op-pendencias.html?rel=${r.id}" title="Ver pendência vinculada"><i class="bi bi-exclamation-triangle"></i> Ver Pendência</a>` : ''}`
-        : `<button class="rna-btn rna-btn-primary rna-btn-sm" data-open="${r.id}"><i class="bi bi-pencil-square"></i> Continuar</button>`}
+        : `<button class="rna-btn rna-btn-primary rna-btn-sm" data-open="${r.id}"><i class="bi ${r._colaborativo ? 'bi-people-fill' : 'bi-pencil-square'}"></i> ${r._colaborativo ? 'Colaborar' : 'Continuar'}</button>`}
       </div></td></tr>`;
     }).join('')}
   </tbody></table></div>`;
@@ -163,6 +171,15 @@ async function openWizard(relId, viewonly = false) {
   if (!R) { toast('A auditoria não foi encontrada.', { type: 'crit', title: 'Relatório inexistente' }); return renderList(); }
   const fin = String(R.rel.status).startsWith('finalizada') || R.rel.status === 'revisada';
   if (fin && !viewonly) VIEWONLY = true;           // finalizado só em modo leitura (§21)
+  /* §M04 — colaboração: um relatório EM ANDAMENTO de outro auditor abre em modo
+     EDITÁVEL para os auditores autorizados (o controle fino é por amostra, via
+     trava). Quem não pode colaborar cai em leitura, sem erro. */
+  COLABORANDO = !fin && R.rel.auditor_id !== USER.id;
+  if (COLABORANDO && !INSP.podeColaborar(R.rel, USER)) {
+    VIEWONLY = true;
+    toast('Você não tem permissão para medir neste relatório. Abrindo em modo leitura.', { type: 'warn' });
+  }
+  MINHAS = new Set(); pararBatida();               // estado de trava é por abertura
   // Persistência (§reabrir): o vínculo vem do banco (peca_id) — nunca de memória
   // ou localStorage. Relê os dados ATUAIS da peça na Biblioteca Técnica.
   PECA_ATUAL = await carregarPecaVinculada(R.rel.peca_id);
@@ -193,6 +210,10 @@ function paintWizard() {
         <button class="rna-btn rna-btn-ghost rna-btn-sm" id="bc-list"><i class="bi bi-arrow-left"></i> Voltar à lista</button>
       </div>
     </div>
+    ${COLABORANDO && !VIEWONLY ? `<div class="insp-blocker mb-2" style="border-left:4px solid var(--rna-info)">
+      <i class="bi bi-people-fill"></i> <div><b>Inspeção colaborativa.</b> Este relatório foi iniciado por
+      ${escTitle(r.auditor_nome || 'outro auditor')}. Assuma uma peça na etapa <b>Medições</b> para registrar as suas
+      medições — as demais continuam disponíveis para os outros auditores.</div></div>` : ''}
     <div class="insp-result-banner ${bannerClass(r.resultado)}" id="insp-banner">${bannerHtml(r.resultado)}</div>
     ${stepperHtml()}
     <div class="rna-card mt-3"><div class="rna-card__body" id="insp-step"></div></div>
@@ -306,7 +327,10 @@ function renderStep() {
   const prev = $('#nav-prev'), next = $('#nav-next');
   if (prev) prev.style.visibility = STEP === 0 ? 'hidden' : 'visible';
   if (next) next.style.display = STEP >= ETAPAS.length - 1 ? 'none' : '';
-  ({ 0: stepTipoPeca, 1: stepIdentificacao, 2: stepAmostras, 3: stepMedicoes, 4: stepRevisao, 5: stepResultado }[STEP])(host);
+  /* stepMedicoes é async (carrega o estado colaborativo das amostras); os demais
+     são síncronos. `Promise.resolve` uniformiza sem quebrar os existentes. */
+  Promise.resolve(({ 0: stepTipoPeca, 1: stepIdentificacao, 2: stepAmostras, 3: stepMedicoes, 4: stepRevisao, 5: stepResultado }[STEP])(host))
+    .catch(e => { INSP.logErro('Falha ao renderizar a etapa', e); toast(INSP.mensagemErro(e), { type: 'crit' }); });
   atualizarNav();
 }
 
@@ -594,13 +618,18 @@ async function aplicarQtd(q) {
 
 /* ============================================================ ETAPA 3 (§8-17)
    LOCAL: modelo p/ cálculo em tempo real { [carId]: { min,max,vals:{amostra:valor} } } */
-function stepMedicoes(host) {
+async function stepMedicoes(host) {
   const r = R.rel;
   if (!r.quantidade) { host.innerHTML = `<div class="insp-blocker"><i class="bi bi-info-circle"></i> Selecione a quantidade de peças na etapa <b>Amostras</b> antes de medir.</div>`; return; }
   if (!R.caracteristicas.length) { host.innerHTML = `<div class="insp-blocker"><i class="bi bi-info-circle"></i> Esta peça não possui características cadastradas.</div>`; return; }
   const qtd = r.quantidade;
   LOCAL = {};
   R.caracteristicas.forEach(c => { LOCAL[c.id] = { min: c.minimo, max: c.maximo, tipo: c.tipo_especificacao, informativo: !!c.informativo, vals: {} }; c.medicoes.forEach(m => LOCAL[c.id].vals[m.amostra] = m.valor); });
+
+  /* §M04 — estado colaborativo das amostras. Travas abandonadas são liberadas
+     ao abrir a tela (higiene), então uma queda de rede não deixa peça presa. */
+  await AMOSTRAS.liberarExpiradas(r.id).catch(() => {});
+  AMOST = await AMOSTRAS.estadoAmostras(r.id, qtd).catch(() => []);
 
   host.innerHTML = `
     <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
@@ -609,15 +638,17 @@ function stepMedicoes(host) {
       <div class="flex-fill"></div>
       <span class="text-muted-2" style="font-size:12.5px"><i class="bi bi-lock"></i> Nominal/limites vêm da Biblioteca (somente leitura)</span>
     </div>
+    <div id="insp-colab"></div>
     <div class="insp-table-wrap"><table class="insp-mtable"><thead><tr>
       <th class="sticky-l">Cota</th><th>Característica</th><th>Quadrante</th><th>Ref.</th><th>Un.</th><th>Nominal</th><th>Mín</th><th>Máx</th><th>Equip.</th><th>Obs.</th>
-      ${Array.from({ length: qtd }, (_, i) => `<th class="insp-samp">Peça ${i + 1}</th>`).join('')}
+      ${Array.from({ length: qtd }, (_, i) => cabecalhoAmostra(i + 1)).join('')}
       <th>Classe</th><th>Status</th>
     </tr></thead><tbody>
       ${R.caracteristicas.map(c => linhaMedicao(c, qtd)).join('')}
     </tbody></table></div>`;
 
   $('#btn-ajuda-classe').addEventListener('click', ajudaClasses);
+  pintarColaboradores();
   if (VIEWONLY) { $$('.insp-minput', host).forEach(i => i.disabled = true); $$('.insp-attr', host).forEach(s => s.disabled = true); $$('.insp-classe-sel', host).forEach(s => s.disabled = true); return; }
   $$('.insp-minput', host).forEach(inp => {
     inp.addEventListener('input', () => onMedInput(inp));
@@ -626,7 +657,186 @@ function stepMedicoes(host) {
   $$('.insp-attr', host).forEach(sel => sel.addEventListener('change', () => onAttrInput(sel)));
   $$('.insp-classe-sel', host).forEach(sel => sel.addEventListener('change', () => onClasse(sel)));
   $$('.insp-tratar', host).forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));
+  wireAmostras();
+  aplicarBloqueios();
 }
+
+/* ==================== COLABORAÇÃO POR AMOSTRA (§M04) ======================== */
+let AMOST = [];          // estado das amostras (com trava)
+let BATIDA;              // timer do sinal de vida
+let MINHAS = new Set();  // amostras que ESTE navegador está segurando
+
+const amostraDe = n => AMOST.find(a => Number(a.amostra) === Number(n));
+/* Só edita quem detém a trava. Sem trava ativa, a coluna fica somente-leitura —
+   é o que impede dois auditores de sobrescreverem a mesma peça. */
+const euEdito = n => AMOSTRAS.podeEditar(amostraDe(n), USER.id);
+
+/** Cabeçalho da coluna da peça: dono, status e o botão de assumir/concluir. */
+function cabecalhoAmostra(n) {
+  const a = amostraDe(n);
+  const st = AMOSTRAS.AMOSTRA_STATUS[a?.status || 'pendente'];
+  const meu = a && a.bloqueado_por === USER.id && a._travaAtiva;
+  const deOutro = a && a._travaAtiva && a.bloqueado_por !== USER.id;
+  const concluida = a?.status === 'concluida';
+  let acao = '';
+  if (!VIEWONLY) {
+    if (concluida) acao = `<button class="rna-btn rna-btn-ghost rna-btn-sm insp-amostra-btn" data-reabrir="${n}" title="Reabrir para corrigir"><i class="bi bi-arrow-counterclockwise"></i> Reabrir</button>`;
+    else if (meu) acao = `<button class="rna-btn rna-btn-primary rna-btn-sm insp-amostra-btn" data-concluir="${n}"><i class="bi bi-check2"></i> Concluir</button>
+                          <button class="rna-btn rna-btn-ghost rna-btn-sm insp-amostra-btn" data-liberar="${n}" title="Liberar sem concluir"><i class="bi bi-unlock"></i></button>`;
+    else if (deOutro) acao = `<span class="rna-badge badge-warn" title="Em edição por ${escTitle(a.bloqueado_nome)}"><i class="bi bi-lock-fill"></i> ${escTitle(a.bloqueado_nome || 'ocupada')}</span>`;
+    else acao = `<button class="rna-btn rna-btn-dark rna-btn-sm insp-amostra-btn" data-assumir="${n}"><i class="bi bi-hand-index"></i> Assumir</button>`;
+  }
+  const dono = a?.auditor_nome ? `<div class="cell-sub" title="Auditor responsável">${escTitle(a.auditor_nome)}</div>` : '';
+  return `<th class="insp-samp ${deOutro ? 'is-locked' : ''} ${meu ? 'is-mine' : ''}" data-th="${n}">
+    <div>Peça ${n}</div>
+    <span class="rna-badge ${st.badge}" style="font-weight:600"><i class="bi ${st.icone}"></i> ${st.label}</span>
+    ${dono}<div class="mt-1 d-flex gap-1 justify-content-center flex-wrap">${acao}</div></th>`;
+}
+
+/** Faixa "quem está trabalhando agora" + resumo de participação. */
+async function pintarColaboradores() {
+  const box = $('#insp-colab'); if (!box) return;
+  const ativos = AMOST.filter(a => a._travaAtiva);
+  const donos = new Map();
+  AMOST.forEach(a => { if (a.auditor_id) donos.set(a.auditor_id, a.auditor_nome || '—'); });
+  if (!ativos.length && !donos.size) { box.innerHTML = ''; return; }
+  const chips = ativos.map(a => `<span class="rna-badge badge-warn"><i class="bi bi-pencil-fill"></i> ${escTitle(a.bloqueado_nome)} · Peça ${a.amostra}</span>`).join(' ');
+  const parts = [...donos.values()].map(n => `<span class="rna-badge badge-info">${escTitle(n)}</span>`).join(' ');
+  box.className = 'insp-blocker mb-2';
+  box.innerHTML = `<i class="bi bi-people-fill"></i> <div>
+    ${ativos.length ? `<b>Medindo agora:</b> ${chips}` : '<b>Nenhuma peça em edição no momento.</b>'}
+    ${donos.size ? `<div class="cell-sub mt-1">Participaram desta inspeção: ${parts}</div>` : ''}</div>`;
+}
+
+/** Liga/desliga os campos conforme a posse da coluna. */
+function aplicarBloqueios() {
+  if (VIEWONLY) return;
+  $$('.insp-minput, .insp-attr').forEach(el => {
+    const n = +el.dataset.a;
+    const livre = euEdito(n);
+    el.disabled = !livre;
+    el.classList.toggle('is-bloqueada', !livre);
+    if (!livre) {
+      const a = amostraDe(n);
+      el.title = a?.status === 'concluida' ? `Peça ${n} concluída — use Reabrir para corrigir.`
+        : a?._travaAtiva ? `Peça ${n} em edição por ${a.bloqueado_nome}.`
+        : `Clique em "Assumir" no topo da coluna da Peça ${n} para medir.`;
+    } else el.title = '';
+  });
+}
+
+function wireAmostras() {
+  $$('[data-assumir]').forEach(b => b.addEventListener('click', () => assumir(+b.dataset.assumir)));
+  $$('[data-liberar]').forEach(b => b.addEventListener('click', () => liberar(+b.dataset.liberar)));
+  $$('[data-concluir]').forEach(b => b.addEventListener('click', () => concluirAmostraUI(+b.dataset.concluir)));
+  $$('[data-reabrir]').forEach(b => b.addEventListener('click', () => reabrir(+b.dataset.reabrir)));
+}
+
+/** Repinta só os cabeçalhos e o estado dos campos (sem remontar a tabela). */
+async function refreshAmostras() {
+  AMOST = await AMOSTRAS.estadoAmostras(R.rel.id, R.rel.quantidade).catch(() => AMOST);
+  AMOST.forEach(a => {
+    const th = document.querySelector(`th[data-th="${a.amostra}"]`);
+    if (th) th.outerHTML = cabecalhoAmostra(a.amostra);
+  });
+  wireAmostras();
+  aplicarBloqueios();
+  pintarColaboradores();
+}
+
+async function assumir(n) {
+  const res = await AMOSTRAS.assumirAmostra(R.rel.id, n, USER);
+  if (!res.ok) {
+    const msg = res.motivo === 'bloqueada' ? `A Peça ${n} está sendo medida por ${res.por}. Você pode ver os valores, mas não editar.`
+      : res.motivo === 'concluida' ? `A Peça ${n} já foi concluída. Use "Reabrir" para corrigir.`
+      : 'Não foi possível assumir esta peça.';
+    toast(msg, { type: 'warn', title: 'Peça indisponível', timeout: 6000 });
+    await refreshAmostras();
+    return;
+  }
+  MINHAS.add(n);
+  iniciarBatida();
+  await refreshAmostras();
+  toast(`Peça ${n} assumida. As demais seguem disponíveis para os outros auditores.`, { type: 'ok', timeout: 3500 });
+}
+
+async function liberar(n) {
+  await AMOSTRAS.liberarAmostra(R.rel.id, n, USER);
+  MINHAS.delete(n);
+  if (!MINHAS.size) pararBatida();
+  await refreshAmostras();
+}
+
+async function reabrir(n) {
+  await AMOSTRAS.reabrirAmostra(R.rel.id, n, USER);
+  await INSP.registrarHistorico(R.rel.id, USER, 'Reabriu peça', `Peça ${n}`, 'concluída', 'em medição').catch(() => {});
+  await refreshAmostras();
+  toast(`Peça ${n} reaberta. Assuma a peça para editar.`, { type: 'info' });
+}
+
+/** Conclusão da amostra: pede observação e congela auditor, tempo e resultado. */
+async function concluirAmostraUI(n) {
+  const a = amostraDe(n);
+  const faltam = medicoesFaltantes(n);
+  const m = modal({
+    title: `Concluir Peça ${n}`,
+    content: `
+      ${faltam ? `<div class="insp-blocker mb-2"><i class="bi bi-exclamation-triangle"></i> <div><b>${faltam} medição(ões) ainda em branco</b> nesta peça. Você pode concluir mesmo assim, mas a inspeção só finaliza com tudo preenchido.</div></div>` : ''}
+      <div class="insp-treat-spec mb-2">
+        ${info('Auditor responsável', a?.auditor_nome || USER.nome)}
+        ${info('Início', a?.inicio_iso ? fmtHora(a.inicio_iso) : '—')}
+        ${info('Tempo acumulado', INSP.fmtDuracao(a?.duracao_seg ?? 0))}
+      </div>
+      <label class="form-label">Observação da peça</label>
+      <textarea class="form-control" id="ca-obs" rows="3" placeholder="Registro livre sobre esta peça (opcional)">${escTitle(a?.observacao || '')}</textarea>`,
+    footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Cancelar</button>
+             <button class="rna-btn rna-btn-primary" id="ca-ok"><i class="bi bi-check2-circle"></i> Concluir peça</button>`
+  });
+  $('#ca-ok', m.host).addEventListener('click', async () => {
+    const btn = $('#ca-ok', m.host); btn.disabled = true;
+    const res = await AMOSTRAS.concluirAmostra(R.rel.id, n, USER, { observacao: $('#ca-obs', m.host).value });
+    if (!res.ok) { btn.disabled = false; return toast('Não foi possível concluir esta peça.', { type: 'crit' }); }
+    await INSP.registrarHistorico(R.rel.id, USER, 'Concluiu peça', `Peça ${n}`, 'em medição', 'concluída').catch(() => {});
+    MINHAS.delete(n); if (!MINHAS.size) pararBatida();
+    m.close();
+    await refreshAmostras();
+    toast(`Peça ${n} concluída.`, { type: 'ok' });
+  });
+}
+
+function medicoesFaltantes(n) {
+  let f = 0;
+  R.caracteristicas.forEach(c => {
+    if (c.informativo && !c.obrigatorio) return;
+    const v = LOCAL[c.id]?.vals[n];
+    if (String(v ?? '') === '') f++;
+  });
+  return f;
+}
+
+/* Sinal de vida: enquanto este navegador segura amostras, renova a trava. Sem
+   isso a trava expira sozinha em LOCK_TTL_SEG — que é justamente o que evita
+   peça travada para sempre depois de um fechamento abrupto. */
+function iniciarBatida() {
+  if (BATIDA) return;
+  BATIDA = setInterval(async () => {
+    for (const n of MINHAS) {
+      const vivo = await AMOSTRAS.baterCoracao(R.rel.id, n, USER).catch(() => false);
+      if (!vivo) MINHAS.delete(n);          // perdi a trava (expirou / outro assumiu)
+    }
+    if (!MINHAS.size) { pararBatida(); refreshAmostras(); }
+  }, AMOSTRAS.BATIDA_SEG * 1000);
+}
+function pararBatida() { clearInterval(BATIDA); BATIDA = null; }
+
+/* Sair da página solta as travas deste navegador — o colega não espera o TTL. */
+window.addEventListener('beforeunload', () => {
+  for (const n of MINHAS) {
+    try { AMOSTRAS.liberarAmostra(R?.rel?.id, n, USER); } catch { /* melhor esforço */ }
+  }
+});
+
+const fmtHora = iso => { const d = new Date(iso); return isNaN(d) ? '—' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); };
 
 function linhaMedicao(c, qtd) {
   const attr = c.tipo_especificacao === 'ATRIBUTO';
@@ -754,7 +964,25 @@ function bindRowClasse(row) {
 }
 async function persistMed(inp) {
   const carId = inp.dataset.car, a = +inp.dataset.a;
-  await autosave(async () => { await INSP.salvarMedicao(R.rel.id, carId, a, inp.value); await reload(); });
+  /* §M04 — só grava quem detém a trava da amostra. Guarda de segurança: mesmo
+     que o campo escape do `disabled` (DOM alterado, corrida de repintura), a
+     medição de uma peça de outro auditor não é persistida. */
+  if (!VIEWONLY && !euEdito(a)) {
+    const dono = amostraDe(a);
+    toast(dono?.status === 'concluida'
+      ? `A Peça ${a} está concluída. Use "Reabrir" para corrigir.`
+      : `A Peça ${a} está com ${dono?.bloqueado_nome || 'outro auditor'}. Assuma a peça para medir.`,
+      { type: 'warn', title: 'Peça bloqueada' });
+    inp.value = LOCAL[carId]?.vals?.[a] ?? '';
+    aplicarBloqueios();
+    return;
+  }
+  /* USER vai junto: é o que grava a AUTORIA da medição e a linha de histórico. */
+  await autosave(async () => {
+    await INSP.salvarMedicao(R.rel.id, carId, a, inp.value, USER);
+    await AMOSTRAS.recalcularResultados(R.rel.id, R.rel.quantidade).catch(() => {});
+    await reload();
+  });
 }
 async function onClasse(sel) {
   await autosave(async () => { await INSP.salvarClasse(sel.dataset.car, sel.value); await reload(); });
@@ -839,8 +1067,10 @@ function ajudaClasses() {
 async function stepRevisao(host) {
   const s = await INSP.resumoRelatorio(R.rel.id);
   const r = R.rel;
+  const amostras = await AMOSTRAS.estadoAmostras(r.id, r.quantidade).catch(() => []);
   host.innerHTML = `
     <h3 class="insp-h"><i class="bi bi-clipboard-check"></i> Revisão</h3>
+    ${amostras.length ? tabelaAmostras(amostras) : ''}
     <div class="row g-3">
       <div class="col-lg-7">
         <div class="insp-summary-grid">
@@ -869,6 +1099,33 @@ async function stepRevisao(host) {
   $$('.insp-tratar', host).forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));
 }
 const sum = (l, v, tone = '') => `<div class="insp-sum ${tone ? 'insp-sum-' + tone : ''}"><div class="insp-sum__v">${v}</div><div class="insp-sum__l">${l}</div></div>`;
+
+/* §M04 — quadro por peça: auditor, horários, tempo, resultado e observação.
+   É a prestação de contas do trabalho dividido — mostra quem fez o quê. */
+function tabelaAmostras(amostras) {
+  const res = r => r === 'aprovado' ? '<span class="insp-pill insp-ok">Aprovada</span>'
+    : r === 'reprovado' ? '<span class="insp-pill insp-crit">Reprovada</span>'
+    : r === 'registrado' ? '<span class="insp-pill insp-info">Registrada</span>'
+    : '<span class="insp-pill insp-pend">Pendente</span>';
+  return `<div class="insp-card-lite mb-3"><b><i class="bi bi-people-fill"></i> Medição por peça</b>
+    <div class="insp-table-wrap mt-2"><table class="rna-table"><thead><tr>
+      <th>Peça</th><th>Auditor responsável</th><th>Início</th><th>Fim</th><th>Tempo</th><th>Resultado</th><th>Situação</th><th>Observação</th>
+    </tr></thead><tbody>
+    ${amostras.map(a => {
+      const st = AMOSTRAS.AMOSTRA_STATUS[a.status] || AMOSTRAS.AMOSTRA_STATUS.pendente;
+      return `<tr>
+        <td class="cell-strong">Peça ${a.amostra}</td>
+        <td>${escTitle(a.auditor_nome || '—')}${a.concluido_por_nome && a.concluido_por_nome !== a.auditor_nome
+          ? `<div class="cell-sub">Concluída por ${escTitle(a.concluido_por_nome)}</div>` : ''}</td>
+        <td class="cell-sub">${a.inicio_iso ? fmtHora(a.inicio_iso) : '—'}</td>
+        <td class="cell-sub">${a.fim_iso ? fmtHora(a.fim_iso) : '—'}</td>
+        <td class="cell-sub">${a.duracao_seg != null ? INSP.fmtDuracao(a.duracao_seg) : '—'}</td>
+        <td>${res(a.resultado)}</td>
+        <td><span class="rna-badge ${st.badge}">${st.label}</span>${a._travaAtiva ? `<div class="cell-sub"><i class="bi bi-lock-fill"></i> ${escTitle(a.bloqueado_nome)}</div>` : ''}</td>
+        <td class="cell-sub">${escTitle(a.observacao || '—')}</td></tr>`;
+    }).join('')}
+    </tbody></table></div></div>`;
+}
 
 /* ============================================================ ETAPA 5 (§20) */
 async function stepResultado(host) {

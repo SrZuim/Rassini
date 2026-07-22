@@ -129,6 +129,7 @@ export const INSPECAO = {
   insp_relatorios:     [],
   insp_caracteristicas:[],
   insp_medicoes:       [],
+  insp_amostras:       [],   // §M04 — posse/tempo/resultado por peça (colaborativo)
   insp_acoes:          [],
   insp_anexos:         [],
   insp_historico:      [],
