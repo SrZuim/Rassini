@@ -303,6 +303,7 @@ function seedSpec(m) {
   const tipo = m.tipo_especificacao || 'TOLERANCIA';
   const out = {
     quadrante: '', superior: null, inferior: null, tol_simetrica: null,
+    classe_nc: null,                       // §Erro 10 — classe da não conformidade
     ...m, tipo_especificacao: tipo
   };
   if (tipo === 'TOLERANCIA' && m.nominal != null) {
@@ -313,6 +314,21 @@ function seedSpec(m) {
   return out;
 }
 export const BIB_METRICAS_DEFAULT = _METRICAS_RAW.map(seedSpec);
+
+/* ============================== CLASSE DA NÃO CONFORMIDADE (§Erro 10) ========
+   A classe pertence à CARACTERÍSTICA, não ao relatório e não ao auditor: ela é
+   cadastrada aqui, na Biblioteca Técnica, e o RNA One a aplica sozinho sempre
+   que aquela característica reprovar. 'NA' = "Não se aplica" (a característica
+   reprova, mas não recebe classificação); `null` = ainda não cadastrada, que é
+   diferente de "não se aplica" e gera alerta para o administrador — o sistema
+   NUNCA assume A, B ou C por conta própria. */
+export const BIB_CLASSES_NC = [
+  { valor: 'A',  label: 'Classe A',      descricao: 'Não conformidade grave' },
+  { valor: 'B',  label: 'Classe B',      descricao: 'Não conformidade moderada' },
+  { valor: 'C',  label: 'Classe C',      descricao: 'Não conformidade leve' },
+  { valor: 'NA', label: 'Não se aplica', descricao: 'Reprova sem classificação de defeito' }
+];
+export const BIB_CLASSES_NC_VALORES = BIB_CLASSES_NC.map(c => c.valor);
 
 /* --------------------------------------------------------- pontos inspeção - */
 export const BIB_PONTOS_DEFAULT = [

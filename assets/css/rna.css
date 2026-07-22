@@ -762,10 +762,51 @@ body.kiosk .rna-content { padding: 26px; }
 @media print {
   .insp-report{ border:0; border-radius:0; padding:0; max-width:none; }
   .insp-report .insp-table-wrap{ overflow:visible; max-height:none; border:0; }
-  .insp-rep-table thead{ display:table-header-group; }        /* repete cabeçalho por página */
-  .insp-rep-table tr{ break-inside:avoid; }
+
+  /* ---------------------------------------------- §Erro 08: PAGINAÇÃO DO PDF
+     CAUSA RAIZ: o cabeçalho da tabela usa `position:sticky; top:0` para a
+     rolagem na tela. Na impressão, o elemento fixado é pintado POR CIMA das
+     linhas a cada quebra de página — era o cabeçalho aparecendo sobre as cotas
+     e escondendo característica, limites e resultado.
+     Correção: na impressão o cabeçalho deixa de ser fixo e passa a ser um
+     `table-header-group` de verdade, que o navegador REPETE no topo de cada
+     página nova, com o conteúdo começando abaixo dele. */
+  .insp-report .insp-mtable thead th,
+  .insp-report .insp-mtable .sticky-l,
+  .insp-report .insp-mtable thead .sticky-l{ position:static !important; top:auto; left:auto; z-index:auto; }
+
+  .insp-rep-table{ break-inside:auto; page-break-inside:auto; border-collapse:collapse; width:100%; }
+  .insp-rep-table thead{ display:table-header-group; break-inside:avoid; break-after:avoid; }
+  .insp-rep-table tfoot{ display:table-footer-group; }
+  .insp-rep-table tbody{ break-inside:auto; }
+
+  /* A linha é a unidade indivisível: ou cabe inteira na página, ou vai para a
+     próxima — nunca é cortada no meio nem tem célula pela metade. */
+  .insp-rep-table tr{ break-inside:avoid; page-break-inside:avoid; break-after:auto; }
+  .insp-rep-table td, .insp-rep-table th{ break-inside:avoid; page-break-inside:avoid; vertical-align:top; }
+
+  /* Texto longo aumenta a ALTURA da linha em vez de ser cortado: sem `nowrap`,
+     característica, equipamento e observação quebram em várias linhas. */
+  .insp-rep-table td, .insp-rep-table th{ white-space:normal; word-break:break-word; }
+  .insp-rep-table td{ min-height:18px; }
+
+  /* Respiro fixo entre o cabeçalho repetido e a primeira linha da página. */
+  .insp-rep-table thead th{ padding:6px 7px 8px; border-bottom:1.2pt solid #000; }
+  .insp-rep-table tbody tr:first-child td{ padding-top:8px; }
+
+  /* O cabeçalho é escuro: sem isto o navegador imprime fundo branco e o texto
+     branco some. */
+  .insp-rep-table thead th{ background:var(--rna-graphite) !important; color:#fff !important;
+    -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+  /* Seção longa PODE quebrar (a tabela de medições costuma passar de uma
+     página); as seções curtas continuam inteiras. */
+  .insp-rep-section{ break-inside:auto; }
+  .insp-rep-section .insp-rep-grid, .insp-rep-reprov, .insp-rep-final{ break-inside:avoid; }
+
   .insp-rep-table td.rep-crit::after{ content:' (R)'; }        /* legível em P&B (§24) */
   .insp-rep-table td.rep-ok::after{ content:' (A)'; }
+  .insp-rep-table td.rep-warn::after{ content:' (A!)'; }
   .no-print-optional{ display:none; }
   @page{ size:A4 landscape; margin:12mm; }
 }
@@ -934,3 +975,16 @@ body.kiosk .rna-content { padding: 26px; }
   .insp-rep-obs{ max-width:none; }
   .insp-campo-erro--flut{ display:none; }
 }
+
+/* --- §Erro 09: exclusão de relatório (somente administrador) --------------- */
+.cdim-row-actions{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.cdim-del{ color:var(--rna-crit); }
+.cdim-del:hover{ background:rgba(226,59,59,.10); color:#b62828; }
+.cdim-del-box{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px;
+  padding:12px 14px; background:var(--rna-bg); border-radius:10px; }
+@media (max-width:520px){ .cdim-del-box{ grid-template-columns:1fr; } }
+
+/* --- §Erro 10: classe da não conformidade (automática, somente leitura) ---- */
+.insp-classe-ro{ display:flex; align-items:center; min-height:38px; }
+.insp-classe-pend{ cursor:help; }
+.bib-classe-nc{ min-width:140px; }

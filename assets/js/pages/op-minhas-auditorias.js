@@ -688,6 +688,7 @@ async function stepMedicoes(host) {
       <span class="text-muted-2" style="font-size:12.5px"><i class="bi bi-lock"></i> Nominal/limites vêm da Biblioteca (somente leitura)</span>
     </div>
     <div id="insp-colab"></div>
+    <div id="insp-classe-alerta"></div>
     <div class="insp-table-wrap"><table class="insp-mtable"><thead><tr>
       <th class="sticky-l">Cota</th><th>Característica</th><th>Quadrante</th><th>Ref.</th><th>Un.</th><th>Nominal</th><th>Mín</th><th>Máx</th><th>Equip.</th><th>Obs.</th>
       ${Array.from({ length: qtd }, (_, i) => cabecalhoAmostra(i + 1)).join('')}
@@ -698,9 +699,10 @@ async function stepMedicoes(host) {
 
   $('#btn-ajuda-classe').addEventListener('click', ajudaClasses);
   pintarColaboradores();
+  pintarAlertaClasse();
   /* §Erro 05 — observação completa por clique/toque (também em modo leitura). */
   $$('[data-obs]', host).forEach(b => b.addEventListener('click', () => abrirObservacao(b.dataset.obs)));
-  if (VIEWONLY) { $$('.insp-minput', host).forEach(i => i.disabled = true); $$('.insp-attr', host).forEach(s => s.disabled = true); $$('.insp-classe-sel', host).forEach(s => s.disabled = true); return; }
+  if (VIEWONLY) { $$('.insp-minput', host).forEach(i => i.disabled = true); $$('.insp-attr', host).forEach(s => s.disabled = true); return; }
   $$('.insp-minput', host).forEach(inp => {
     inp.addEventListener('input', () => onMedInput(inp));
     inp.addEventListener('change', () => persistMed(inp));
@@ -710,7 +712,6 @@ async function stepMedicoes(host) {
      no container da etapa: ele morre junto com o HTML quando a etapa é
      repintada, então não há acúmulo de listeners nem vazamento. */
   host.addEventListener('keydown', onTeclaMedicao);
-  $$('.insp-classe-sel', host).forEach(sel => sel.addEventListener('change', () => onClasse(sel)));
   $$('.insp-tratar', host).forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));
   wireAmostras();
   aplicarBloqueios();
@@ -761,6 +762,23 @@ async function pintarColaboradores() {
   box.innerHTML = `<i class="bi bi-people-fill"></i> <div>
     ${ativos.length ? `<b>Medindo agora:</b> ${chips}` : '<b>Nenhuma peça em edição no momento.</b>'}
     ${donos.size ? `<div class="cell-sub mt-1">Participaram desta inspeção: ${parts}</div>` : ''}</div>`;
+}
+
+/* §Erro 10 — alerta de cadastro incompleto. Item reprovado sem classe cadastrada
+   NÃO impede medir nem finalizar: apenas avisa quem pode corrigir a Biblioteca.
+   O sistema jamais "chuta" A, B ou C. */
+function pintarAlertaClasse() {
+  const box = $('#insp-classe-alerta'); if (!box) return;
+  const faltando = INSP.caracteristicasSemClasse(R.caracteristicas);
+  if (!faltando.length) { box.innerHTML = ''; box.className = ''; return; }
+  box.className = 'insp-blocker mb-2';
+  box.style.borderLeft = '4px solid var(--rna-yellow-600)';
+  box.innerHTML = `<i class="bi bi-exclamation-triangle"></i> <div>
+    <b>${faltando.length} característica(s) reprovada(s) sem Classe da Não Conformidade cadastrada.</b>
+    <div class="cell-sub">${faltando.map(c => `Cota ${escTitle(String(c.cota ?? '—'))} · ${escTitle(c.caracteristica || '')}`).join(' · ')}</div>
+    <div class="cell-sub mt-1">A classificação pertence à característica e é cadastrada na
+    <b>Biblioteca Técnica</b>. Você pode concluir a inspeção normalmente — avise o administrador para completar o cadastro.
+    ${can(USER.role, 'biblioteca', 'edit') ? `<a class="rna-btn rna-btn-dark rna-btn-sm ms-2" href="biblioteca.html"><i class="bi bi-box-seam"></i> Abrir Biblioteca Técnica</a>` : ''}</div></div>`;
 }
 
 /** Liga/desliga os campos conforme a posse da coluna. */
@@ -999,11 +1017,21 @@ function statusReferenciaHtml(c) {
     ? `<span class="insp-pill insp-info"><i class="bi bi-check2"></i> Registrado — Referência</span>`
     : `<span class="insp-pill insp-info"><i class="bi bi-info-circle"></i> Referência informativa</span>`;
 }
+/* §Erro 10 — CLASSE AUTOMÁTICA, SOMENTE LEITURA.
+   A classe pertence à característica cadastrada na Biblioteca Técnica: quando o
+   item reprova, o sistema a preenche sozinho. O auditor não escolhe e não edita
+   — por isso aqui não há mais `<select>`, apenas o selo do que está cadastrado.
+   Aprovado não exibe classe nenhuma. */
 function classeCellHtml(c) {
-  if (c.resultado !== 'reprovado') return '<span class="text-muted-2">—</span>';
-  const opts = ['A', 'B', 'C'].map(k => `<option value="${k}" ${c.classe_defeito === k ? 'selected' : ''}>Classe ${k}</option>`).join('');
-  return `<div class="d-flex flex-column gap-1">
-    <select class="form-select form-select-sm insp-classe-sel" data-car="${c.id}"><option value="">Classificar...</option>${opts}</select>
+  if (c.resultado !== 'reprovado' || c.informativo) return '<span class="text-muted-2">—</span>';
+  const cad = INSP.classeCadastrada(c);
+  const selo = c.classe_defeito
+    ? `<span class="rna-badge ${c.classe_defeito === 'A' ? 'badge-crit' : c.classe_defeito === 'B' ? 'badge-warn' : 'badge-pend'}"
+         title="Classe cadastrada na Biblioteca Técnica para esta característica."><i class="bi bi-lock-fill"></i> Classe ${c.classe_defeito}</span>`
+    : cad === 'NA'
+      ? `<span class="rna-badge badge-na" title="A Engenharia definiu que esta característica reprova sem classificação.">Não se aplica</span>`
+      : `<span class="rna-badge badge-warn insp-classe-pend" title="Cadastre a Classe da Não Conformidade desta característica na Biblioteca Técnica."><i class="bi bi-exclamation-triangle"></i> Classe não cadastrada</span>`;
+  return `<div class="d-flex flex-column gap-1">${selo}
     <button class="rna-btn rna-btn-ghost rna-btn-sm insp-tratar" data-car="${c.id}"><i class="bi bi-clipboard-plus"></i> Tratar</button></div>`;
 }
 
@@ -1045,7 +1073,9 @@ function recalcLinha(carId) {
   const dets = detInputs(carId, qtd);
   const rowRes = INSP.resultadoCaracteristica(dets.map(d => d.status), { referencia: informativo });
   const rowVis = INSP.visualCaracteristica(dets.map(d => d.visual));
-  if (car) { car.resultado = rowRes; car._visual = rowVis; }
+  /* §Erro 10 — a classe segue o resultado automaticamente, sem passar por
+     nenhuma escolha do auditor. */
+  if (car) { car.resultado = rowRes; car._visual = rowVis; car.classe_defeito = INSP.classeAutomatica(car, rowRes); }
   if (informativo) {
     /* Referência: status neutro derivado do que está digitado; sem classe de
        defeito e sem impacto no resultado geral (excluída de resultadoGeral). */
@@ -1056,6 +1086,7 @@ function recalcLinha(carId) {
     row.querySelector('.insp-status-cell').innerHTML = statusCellHtml(rowRes, rowVis);
     row.querySelector('.insp-classe-cell').innerHTML = classeCellHtml(car);
     bindRowClasse(row);
+    pintarAlertaClasse();
   }
   R.rel.resultado = INSP.resultadoGeral(R.caracteristicas.filter(c => !c.informativo).map(c => c.resultado));
   refreshBanner();
@@ -1065,8 +1096,8 @@ function detInputs(carId, qtd) {
   for (let s = 1; s <= qtd; s++) out.push(avaliarLocal(carId, LOCAL[carId].vals[s]));
   return out;
 }
+/* A célula de classe virou somente leitura (§Erro 10): resta religar o "Tratar". */
 function bindRowClasse(row) {
-  row.querySelectorAll('.insp-classe-sel').forEach(sel => sel.addEventListener('change', () => onClasse(sel)));
   row.querySelectorAll('.insp-tratar').forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));
 }
 /* ==================== NAVEGAÇÃO POR TECLADO NAS MEDIÇÕES (§Erro 04) =========
@@ -1178,16 +1209,14 @@ async function persistMed(inp) {
     await reload();
   });
 }
-async function onClasse(sel) {
-  await autosave(async () => { await INSP.salvarClasse(sel.dataset.car, sel.value); await reload(); });
-  toast(sel.value ? `Classificado como Classe ${sel.value}.` : 'Classificação removida.', { type: 'info', timeout: 1800 });
-}
-
 /* --------------------------------------------------- TRATAMENTO / PENDÊNCIA (§17) */
 async function abrirTratamento(carId) {
   const c = R.caracteristicas.find(x => x.id === carId); if (!c) return;
   const acao = await INSP.acaoDaCaracteristica(R.rel.id, carId) || {};
-  const cls = CLASSES.find(k => k.codigo === (c.classe_defeito || acao.defect_class)) || null;
+  /* §Erro 10 — a classe já vem definida pela característica; o tratamento apenas
+     a exibe. Nada aqui altera a classificação. */
+  const classe = c.classe_defeito || null;
+  const cls = CLASSES.find(k => k.codigo === classe) || null;
   const reprovadas = c.medicoes.filter(m => m.resultado === 'reprovado');
   const opcoesResp = USUARIOS.map(u => `<option value="${u.id}" ${acao.responsavel_id === u.id ? 'selected' : ''}>${u.nome}</option>`).join('');
   const m = modal({
@@ -1198,8 +1227,13 @@ async function abrirTratamento(carId) {
         ${info('Amostras reprovadas', reprovadas.map(m => `#${m.amostra}=${fmt(m.valor)}`).join(' · ') || '—')}
       </div>
       <div class="row g-2 mt-1">
-        <div class="col-md-4"><label class="form-label">Classe do defeito *</label>
-          <select class="form-select" id="tr-classe">${['', 'A', 'B', 'C'].map(k => `<option value="${k}" ${c.classe_defeito === k ? 'selected' : ''}>${k ? 'Classe ' + k : 'Selecionar...'}</option>`).join('')}</select></div>
+        <div class="col-md-4"><label class="form-label">Classe do defeito</label>
+          <div class="insp-classe-ro">${classe
+            ? `<span class="rna-badge ${classe === 'A' ? 'badge-crit' : classe === 'B' ? 'badge-warn' : 'badge-pend'}"><i class="bi bi-lock-fill"></i> Classe ${classe}</span>`
+            : INSP.classeCadastrada(c) === 'NA'
+              ? `<span class="rna-badge badge-na">Não se aplica</span>`
+              : `<span class="rna-badge badge-warn"><i class="bi bi-exclamation-triangle"></i> Classe não cadastrada</span>`}</div>
+          <small class="text-muted-2">Definida na Biblioteca Técnica para esta característica.</small></div>
         <div class="col-md-8" id="tr-cls-info"></div>
         <div class="col-12"><label class="form-label">Observação ${cls?.obrig?.observacao ? '*' : ''}</label><textarea class="form-control" id="tr-obs" rows="2">${c.observacao || acao.observacao || ''}</textarea></div>
         <div class="col-12"><label class="form-label">Ação imediata executada</label><textarea class="form-control" id="tr-ai" rows="2">${acao.acao_imediata || ''}</textarea></div>
@@ -1212,19 +1246,16 @@ async function abrirTratamento(carId) {
       <button class="rna-btn rna-btn-primary" id="tr-save"><i class="bi bi-save"></i> Salvar tratamento</button>`
   });
   const ev = initEvidenceUpload($('#tr-ev', m.host), { multiple: true, label: 'Anexar evidência', accent: 'crit' });
-  const paintCls = () => {
-    const k = $('#tr-classe', m.host).value; const ci = CLASSES.find(x => x.codigo === k);
-    $('#tr-cls-info', m.host).innerHTML = ci ? `<div class="insp-cls-box insp-cls-${ci.cor}"><b>Classe ${ci.codigo} — ${ci.gravidade}</b><div class="cell-sub">${ci.definicao}</div>
-      <div class="mt-1"><b>Obrigatórios:</b> ${Object.entries(ci.obrig).filter(([, v]) => v).map(([k]) => k).join(', ') || '—'}</div></div>` : '';
-  };
-  paintCls();
-  $('#tr-classe', m.host).addEventListener('change', paintCls);
+  // Painel de apoio da classe: definição, critérios e campos obrigatórios.
+  $('#tr-cls-info', m.host).innerHTML = cls
+    ? `<div class="insp-cls-box insp-cls-${cls.cor}"><b>Classe ${cls.codigo} — ${cls.gravidade}</b><div class="cell-sub">${cls.definicao}</div>
+      <div class="mt-1"><b>Obrigatórios:</b> ${Object.entries(cls.obrig).filter(([, v]) => v).map(([k]) => k).join(', ') || '—'}</div></div>`
+    : `<div class="insp-blocker" style="border-left:4px solid var(--rna-yellow-600)"><i class="bi bi-info-circle"></i>
+        <div>Esta característica ainda não tem <b>Classe da Não Conformidade</b> cadastrada na Biblioteca Técnica.
+        O tratamento pode ser registrado normalmente; peça ao administrador para completar o cadastro.</div></div>`;
 
   $('#tr-save', m.host).addEventListener('click', async () => {
-    const classe = $('#tr-classe', m.host).value;
-    if (!classe) return toast('Selecione a classe do defeito.', { type: 'warn' });
     const ok = await autosave(async () => {
-      await INSP.salvarClasse(carId, classe);
       await INSP.salvarObservacao(carId, $('#tr-obs', m.host).value);
       const saved = await ev.commit({ usuario: USER, registro_tipo: 'insp_acao', registro_id: R.rel.id });
       for (const s of saved) await db.insert('insp_anexos', { relatorio_id: R.rel.id, caracteristica_id: carId, medicao_id: null, nome: s.nome, tipo: s.tipo, url: s.url, tamanho: '', uploaded_by: USER.id, created_at: INSP.nowISO() });
@@ -1272,6 +1303,9 @@ async function stepRevisao(host) {
           ${sum('Medições realizadas', s.totalMedicoes)} ${sum('Aprovadas', s.medicoesAprovadas, 'ok')} ${sum('Reprovadas', s.medicoesReprovadas, 'crit')}
           ${sum('Amostras', s.amostras)} ${sum('Conformidade', s.conformidade + '%')} ${sum('Classe A / B / C', `${s.classeA} / ${s.classeB} / ${s.classeC}`)}
         </div>
+        ${s.classeNaoCadastrada ? `<div class="insp-blocker mt-2" style="border-left:4px solid var(--rna-yellow-600)">
+          <i class="bi bi-exclamation-triangle"></i> <div><b>${s.classeNaoCadastrada} reprovação(ões) sem classe cadastrada na Biblioteca Técnica.</b>
+          <div class="cell-sub">A inspeção pode ser finalizada normalmente. O administrador deve cadastrar a Classe da Não Conformidade da característica.</div></div></div>` : ''}
       </div>
       <div class="col-lg-5">
         <div class="insp-card-lite"><b>Identificação</b>
@@ -1285,7 +1319,11 @@ async function stepRevisao(host) {
     ${s.caracteristicasReprovadas ? `<div class="insp-card-lite mt-3"><b class="text-crit"><i class="bi bi-exclamation-octagon"></i> Reprovações a tratar</b>
       <div class="mt-2">${R.caracteristicas.filter(c => c.resultado === 'reprovado').map(c => `<div class="insp-reprov-row">
         <div><b>${c.caracteristica}</b> <span class="cell-sub">cota ${c.cota}</span></div>
-        <div>${c.classe_defeito ? `<span class="rna-badge ${c.classe_defeito === 'A' ? 'badge-crit' : c.classe_defeito === 'B' ? 'badge-warn' : 'badge-pend'}">Classe ${c.classe_defeito}</span>` : `<span class="rna-badge badge-crit">Sem classe</span>`}</div>
+        <div>${c.classe_defeito
+          ? `<span class="rna-badge ${c.classe_defeito === 'A' ? 'badge-crit' : c.classe_defeito === 'B' ? 'badge-warn' : 'badge-pend'}"><i class="bi bi-lock-fill"></i> Classe ${c.classe_defeito}</span>`
+          : INSP.classeCadastrada(c) === 'NA'
+            ? `<span class="rna-badge badge-na">Não se aplica</span>`
+            : `<span class="rna-badge badge-warn"><i class="bi bi-exclamation-triangle"></i> Classe não cadastrada</span>`}</div>
         ${VIEWONLY ? '' : `<button class="rna-btn rna-btn-ghost rna-btn-sm insp-tratar" data-car="${c.id}"><i class="bi bi-clipboard-plus"></i> Tratar</button>`}
       </div>`).join('')}</div></div>` : `<div class="insp-blocker insp-ok-blocker mt-3"><i class="bi bi-check-circle"></i> Nenhuma reprovação. Todas as características avaliadas estão aprovadas.</div>`}
     <div class="mt-2"><button class="rna-btn rna-btn-ghost rna-btn-sm" id="btn-ajuda-classe2"><i class="bi bi-question-circle"></i> Definição das classes</button></div>`;

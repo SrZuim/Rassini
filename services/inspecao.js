@@ -15,7 +15,7 @@ import { fmtMedida } from './formato.js';
 import * as AMOSTRAS from './insp-amostras.js';
 import { PLANTA_SIGLAS, INSP_STATUS } from './inspecao-data.js';
 import * as MED from './medicao.js';
-import { agoraISO, hojeBR, formatarDataBrasil, formatarHoraBrasil, duracaoSegundos } from './datahora.js';
+import { agoraISO, hojeBR, formatarDataBrasil, formatarHoraBrasil, formatarDataHoraBrasil, duracaoSegundos } from './datahora.js';
 import { normalizarIdentificadorMaiusculo, normalizarOP, opValida, MSG_OP_INVALIDA } from './identificadores.js';
 
 /* Gravação sempre em UTC (timestamptz); exibição sempre via services/datahora.js
@@ -135,6 +135,51 @@ export const visualMedicao = MED.visualMedicao;
 export const visualCaracteristica = MED.visualCaracteristica;
 export const ALERTA_PCT = MED.ALERTA_PCT;
 export const VISUAL_LABEL = MED.VISUAL_LABEL;
+
+/* ================================ CLASSE AUTOMÁTICA (§Erro 10) ==============
+   A classe da não conformidade PERTENCE À CARACTERÍSTICA e vem cadastrada na
+   Biblioteca Técnica (bib_metricas.classe_nc → snapshot insp_caracteristicas.
+   classe_nc). O auditor não escolhe e não edita: quando a característica
+   reprova, o sistema aplica a classe cadastrada; quando aprova, não há classe.
+
+   Três situações distintas — nunca confundidas entre si:
+     'A' | 'B' | 'C'  → classe cadastrada, aplicada automaticamente
+     'NA'             → "Não se aplica": reprova sem classificação (decisão da
+                        Engenharia, registrada de propósito)
+     null / ''        → NÃO CADASTRADA: o relatório salva e finaliza normalmente,
+                        mas o item entra no alerta para o administrador
+                        atualizar a Biblioteca. Jamais vira A, B ou C sozinho. */
+export const CLASSE_NAO_CADASTRADA = null;
+
+/** Classe cadastrada da característica ('A'|'B'|'C'|'NA'|null). */
+export function classeCadastrada(car) {
+  const v = String(car?.classe_nc ?? '').trim().toUpperCase();
+  return ['A', 'B', 'C', 'NA'].includes(v) ? v : CLASSE_NAO_CADASTRADA;
+}
+
+/** Classe EFETIVA de uma característica já avaliada. Só existe quando o item
+    reprovou e a classe cadastrada é A/B/C — 'NA' e ausência devolvem null.
+
+    HISTÓRICO: relatórios anteriores a esta melhoria guardam uma classe escolhida
+    à mão, quando ainda não havia cadastro na Biblioteca. Esse valor é PRESERVADO
+    (era a classificação real daquela auditoria) — o que acabou foi a escolha
+    manual daqui para a frente, não o dado já registrado. */
+export function classeAutomatica(car, resultado = car?.resultado) {
+  if (resultado !== 'reprovado' || ehCaracteristicaReferencia(car)) return null;
+  const c = classeCadastrada(car);
+  if (c === 'A' || c === 'B' || c === 'C') return c;
+  if (c === 'NA') return null;                            // decisão explícita: sem classe
+  const legado = String(car?.classe_defeito ?? '').trim().toUpperCase();
+  return ['A', 'B', 'C'].includes(legado) ? legado : null;
+}
+
+/** true quando o item reprovou e não há classe alguma: nem cadastrada na
+    Biblioteca (nem sequer "Não se aplica"), nem registro histórico. É o que
+    alimenta o alerta ao administrador — sem nunca inventar uma classificação. */
+export function classePendenteDeCadastro(car, resultado = car?.resultado) {
+  if (resultado !== 'reprovado' || ehCaracteristicaReferencia(car)) return false;
+  return classeCadastrada(car) === CLASSE_NAO_CADASTRADA && !classeAutomatica(car, resultado);
+}
 
 /** Tipo efetivo da característica para avaliação (tolera colunas ausentes). */
 export function tipoDeAvaliacao(car) {
@@ -308,15 +353,15 @@ async function lerCaracteristicas(relatorioId) {
    avisa uma vez e regrava sem os campos opcionais (o tipo sobrevive em tipo_campo). */
 let _semColunasSnapshot = false;
 async function inserirCaracteristica(row) {
-  const semOpcionais = () => { const r = { ...row }; delete r.tipo_especificacao; delete r.informativo; delete r.obrigatorio; return r; };
+  const semOpcionais = () => { const r = { ...row }; delete r.tipo_especificacao; delete r.informativo; delete r.obrigatorio; delete r.classe_nc; return r; };
   if (_semColunasSnapshot) return db.insert('insp_caracteristicas', semOpcionais());
   try {
     return await db.insert('insp_caracteristicas', row);
   } catch (e) {
     if (!ehErroDeSchema(e)) throw e;
     _semColunasSnapshot = true;
-    console.warn('[INSP] insp_caracteristicas não tem tipo_especificacao/informativo — gravando via tipo_campo. ' +
-      'Rode database/fix_integracao_auditoria_biblioteca.sql no Supabase para normalizar o banco. Detalhe:', e?.message || e);
+    console.warn('[INSP] insp_caracteristicas não tem tipo_especificacao/informativo/classe_nc — gravando via tipo_campo. ' +
+      'Rode database/fix_integracao_auditoria_biblioteca.sql e database/fix_classe_automatica.sql no Supabase. Detalhe:', e?.message || e);
     return db.insert('insp_caracteristicas', semOpcionais());
   }
 }
@@ -409,6 +454,10 @@ export async function carregarEspecs(relatorioId, pecaId) {
       // Registro obrigatório da medição (só exigido na finalização quando marcado
       // na Biblioteca Técnica). Obrigatório ≠ reprova: serve à rastreabilidade.
       obrigatorio: !!(m.obrigatorio ?? m.obrigatoria ?? false),
+      /* §Erro 10 — classe da não conformidade CONGELADA no momento da auditoria:
+         se a Biblioteca reclassificar a característica depois, o relatório antigo
+         continua provando qual classe valia quando a peça foi medida. */
+      classe_nc: informativo ? null : (m.classe_nc || null),
       opcoes: atributo ? ['OK', 'NOK'] : null,
       // informativas nascem "aprovadas" (neutro) para não travar a finalização;
       // ao receber medição passam a 'registrado'. Excluídas de todos os cálculos
@@ -529,9 +578,11 @@ export async function recalcularCaracteristica(caracteristicaId) {
   // O status vem sempre da REGRA aplicada ao valor (não do que estava gravado).
   const resultado = resultadoCaracteristica(meds.map(m => avaliarDaCaracteristica(car, m.valor).status),
     { referencia: ehCaracteristicaReferencia(car) });
+  /* §Erro 10 — a classe acompanha o resultado automaticamente: reprovou, recebe
+     a classe cadastrada na Biblioteca; deixou de reprovar, a classe some. */
+  const classe = classeAutomatica(car, resultado);
   const patch = { resultado };
-  // se voltou a aprovada/pendente, limpa a classe de defeito
-  if (resultado !== 'reprovado' && car.classe_defeito) patch.classe_defeito = null;
+  if ((car.classe_defeito ?? null) !== classe) patch.classe_defeito = classe;
   await db.update('insp_caracteristicas', caracteristicaId, patch);
   return resultado;
 }
@@ -571,8 +622,20 @@ export async function salvarIdentificacao(relatorioId, { lote, op, linha, campos
 }
 
 /* Classe de defeito e observação da característica reprovada (§12). Não altera cálculo. */
-export async function salvarClasse(caracteristicaId, classeCodigo) {
-  return db.update('insp_caracteristicas', caracteristicaId, { classe_defeito: classeCodigo || null });
+/** §Erro 10 — a classe NÃO é mais escolhida por ninguém: esta função apenas
+    ressincroniza a característica com a classe cadastrada na Biblioteca. O
+    parâmetro antigo é ignorado de propósito, para que nenhum caminho esquecido
+    consiga gravar uma classificação manual. */
+export async function salvarClasse(caracteristicaId, _classeIgnorada) {
+  const car = await lerCaracteristica(caracteristicaId);
+  if (!car) return null;
+  return db.update('insp_caracteristicas', caracteristicaId, { classe_defeito: classeAutomatica(car) });
+}
+
+/** Características reprovadas cujo cadastro na Biblioteca ainda não define a
+    classe — base do alerta ao administrador (§Erro 10 "cadastros antigos"). */
+export function caracteristicasSemClasse(caracteristicas = []) {
+  return caracteristicas.filter(c => c._classePendente ?? classePendenteDeCadastro(c, c.resultado));
 }
 export async function salvarObservacao(caracteristicaId, observacao) {
   return db.update('insp_caracteristicas', caracteristicaId, { observacao: observacao ?? '' });
@@ -632,8 +695,13 @@ export function derivarResultados(c) {
     return { ...m, _gravado: m.resultado, resultado: d.status, _visual: d.visual, _label: d.label, _motivo: d.motivo };
   });
   const resultado = resultadoCaracteristica(medicoes.map(m => m.resultado), { referencia });
+  /* §Erro 10 — a classe é DERIVADA da característica, nunca do que o auditor
+     escolheu: reprovou → classe cadastrada; aprovou → nenhuma classe. */
+  const classe_defeito = classeAutomatica(c, resultado);
   return {
     ...c, medicoes, resultado,
+    _classeGravada: c.classe_defeito, classe_defeito,
+    _classePendente: classePendenteDeCadastro(c, resultado),
     _visual: referencia ? MED.VISUAL.REF : MED.visualCaracteristica(medicoes.map(m => m._visual))
   };
 }
@@ -648,8 +716,11 @@ export function relatorioFechado(rel) {
     Roda somente em relatórios abertos (ver carregarRelatorio). */
 export async function repararResultados(relatorioId, caracteristicas) {
   const divergentes = caracteristicas.flatMap(c => c.medicoes.filter(m => m._gravado !== m.resultado));
-  if (!divergentes.length) return false;
-  console.warn(`[INSP] Corrigindo ${divergentes.length} resultado(s) de medição gravado(s) por regra antiga.`);
+  // §Erro 10 — classe escolhida à mão no passado é substituída pela cadastrada
+  const classesDivergentes = caracteristicas.filter(c => (c._classeGravada ?? null) !== (c.classe_defeito ?? null));
+  if (!divergentes.length && !classesDivergentes.length) return false;
+  if (divergentes.length) console.warn(`[INSP] Corrigindo ${divergentes.length} resultado(s) de medição gravado(s) por regra antiga.`);
+  if (classesDivergentes.length) console.warn(`[INSP] Aplicando a classe cadastrada na Biblioteca em ${classesDivergentes.length} característica(s).`);
   for (const m of divergentes) await db.update('insp_medicoes', m.id, { resultado: m.resultado });
   for (const c of caracteristicas) await recalcularCaracteristica(c.id);
   await recalcularRelatorio(relatorioId);
@@ -734,7 +805,8 @@ export async function consultarRelatorios(filtros = {}, escopo = {}) {
   cars.forEach(c => (carsBy[c.relatorio_id] = carsBy[c.relatorio_id] || []).push(c));
   rows = rows.map(r => {
     const cs = (carsBy[r.id] || []).filter(c => c.resultado === 'reprovado');
-    const classes = new Set(cs.map(c => c.classe_defeito).filter(Boolean));
+    // §Erro 10 — classe derivada do cadastro, não do que ficou gravado à mão
+    const classes = new Set(cs.map(c => classeAutomatica(c, c.resultado)).filter(Boolean));
     const maior = classes.has('A') ? 'A' : classes.has('B') ? 'B' : classes.has('C') ? 'C' : null;
     return { ...r, _reprovacoes: cs.length, _maiorClasse: maior };
   });
@@ -760,7 +832,11 @@ export async function resumoRelatorio(relatorioId) {
   const meds = caracteristicas.flatMap(c => c.medicoes);
   const medAprov = meds.filter(m => m.resultado === 'aprovado').length;
   const medReprov = meds.filter(m => m.resultado === 'reprovado').length;
+  /* §Erro 10 — a classe pertence à CARACTERÍSTICA: o mesmo relatório pode ter
+     2 itens Classe A, 3 Classe B e 1 Classe C. Cada ocorrência é contada. */
   const classe = cod => caracteristicas.filter(c => c.resultado === 'reprovado' && c.classe_defeito === cod).length;
+  const semClasse = caracteristicasSemClasse(caracteristicas).length;
+  const classeNA = caracteristicas.filter(c => c.resultado === 'reprovado' && classeCadastrada(c) === 'NA').length;
   const conformidade = totalCar ? Math.round(carAprov / totalCar * 100) : 0;
   /* Referências: contabilizadas à parte, apenas para rastreabilidade. NÃO entram
      em conformidade, aprovadas/reprovadas nem no resultado geral. */
@@ -772,6 +848,7 @@ export async function resumoRelatorio(relatorioId) {
     caracteristicasReferencia: refs.length, medicoesReferencia: medsRef.length,
     amostras: rel.quantidade || 0, conformidade,
     classeA: classe('A'), classeB: classe('B'), classeC: classe('C'),
+    classeNaoAplica: classeNA, classeNaoCadastrada: semClasse,
     resultado: rel.resultado, duracaoSeg: rel.duracao_seg
   };
 }
@@ -938,6 +1015,116 @@ export async function criarPendenciaDoRelatorio(rel, user) {
 export async function garantirPendencia(rel, user) {
   if (rel.status !== 'finalizada_reprovada' && rel.resultado !== 'reprovado') return null;
   return (await pendenciaDoRelatorio(rel.id)) || criarPendenciaDoRelatorio(rel, user);
+}
+
+/* ==================== EXCLUSÃO DE RELATÓRIO — SOMENTE ADMIN (§Erro 09) =======
+   Relatórios de teste poluem a base e distorcem indicadores. A exclusão é
+   PERMANENTE e restrita ao administrador; o registro no Log Administrativo
+   sobrevive ao relatório apagado (é a única prova de que ele existiu).
+
+   Ordem de remoção = das folhas para a raiz, para nunca deixar órfão:
+     medições → amostras → ações → anexos → características → histórico →
+     eventos → pausas → pendência gerada por ESTE relatório → relatório.
+
+   ATOMICIDADE: o navegador não abre transação no PostgREST — cada DELETE é uma
+   requisição. Por isso, no Supabase, a via oficial é a RPC `insp_excluir_relatorio`
+   (SECURITY DEFINER, tudo numa transação, revalidando o perfil admin no servidor).
+   O caminho cliente-a-cliente abaixo é o plano B (modo demo ou migration ainda
+   não aplicada): ele apaga na ordem correta e, se falhar no meio, informa
+   exatamente o que restou — nunca diz "excluído" sem ter excluído. */
+const TABELAS_DEPENDENTES = [
+  'insp_medicoes', 'insp_amostras', 'insp_acoes', 'insp_anexos',
+  'insp_caracteristicas', 'insp_historico', 'insp_eventos', 'insp_pausas'
+];
+
+/** Perfil autorizado a excluir. Regra única, usada pela tela e pelo serviço. */
+export function podeExcluirRelatorio(user) {
+  return user?.role === 'admin';
+}
+
+/** Exclui UM relatório e tudo que dependia dele. Devolve o resumo do que foi
+    removido. Lança InspError('ACESSO_NEGADO') para qualquer perfil não-admin. */
+export async function excluirRelatorio(relatorioId, user, { motivo = '' } = {}) {
+  if (!podeExcluirRelatorio(user)) throw new InspError('ACESSO_NEGADO', 'Acesso negado.');
+  await sessaoValida();                                   // sessão real, revalidada
+  const rel = await db.get('insp_relatorios', relatorioId);
+  if (!rel) throw new InspError('REL_NAO_ENCONTRADA', 'O relatório não foi encontrado. Ele pode já ter sido excluído.');
+
+  const resumo = { numero: rel.numero, relatorio_id: relatorioId, motivo, tabelas: {} };
+  const viaRpc = await excluirViaRPC(relatorioId, motivo);
+  if (viaRpc) {
+    resumo.tabelas = viaRpc;
+    resumo.transacional = true;
+  } else {
+    resumo.transacional = false;
+    // pendência: só a que NASCEU deste relatório (§Erro 09)
+    const pends = (await db.list('op_pendencias').catch(() => []))
+      .filter(p => p.relatorio_id === relatorioId && p.origem === 'inspecao_dimensional');
+    for (const p of pends) await db.remove('op_pendencias', p.id);
+    resumo.tabelas.op_pendencias = pends.length;
+
+    for (const tabela of TABELAS_DEPENDENTES) {
+      const linhas = await db.list(tabela, { filter: { relatorio_id: relatorioId } }).catch(() => []);
+      for (const l of linhas) await db.remove(tabela, l.id);
+      resumo.tabelas[tabela] = linhas.length;
+    }
+    await db.remove('insp_relatorios', relatorioId);
+    resumo.tabelas.insp_relatorios = 1;
+  }
+
+  /* Log Administrativo — gravado DEPOIS da exclusão, porque é justamente o que
+     precisa sobreviver a ela. Falha aqui não "desapaga" o relatório: é reportada
+     ao chamador para que o administrador saiba que a trilha não foi registrada. */
+  const log = await db.log({
+    usuario: user.nome || user.email || user.id,
+    acao: `Excluiu relatório dimensional ${rel.numero}`,
+    entidade: 'insp_relatorios',
+    antes: `${rel.numero} · ${rel.cliente || '—'} · PN ${rel.peca_codigo || '—'} · ${rel.tipo_nome || '—'} · ` +
+           `auditor ${rel.auditor_nome || '—'} · ${formatarDataHoraBrasil(rel.started_iso)} · ${INSP_STATUS[rel.status]?.label || rel.status}`,
+    depois: motivo ? `Excluído — motivo: ${motivo}` : 'Excluído — motivo não informado'
+  });
+  resumo.logRegistrado = log?.ok !== false;
+  return resumo;
+}
+
+/* Exclusão transacional no servidor. Devolve o resumo por tabela, ou null
+   quando a RPC não existe (aí o chamador usa o caminho cliente). */
+async function excluirViaRPC(relatorioId, motivo) {
+  if (db.mode !== 'supabase') return null;
+  try {
+    const { getSupabase } = await import('./supabaseClient.js');
+    const sb = await getSupabase();
+    const { data, error } = await sb.rpc('insp_excluir_relatorio', { p_relatorio_id: relatorioId, p_motivo: motivo || null });
+    if (error) {
+      // função ausente = migration pendente → plano B; qualquer outro erro é real
+      if (['42883', 'PGRST202'].includes(String(error.code)) || /could not find the function|does not exist/i.test(error.message || '')) {
+        console.warn('[INSP] RPC insp_excluir_relatorio ausente — excluindo pelo cliente, sem transação. ' +
+          'Rode database/fix_exclusao_e_classe.sql no Supabase. Detalhe:', error.message);
+        return null;
+      }
+      if (/acesso negado|permission denied|not authorized/i.test(error.message || ''))
+        throw new InspError('ACESSO_NEGADO', 'Acesso negado.', error);
+      throw error;
+    }
+    return data || {};
+  } catch (e) {
+    if (e instanceof InspError) throw e;
+    if (ehErroDeSchema(e)) return null;
+    throw e;
+  }
+}
+
+/** Exclusão em LOTE — a base para a seleção múltipla prevista para a próxima
+    versão. Já processa a lista inteira e devolve sucessos e falhas separados,
+    sem interromper no primeiro erro. A interface atual chama com um id só. */
+export async function excluirRelatorios(ids = [], user, { motivo = '' } = {}) {
+  if (!podeExcluirRelatorio(user)) throw new InspError('ACESSO_NEGADO', 'Acesso negado.');
+  const ok = [], erros = [];
+  for (const id of ids) {
+    try { ok.push(await excluirRelatorio(id, user, { motivo })); }
+    catch (e) { logErro(`Falha ao excluir o relatório ${id}`, e); erros.push({ id, mensagem: mensagemErro(e) }); }
+  }
+  return { ok, erros, total: ids.length };
 }
 
 /* ============================================ INDICADORES (§Regra 9)

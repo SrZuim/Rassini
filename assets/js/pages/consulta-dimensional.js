@@ -9,7 +9,7 @@
    do relatório — aqui é somente leitura; legados sem número ganham fallback visual.
    ========================================================================== */
 import { mountShell } from '../app.js';
-import { BRAND, podeVerMetricasTempo } from '../../../services/config.js';
+import { BRAND, podeVerMetricasTempo, can } from '../../../services/config.js';
 import * as INSP from '../../../services/inspecao.js';
 import { INSP_STATUS } from '../../../services/inspecao-data.js';
 import { fontesConsultaDimensional, pnsDoCliente, revisoesDoPN, fmtRevisao } from '../../../services/consulta-filtros.js';
@@ -18,7 +18,11 @@ import { nomeDoSlug } from '../../../services/tipos-inspecao.js';
 import { fmtMedida } from '../../../services/formato.js';
 import { formatarDataBrasil, formatarHoraBrasil, formatarDataHoraBrasil } from '../../../services/datahora.js';
 import * as AMOSTRAS from '../../../services/insp-amostras.js';
-import { $, $$, toast } from '../ui.js';
+import { $, $$, toast, modal } from '../ui.js';
+
+/* Escape de texto livre — módulo inteiro (conteúdo e atributos). */
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const escAttr = esc;
 
 const ctx = await mountShell();
 let USER, TIPOS = [], FONTES = null;
@@ -197,11 +201,78 @@ function renderResultados(rows) {
       </tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table></div>
     <div class="cdim-cards">${rows.map(cardHtml).join('')}</div>`;
   $$('[data-open]', host).forEach(b => b.addEventListener('click', () => go(`consulta-dimensional.html?rel=${b.dataset.open}`)));
+  $$('[data-del]', host).forEach(b => b.addEventListener('click', () => confirmarExclusao(b.dataset.del)));
+}
+
+/* ================================ EXCLUSÃO (§Erro 09) =======================
+   Confirmação com a IDENTIFICAÇÃO COMPLETA do relatório: excluir é permanente,
+   então o administrador precisa reconhecer o registro antes de confirmar — não
+   basta "tem certeza?". O motivo é opcional e vai para o Log Administrativo. */
+async function confirmarExclusao(relId) {
+  if (!podeExcluir()) return toast('Acesso negado.', { type: 'crit', title: 'Sem permissão' });
+  const r = ULT_RESULT.find(x => x.id === relId) || await INSP.carregarRelatorio(relId).then(d => d?.rel).catch(() => null);
+  if (!r) return toast('Relatório não encontrado. Atualize a busca.', { type: 'warn' });
+  const st = INSP_STATUS[r.status] || { label: r.status, badge: 'badge-na' };
+  const m = modal({
+    title: 'Excluir relatório dimensional',
+    content: `
+      <div class="cdim-del-box">
+        ${cell('Nº do relatório', numeroDe(r))} ${cell('Cliente', r.cliente)}
+        ${cell('PN', r.peca_codigo)} ${cell('Tipo de inspeção', r.tipo_nome)}
+        ${cell('Auditor', r.auditor_nome)} ${cell('Data', dataHoraBR(r.started_iso))}
+        ${cell('Status', st.label)}
+      </div>
+      <div class="insp-blocker mt-3" style="border-left:4px solid var(--rna-crit)">
+        <i class="bi bi-exclamation-octagon"></i>
+        <div><b>Tem certeza que deseja excluir este relatório?</b>
+        <div class="cell-sub">Esta ação é permanente e não poderá ser desfeita. Serão removidos também as medições,
+        os resultados, as reprovações, os tratamentos, os anexos, o histórico e a pendência gerada por este relatório.</div></div>
+      </div>
+      <label class="form-label mt-3" for="del-motivo">Motivo (opcional — fica registrado no Log Administrativo)</label>
+      <input class="form-control" id="del-motivo" maxlength="200" placeholder="Ex.: registro criado durante testes" autocomplete="off">
+      <div id="del-erro" class="insp-blocker mt-2" style="display:none"></div>`,
+    footer: `<button class="rna-btn rna-btn-ghost" id="del-cancel" data-bs-dismiss="modal">Cancelar</button>
+             <button class="rna-btn rna-btn-dark" id="del-ok"><i class="bi bi-trash"></i> Excluir Relatório</button>`
+  });
+  const ok = $('#del-ok', m.host), cancel = $('#del-cancel', m.host), err = $('#del-erro', m.host);
+  ok.addEventListener('click', async () => {
+    ok.disabled = true; cancel.disabled = true;
+    ok.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Excluindo...';
+    err.style.display = 'none';
+    try {
+      // seleção múltipla futura: a via de lote já é a mesma (excluirRelatorios)
+      const res = await INSP.excluirRelatorios([relId], USER, { motivo: $('#del-motivo', m.host).value.trim() });
+      if (res.erros.length) throw new Error(res.erros[0].mensagem);
+      m.close();
+      if (!res.ok[0]?.logRegistrado) {
+        toast('Relatório excluído, mas o Log Administrativo não pôde ser gravado. Verifique as permissões de log.',
+          { type: 'warn', title: 'Excluído com ressalva', timeout: 8000 });
+      } else {
+        toast(`Relatório ${res.ok[0].numero} excluído permanentemente.`, { type: 'ok', title: 'Exclusão concluída' });
+      }
+      FONTES = null;                                  // as listas de filtro mudaram
+      await buscar();
+    } catch (e) {
+      console.error('[CONSULTA-DIM] exclusão falhou:', e);
+      err.style.display = 'flex';
+      err.innerHTML = `<i class="bi bi-exclamation-octagon"></i> <div><b>Não foi possível excluir</b><div class="cell-sub">${esc(INSP.mensagemErro(e))}</div></div>`;
+      ok.disabled = false; cancel.disabled = false; ok.innerHTML = '<i class="bi bi-trash"></i> Excluir Relatório';
+    }
+  });
 }
 function clsBadge(r) {
   const cls = r._maiorClasse ? `<span class="rna-badge ${r._maiorClasse === 'A' ? 'badge-crit' : r._maiorClasse === 'B' ? 'badge-warn' : 'badge-pend'}">Classe ${r._maiorClasse}</span>` : '<span class="text-muted-2">—</span>';
   return cls + (r._reprovacoes ? `<div class="cell-sub">${r._reprovacoes} repr.</div>` : '');
 }
+/* §Erro 09 — a exclusão é exclusiva do administrador. A regra de permissão vem
+   do serviço (fonte única) e é reavaliada no clique e de novo antes de gravar;
+   os demais perfis nem recebem o botão no HTML. */
+const podeExcluir = () => INSP.podeExcluirRelatorio(USER) && can(USER.role, 'consulta_dim', 'delete');
+const btnExcluir = r => podeExcluir()
+  ? `<button class="rna-btn rna-btn-ghost rna-btn-sm cdim-del" data-del="${r.id}" title="Excluir relatório ${escAttr(numeroDe(r))}"
+       aria-label="Excluir relatório ${escAttr(numeroDe(r))}"><i class="bi bi-trash"></i> Excluir</button>`
+  : '';
+
 function rowHtml(r) {
   return `<tr>
     <td class="cell-strong">${numeroDe(r)}</td>
@@ -213,7 +284,10 @@ function rowHtml(r) {
     <td class="cell-sub">${r.tipo_nome || '—'}</td>
     <td>${resPill(r.resultado)}</td>
     <td>${clsBadge(r)}</td>
-    <td><button class="rna-btn rna-btn-primary rna-btn-sm" data-open="${r.id}"><i class="bi bi-eye"></i> Abrir</button></td></tr>`;
+    <td><div class="cdim-row-actions">
+      <button class="rna-btn rna-btn-primary rna-btn-sm" data-open="${r.id}"><i class="bi bi-eye"></i> Abrir</button>
+      ${btnExcluir(r)}
+    </div></td></tr>`;
 }
 /* Card mobile — mesmas informações principais da tabela (§23). */
 const mini = (l, v) => `<div><span class="insp-info-l">${l}</span><span class="insp-info-v">${(v === 0 || v) ? v : '—'}</span></div>`;
@@ -230,6 +304,7 @@ function cardHtml(r) {
     </div>
     <div class="d-flex align-items-center gap-2 cdim-actions">
       <div>${clsBadge(r)}</div><div class="flex-fill"></div>
+      ${btnExcluir(r)}
       <button class="rna-btn rna-btn-primary rna-btn-sm" data-open="${r.id}"><i class="bi bi-eye"></i> Abrir</button>
     </div></div>`;
 }
@@ -269,7 +344,6 @@ async function abrirRelatorio(relId, autoPrint = false) {
      Tolerante: relatório anterior à melhoria simplesmente não exibe a seção. */
   const amostras = await AMOSTRAS.estadoAmostras(relId, rel.quantidade).catch(() => []);
   const acaoBy = Object.fromEntries(acoes.map(a => [a.caracteristica_id, a]));
-  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const s = INSP_STATUS[rel.status] || { label: rel.status, badge: 'badge-na' };
   const numero = numeroDe(rel);
   const codigoVerif = 'V-' + (numero.replace(/[^0-9]/g, '').slice(-8) || numero.replace(/[^A-Z0-9]/gi, '').slice(-8));
@@ -355,7 +429,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
             <td>${esc(c.cota ?? '—')}</td><td>${nomeCel}</td><td>${esc(c.quadrante || '—')}</td><td>${esc(c.unidade || '')}</td>${dimCels}<td class="cell-sub">${esc(c.equipamento || '—')}</td>${obsCel}
             ${sampCels}
             <td>${resCel}</td>
-            <td>${c.classe_defeito ? 'Classe ' + esc(c.classe_defeito) : '—'}</td></tr>`; }).join('')}
+            <td>${classeCel(c)}</td></tr>`; }).join('')}
         </tbody></table></div>
         <div class="cell-sub mt-1"><span class="rep-tag rep-ok">✓ Aprovado</span> dentro da faixa segura ·
           <span class="rep-tag rep-warn">▲ Aprovado com atenção</span> no limite ou próximo dele ·
@@ -363,7 +437,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
 
       ${caracteristicas.some(c => c.resultado === 'reprovado') ? `<div class="insp-rep-section"><div class="insp-rep-sec-t">Reprovações e tratamento</div>
         ${caracteristicas.filter(c => c.resultado === 'reprovado').map(c => { const a = acaoBy[c.id] || {}; return `<div class="insp-rep-reprov">
-          <b>${c.caracteristica}</b> (cota ${c.cota}) — <span class="rep-tag rep-crit">Classe ${c.classe_defeito || '—'}</span>
+          <b>${esc(c.caracteristica)}</b> (cota ${esc(c.cota)}) — ${classeCel(c)}
           <div class="insp-rep-grid mt-1">
             ${cell('Limite', `${dash(c.minimo)} a ${dash(c.maximo)} ${c.unidade || ''}`)} ${cell('Amostras reprovadas', c.medicoes.filter(m => m.resultado === 'reprovado').map(m => `#${m.amostra}=${dash(m.valor)}`).join(', '))}
             ${cell('Observação', c.observacao || a.observacao)} ${cell('Ação imediata', a.acao_imediata)} ${cell('Ação permanente', a.acao_permanente)}
@@ -374,8 +448,13 @@ async function abrirRelatorio(relId, autoPrint = false) {
         <div class="insp-rep-grid">
           ${cell('Características', resumo.totalCaracteristicas)} ${cell('Aprovadas', resumo.caracteristicasAprovadas)} ${cell('Reprovadas', resumo.caracteristicasReprovadas)}
           ${cell('Medições', resumo.totalMedicoes)} ${cell('Conformidade', resumo.conformidade + '%')} ${cell('Classe A / B / C', `${resumo.classeA} / ${resumo.classeB} / ${resumo.classeC}`)}
+          ${resumo.classeNaoAplica ? cell('Sem classificação (Não se aplica)', resumo.classeNaoAplica) : ''}
           ${resumo.caracteristicasReferencia ? cell('Referências registradas', `${resumo.medicoesReferencia} medição(ões) · ${resumo.caracteristicasReferencia} característica(s)`) : ''}
         </div>
+        ${resumo.classeNaoCadastrada ? `<div class="insp-blocker mt-2 no-print-optional" style="border-left:4px solid var(--rna-yellow-600)">
+          <i class="bi bi-exclamation-triangle"></i> <div><b>${resumo.classeNaoCadastrada} característica(s) reprovada(s) sem classe cadastrada.</b>
+          <div class="cell-sub">A classificação pertence à característica: peça ao administrador para cadastrar a
+          <b>Classe da Não Conformidade</b> na Biblioteca Técnica. O relatório permanece válido.</div></div></div>` : ''}
         <div class="insp-rep-final ${INSP_STATUS[rel.status]?.badge}">RESULTADO GERAL: <b>${rel.resultado === 'aprovado' ? 'APROVADO' : rel.resultado === 'reprovado' ? 'REPROVADO' : 'EM ANDAMENTO'}</b></div>
       </div>
 
@@ -397,6 +476,15 @@ const cell = (l, v) => `<div class="insp-rep-cell"><span class="insp-info-l">${l
 /* §M07 — valores medidos/nominais/tolerâncias no padrão 00,00 (fonte única).
    A precisão informada é preservada: 3,350 e 3,351 não colapsam em "3,35". */
 const dash = v => fmtMedida(v);
+/* §Erro 10 — a classe exibida é sempre a CADASTRADA na Biblioteca para aquela
+   característica. Aprovado não mostra classe; reprovado sem cadastro mostra o
+   aviso, para o relatório não sugerir uma classificação que ninguém definiu. */
+function classeCel(c) {
+  if (c.resultado !== 'reprovado' || c.informativo) return '—';
+  if (c.classe_defeito) return `<span class="rep-tag ${c.classe_defeito === 'A' ? 'rep-crit' : c.classe_defeito === 'B' ? 'rep-warn' : ''}">Classe ${esc(c.classe_defeito)}</span>`;
+  if (INSP.classeCadastrada(c) === 'NA') return '<span class="cell-sub">Não se aplica</span>';
+  return '<span class="rep-tag rep-warn" title="Cadastre a classe desta característica na Biblioteca Técnica.">Classe não cadastrada</span>';
+}
 /* Classe da célula do relatório conforme o estado visual da medição (§Erro 01). */
 const repCls = v => v === 'ok' ? 'rep-ok' : v === 'atencao' ? 'rep-warn' : v === 'crit' ? 'rep-crit' : '';
 /* Etiqueta do resultado — a mesma na tela, no relatório, na impressão e no PDF. */

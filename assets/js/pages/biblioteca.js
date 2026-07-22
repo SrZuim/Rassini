@@ -468,14 +468,15 @@ function tabPane(tab, f) {
     };
     return `${alertas ? `<div class="bib-alert"><i class="bi bi-exclamation-triangle-fill"></i> ${alertas} especificação(ões) com valor nominal fora da faixa de tolerância.</div>` : ''}
     <div class="rna-card"><div class="rna-card__body p-0" style="overflow:auto"><table class="rna-table"><thead><tr>
-      <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Referência</th><th>Nominal</th><th>Tol. mín</th><th>Tol. máx</th><th>Un.</th><th>Equipamento de Medição</th><th>Quem Mede</th><th>Observação</th></tr></thead><tbody>
+      <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Referência</th><th>Nominal</th><th>Tol. mín</th><th>Tol. máx</th><th>Un.</th><th>Equipamento de Medição</th><th>Quem Mede</th><th>Observação</th><th>Classe da NC</th></tr></thead><tbody>
       ${f.metricas.map(m => { const fora = BIB.foraDePadrao(m); const t = TIPO_ESPEC_MAP[m.tipo_especificacao]; return `<tr class="${fora ? 'bib-metric--fora' : ''}">
         <td class="cell-strong">${fmtCota(m.cota)}</td>
         <td class="cell-strong">${MAP.car[m.caracteristica_id] || '—'}${t ? ` <span class="bib-tipo-badge" title="${t.titulo}">${t.titulo}</span>` : ''}${fora ? ' <i class="bi bi-exclamation-triangle-fill text-danger" title="Fora do padrão"></i>' : ''}</td>
         <td class="cell-sub">${m.quadrante || '—'}</td>
         <td class="cell-sub">${m.referencia || '—'}</td>
         ${dimCells(m)}<td>${m.unidade || '—'}</td>
-        <td class="cell-sub">${MAP.eq[m.equipamento_id] || '—'}</td><td class="cell-sub">${MAP.qm[m.quem_mede_id] || '—'}</td><td class="cell-sub">${m.observacao || '—'}</td></tr>`; }).join('')}
+        <td class="cell-sub">${MAP.eq[m.equipamento_id] || '—'}</td><td class="cell-sub">${MAP.qm[m.quem_mede_id] || '—'}</td><td class="cell-sub">${m.observacao || '—'}</td>
+        <td>${classeNcBadge(m)}</td></tr>`; }).join('')}
     </tbody></table></div></div>`;
   }
   if (tab === 'documentos') {
@@ -554,7 +555,8 @@ async function renderEditor() {
     tol_min: m.tol_min ?? '', tol_max: m.tol_max ?? '', unidade: m.unidade || '',
     equipamento_id: m.equipamento_id || null, equipamento_nome: MAP.eq[m.equipamento_id] || '',
     quem_mede_id: m.quem_mede_id || null, quem_mede_nome: MAP.qm[m.quem_mede_id] || '', observacao: m.observacao || '',
-    obrigatorio: !!m.obrigatorio          // preserva a marcação ao reeditar a peça
+    obrigatorio: !!m.obrigatorio,         // preserva a marcação ao reeditar a peça
+    classe_nc: m.classe_nc || null        // §Erro 10 — classe da não conformidade
   })) : [];
   edDocsNovos = [];
 
@@ -705,8 +707,17 @@ function mostrarErroTipos(msg) {
    exibidos aqui como leitura. Índices data-col == índice em ESPEC_FIELDS. */
 const ESPEC_FIELDS = ['cota', 'caracteristica_nome', 'quadrante', 'referencia', 'nominal', 'tol_min', 'tol_max', 'unidade', 'equipamento_nome', 'quem_mede_nome', 'observacao'];
 const QUEM_MEDE_FIXO = DATA.BIB_QUEM_MEDE.map(x => x.nome);
+/* §Erro 10 — a classe da não conformidade é cadastrada AQUI, por característica.
+   Durante a inspeção o RNA One a aplica sozinho quando o item reprova; o auditor
+   nunca escolhe classe. Em branco = "não cadastrada" (gera alerta), diferente de
+   "Não se aplica", que é uma decisão consciente da Engenharia. */
+const classeNcCell = (m, i) => `<select class="form-select form-select-sm bib-classe-nc" data-row="${i}" style="width:150px"
+  title="Classe aplicada automaticamente quando esta característica reprovar">
+    <option value="">Não cadastrada</option>
+    ${DATA.BIB_CLASSES_NC.map(c => `<option value="${c.valor}" ${String(m.classe_nc || '') === c.valor ? 'selected' : ''} title="${escAttr(c.descricao)}">${c.label}</option>`).join('')}
+  </select>`;
 function renderEspecRows() {
-  const cols = ['Cota', 'Característica', 'Quadrante', 'Referência', 'Tipo', 'Nominal', 'Tol. mín', 'Tol. máx', 'Un.', 'Equipamento de Medição', 'Quem Mede', 'Observação', ''];
+  const cols = ['Cota', 'Característica', 'Quadrante', 'Referência', 'Tipo', 'Nominal', 'Tol. mín', 'Tol. máx', 'Un.', 'Equipamento de Medição', 'Quem Mede', 'Observação', 'Classe da Não Conformidade', ''];
   const head = `<thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>`;
   const cell = (m, i, field, col, w) => `<input class="form-control form-control-sm bib-cell" data-mf="${field}" data-col="${col}" value="${escAttr(m[field])}"${w ? ` style="width:${w}px"` : ''}${field === 'cota' ? ' inputmode="decimal"' : ''}>`;
   const combo = (m, i, kind, field, col, w) => `<div class="bib-combo"><input class="form-control form-control-sm bib-cell bib-combo__input" data-combo="${kind}" data-row="${i}" data-col="${col}" value="${escAttr(m[field])}" autocomplete="off"${w ? ` style="width:${w}px"` : ''} placeholder="Buscar..."></div>`;
@@ -732,6 +743,7 @@ function renderEspecRows() {
     <td>${combo(m, i, 'eq', 'equipamento_nome', 8, 180)}</td>
     <td>${qmCell(m, i)}</td>
     <td>${cell(m, i, 'observacao', 10, 120)}</td>
+    <td>${classeNcCell(m, i)}</td>
     <td class="bib-row-actions">
       <button class="rna-icon-mini" data-mup="${i}" title="Subir"><i class="bi bi-chevron-up"></i></button>
       <button class="rna-icon-mini" data-mdown="${i}" title="Descer"><i class="bi bi-chevron-down"></i></button>
@@ -739,12 +751,14 @@ function renderEspecRows() {
       <button class="rna-icon-mini" data-mdel="${i}" title="Excluir linha"><i class="bi bi-trash text-danger"></i></button>
     </td></tr>`; };
   const t = $('#ed-metricas');
-  t.innerHTML = head + `<tbody>${edMetricas.map(row).join('') || `<tr><td colspan="13" class="cell-sub" style="padding:14px">Nenhuma especificação. Clique em “Adicionar”, defina o <b>Tipo</b> e os valores, ou <b>cole</b> várias do Excel.</td></tr>`}</tbody>`;
+  t.innerHTML = head + `<tbody>${edMetricas.map(row).join('') || `<tr><td colspan="14" class="cell-sub" style="padding:14px">Nenhuma especificação. Clique em “Adicionar”, defina o <b>Tipo</b> e os valores, ou <b>cole</b> várias do Excel.</td></tr>`}</tbody>`;
   // campos simples
   t.querySelectorAll('[data-mrow]').forEach(tr => { const i = +tr.dataset.mrow; tr.querySelectorAll('[data-mf]').forEach(inp => inp.addEventListener('input', () => { edMetricas[i][inp.dataset.mf] = inp.value; })); });
   wireCombos(t);
   // quem mede (lista fixa)
   $$('.bib-qm', t).forEach(sel => sel.addEventListener('change', () => { edMetricas[+sel.dataset.row].quem_mede_nome = sel.value; }));
+  // classe da não conformidade (§Erro 10) — '' significa "não cadastrada"
+  $$('.bib-classe-nc', t).forEach(sel => sel.addEventListener('change', () => { edMetricas[+sel.dataset.row].classe_nc = sel.value || null; }));
   // tipo (cadastro inteligente)
   $$('[data-tipo]', t).forEach(b => b.addEventListener('click', () => abrirTipoModal(+b.dataset.tipo)));
   // ações de linha
@@ -1079,7 +1093,10 @@ async function salvar(isNew, p, f, upImg) {
         observacao: m.observacao || '',
         // Exige o registro do valor medido na auditoria (só em REFERENCIA — os
         // demais tipos já exigem todas as medições). Ver fix_referencia_mensuravel.sql.
-        obrigatorio: info ? !!m.obrigatorio : false
+        obrigatorio: info ? !!m.obrigatorio : false,
+        /* §Erro 10 — classe aplicada automaticamente quando esta característica
+           reprovar. Referência nunca reprova, então nunca recebe classe. */
+        classe_nc: info ? null : (DATA.BIB_CLASSES_NC_VALORES.includes(m.classe_nc) ? m.classe_nc : null)
       });
     }
     /* Especificações e documentos são independentes entre si — vão juntos.
@@ -1156,7 +1173,7 @@ function mudou(atual, campos) {
    antes de reinserir, um banco atrás das migrations perderia as métricas se o
    insert falhasse no meio. Por isso o insert é tolerante: se a coluna não existe,
    avisa uma vez e regrava sem ela (mesmo padrão de inspecao.js). */
-const COLUNAS_OPCIONAIS = ['obrigatorio'];
+const COLUNAS_OPCIONAIS = ['obrigatorio', 'classe_nc'];
 let _semColunasOpcionais = false;
 const ehErroDeSchema = e =>
   ['PGRST204', 'PGRST205', '42703', '42P01'].includes(String(e?.code || ''))
@@ -1252,6 +1269,17 @@ function emptyState(msg) { return `<div class="empty-state"><i class="bi bi-inbo
 /* §M07 — padrão 00,00 (fonte única). EXCEÇÃO: a Cota é identificador da
    característica no desenho, não medida — segue como inteiro. */
 function fmtVal(v) { return fmtMedida(v); }
+/* §Erro 10 — selo da classe na ficha (consulta). Característica que pode reprovar
+   sem classe cadastrada aparece em amarelo: é cadastro a completar, não defeito. */
+function classeNcBadge(m) {
+  const v = String(m.classe_nc || '').toUpperCase();
+  if (v === 'A') return '<span class="rna-badge badge-crit">Classe A</span>';
+  if (v === 'B') return '<span class="rna-badge badge-warn">Classe B</span>';
+  if (v === 'C') return '<span class="rna-badge badge-pend">Classe C</span>';
+  if (v === 'NA') return '<span class="cell-sub">Não se aplica</span>';
+  if (BIB.ehInformativo(m.tipo_especificacao)) return '<span class="cell-sub">—</span>';
+  return '<span class="rna-badge badge-warn" title="Cadastre a classe: sem ela, a reprovação desta característica fica sem classificação.">Não cadastrada</span>';
+}
 function fmtCota(v) { return (v == null || v === '') ? '—' : String(v); }
 function fmtDateTime(iso) { if (!iso) return '—'; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
 function fmtBytes(n) { if (!n) return ''; const kb = n / 1024; return kb < 1024 ? `${Math.round(kb)} KB` : `${(kb / 1024).toFixed(1)} MB`; }
@@ -1264,6 +1292,7 @@ function blankSpec() {
   return {
     cota: '', quadrante: '', tipo_especificacao: 'TOLERANCIA', caracteristica_nome: '', referencia: '',
     nominal: '', superior: '', inferior: '', tol_simetrica: '', simetrica: false, tol_min: '', tol_max: '',
-    unidade: '', equipamento_nome: '', quem_mede_nome: '', observacao: '', obrigatorio: false
+    unidade: '', equipamento_nome: '', quem_mede_nome: '', observacao: '', obrigatorio: false,
+    classe_nc: null                        // §Erro 10 — cadastrada pelo usuário
   };
 }
