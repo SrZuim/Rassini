@@ -11,6 +11,8 @@ import { mountShell } from '../app.js';
 import { db } from '../../../services/db.js';
 import { can, statusClass, podeVerMetricasTempo } from '../../../services/config.js';
 import { fmtMedida } from '../../../services/formato.js';
+import { formatarHoraBrasil, formatarDataHoraBrasil } from '../../../services/datahora.js';
+import { normalizarIdentificadorMaiusculo, normalizarOP, opValida, opTemCaractereInvalido, MSG_OP_INVALIDA } from '../../../services/identificadores.js';
 import * as INSP from '../../../services/inspecao.js';
 import * as AMOSTRAS from '../../../services/insp-amostras.js';
 import * as ATIV from '../../../services/atividades.js';
@@ -167,7 +169,7 @@ const tiposHtml = (tipos) => tipos.length ? tipos.map(t => `<div class="insp-rad
    Estado (R, STEP, VIEWONLY) declarado no topo do módulo. */
 async function openWizard(relId, viewonly = false) {
   VIEWONLY = viewonly;
-  R = await INSP.carregarRelatorio(relId);
+  R = await INSP.carregarRelatorio(relId, { reparar: !viewonly });
   if (!R) { toast('A auditoria não foi encontrada.', { type: 'crit', title: 'Relatório inexistente' }); return renderList(); }
   const fin = String(R.rel.status).startsWith('finalizada') || R.rel.status === 'revisada';
   if (fin && !viewonly) VIEWONLY = true;           // finalizado só em modo leitura (§21)
@@ -196,7 +198,11 @@ async function carregarPecaVinculada(pecaId) {
   catch (e) { INSP.logErro('Falha ao reler a peça vinculada', e); return null; }
 }
 
-async function reload() { R = await INSP.carregarRelatorio(R.rel.id); }
+/* `reparar: true` — esta é a tela dona da inspeção: ao abrir/recarregar, os
+   resultados gravados por regras antigas (valor no limite marcado como
+   reprovado, OK/NOK marcado como pendente) são corrigidos no banco. Relatório
+   finalizado nunca é regravado (ver INSP.carregarRelatorio). */
+async function reload() { R = await INSP.carregarRelatorio(R.rel.id, { reparar: !VIEWONLY }); }
 
 function paintWizard() {
   const r = R.rel;
@@ -245,7 +251,7 @@ function maxStepAllowed() {
   if (VIEWONLY) return ETAPAS.length - 1;
   let m = 0;
   if (r.tipo_id && pecaVinculada()) m = 1;
-  if (m >= 1 && r.lote && r.op) m = 2;
+  if (m >= 1 && r.lote && opValida(r.op)) m = 2;
   if (m >= 2 && r.quantidade) m = 3;
   if (m >= 3 && R.caracteristicas.some(c => c.medicoes.length)) m = 4;
   if (m >= 4) m = 5;
@@ -315,6 +321,8 @@ async function onNext() {
   if (STEP === 0 && !pecaVinculada())
     return toast('Selecione uma peça da Biblioteca Técnica. O vínculo precisa estar salvo antes de avançar.', { type: 'warn', title: 'Peça obrigatória' });
   if (STEP === 1 && (!String(r.lote).trim() || !String(r.op).trim())) return toast('Informe o lote e a OP.', { type: 'warn' });
+  // §Erro 03 — campo obrigatório inválido não deixa avançar
+  if (STEP === 1 && !opValida(r.op)) { $('#id-op')?.focus(); return toast(MSG_OP_INVALIDA, { type: 'warn', title: 'OP inválida' }); }
   if (STEP === 2 && !r.quantidade) return toast('Selecione a quantidade de peças.', { type: 'warn' });
   if (STEP < ETAPAS.length - 1) { STEP++; await INSP.patchRelatorio(r.id, { etapa: STEP }); renderStep(); }
 }
@@ -557,9 +565,16 @@ function stepIdentificacao(host) {
   host.innerHTML = `
     <h3 class="insp-h"><i class="bi bi-upc-scan"></i> Identificação do lote e OP</h3>
     <div class="row g-3">
-      <div class="col-md-4"><label class="form-label">Lote *</label><input class="form-control" id="id-lote" value="${r.lote || ''}" placeholder="Ex.: L-2026-0043" ${dis}></div>
-      <div class="col-md-4"><label class="form-label">OP — Ordem de Produção *</label><input class="form-control" id="id-op" value="${r.op || ''}" placeholder="Ex.: OP-88123" ${dis}></div>
-      <div class="col-md-4"><label class="form-label">Linha</label><input class="form-control" id="id-linha" value="${r.linha || ''}" placeholder="Linha" ${dis}></div>
+      <div class="col-md-4"><label class="form-label" for="id-lote">Lote *</label>
+        <input class="form-control insp-upper" id="id-lote" value="${escTitle(r.lote || '')}" placeholder="Ex.: L-2026-0043"
+               autocapitalize="characters" autocomplete="off" maxlength="60" ${dis}>
+        <small class="text-muted-2">Convertido automaticamente para letras maiúsculas.</small></div>
+      <div class="col-md-4"><label class="form-label" for="id-op">OP — Ordem de Produção *</label>
+        <input class="form-control" id="id-op" value="${escTitle(r.op || '')}" placeholder="Ex.: 088123"
+               inputmode="numeric" autocomplete="off" maxlength="20" ${dis}>
+        <div class="insp-campo-erro" id="err-op" hidden></div>
+        <small class="text-muted-2">Somente números. Zeros à esquerda são preservados.</small></div>
+      <div class="col-md-4"><label class="form-label" for="id-linha">Linha</label><input class="form-control" id="id-linha" value="${escTitle(r.linha || '')}" placeholder="Linha" ${dis}></div>
     </div>
     <details class="insp-details mt-3"><summary>Campos opcionais</summary>
       <div class="row g-3 mt-1">
@@ -573,10 +588,44 @@ function stepIdentificacao(host) {
       </div>
     </details>`;
   if (VIEWONLY) return;
-  const persist = () => autosave(() => INSP.patchRelatorio(r.id, {
-    lote: clean($('#id-lote').value), op: clean($('#id-op').value), linha: clean($('#id-linha').value),
-    campos_opcionais: collectOpc()
-  }, { evento: 'save' }).then(reload));
+
+  /* §Erro 02 — LOTE em maiúsculas durante a digitação e no Ctrl+V, preservando a
+     posição do cursor (sem isso o cursor pula para o fim a cada tecla). O valor
+     é normalizado de novo antes de gravar (services/inspecao.js). */
+  const lote = $('#id-lote');
+  lote.addEventListener('input', () => {
+    // durante a digitação só a caixa muda (aparar espaços aqui impediria digitá-los)
+    const pos = lote.selectionStart, fim = lote.selectionEnd;
+    const up = lote.value.toLocaleUpperCase('pt-BR');
+    if (up !== lote.value) { lote.value = up; try { lote.setSelectionRange(pos, fim); } catch { /* campo sem seleção */ } }
+  });
+  // ao sair do campo aplica a regra completa (mesma da gravação)
+  lote.addEventListener('blur', () => { lote.value = normalizarIdentificadorMaiusculo(lote.value); });
+
+  /* §Erro 03 — OP somente dígitos: letras e símbolos são descartados na hora
+     (inclusive em conteúdo colado) e o auditor é avisado do que foi bloqueado. */
+  const op = $('#id-op'), errOp = $('#err-op');
+  const avisoOp = (mostrar) => { errOp.hidden = !mostrar; errOp.textContent = mostrar ? MSG_OP_INVALIDA : ''; op.classList.toggle('is-erro', !!mostrar); };
+  op.addEventListener('input', () => {
+    const invalido = opTemCaractereInvalido(op.value);
+    if (invalido) {
+      const pos = op.selectionStart;
+      const antes = normalizarOP(op.value.slice(0, pos)).length;
+      op.value = normalizarOP(op.value);
+      try { op.setSelectionRange(antes, antes); } catch { /* campo sem seleção */ }
+    }
+    avisoOp(invalido);
+  });
+  op.addEventListener('blur', () => { if (op.value && !opValida(op.value)) avisoOp(true); });
+
+  const persist = () => autosave(async () => {
+    await INSP.salvarIdentificacao(r.id, {
+      lote: lote.value, op: op.value, linha: $('#id-linha').value, campos_opcionais: collectOpc()
+    });
+    await reload();
+    // reflete na tela exatamente o que foi salvo (fonte da verdade = banco)
+    lote.value = R.rel.lote || ''; op.value = R.rel.op || '';
+  }, { contexto: 'Falha ao salvar a identificação' });
   ['id-lote', 'id-op', 'id-linha'].forEach(id => $('#' + id).addEventListener('change', persist));
   $$('[data-opc]', host).forEach(i => i.addEventListener('change', persist));
 }
@@ -649,12 +698,18 @@ async function stepMedicoes(host) {
 
   $('#btn-ajuda-classe').addEventListener('click', ajudaClasses);
   pintarColaboradores();
+  /* §Erro 05 — observação completa por clique/toque (também em modo leitura). */
+  $$('[data-obs]', host).forEach(b => b.addEventListener('click', () => abrirObservacao(b.dataset.obs)));
   if (VIEWONLY) { $$('.insp-minput', host).forEach(i => i.disabled = true); $$('.insp-attr', host).forEach(s => s.disabled = true); $$('.insp-classe-sel', host).forEach(s => s.disabled = true); return; }
   $$('.insp-minput', host).forEach(inp => {
     inp.addEventListener('input', () => onMedInput(inp));
     inp.addEventListener('change', () => persistMed(inp));
   });
   $$('.insp-attr', host).forEach(sel => sel.addEventListener('change', () => onAttrInput(sel)));
+  /* §Erro 04 — Enter avança para a próxima medição. UM ÚNICO listener delegado
+     no container da etapa: ele morre junto com o HTML quando a etapa é
+     repintada, então não há acúmulo de listeners nem vazamento. */
+  host.addEventListener('keydown', onTeclaMedicao);
   $$('.insp-classe-sel', host).forEach(sel => sel.addEventListener('change', () => onClasse(sel)));
   $$('.insp-tratar', host).forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));
   wireAmostras();
@@ -721,7 +776,12 @@ function aplicarBloqueios() {
       el.title = a?.status === 'concluida' ? `Peça ${n} concluída — use Reabrir para corrigir.`
         : a?._travaAtiva ? `Peça ${n} em edição por ${a.bloqueado_nome}.`
         : `Clique em "Assumir" no topo da coluna da Peça ${n} para medir.`;
-    } else el.title = '';
+    } else {
+      /* Campo liberado: o tooltip volta a explicar o STATUS da medição
+         (aprovado / aprovado com atenção / reprovado), não a trava. */
+      const d = LOCAL[el.dataset.car] ? avaliarLocal(el.dataset.car, el.value) : null;
+      el.title = d ? `${d.label}${d.motivo ? ' · ' + d.motivo : ''}` : '';
+    }
   });
 }
 
@@ -784,7 +844,7 @@ async function concluirAmostraUI(n) {
       ${faltam ? `<div class="insp-blocker mb-2"><i class="bi bi-exclamation-triangle"></i> <div><b>${faltam} medição(ões) ainda em branco</b> nesta peça. Você pode concluir mesmo assim, mas a inspeção só finaliza com tudo preenchido.</div></div>` : ''}
       <div class="insp-treat-spec mb-2">
         ${info('Auditor responsável', a?.auditor_nome || USER.nome)}
-        ${info('Início', a?.inicio_iso ? fmtHora(a.inicio_iso) : '—')}
+        ${info('Início', a?.inicio_iso ? fmtDataHora(a.inicio_iso) : '—')}
         ${info('Tempo acumulado', INSP.fmtDuracao(a?.duracao_seg ?? 0))}
       </div>
       <label class="form-label">Observação da peça</label>
@@ -836,7 +896,10 @@ window.addEventListener('beforeunload', () => {
   }
 });
 
-const fmtHora = iso => { const d = new Date(iso); return isNaN(d) ? '—' : d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); };
+/* §Erro 06 — horário sempre no fuso oficial da operação (America/Sao_Paulo),
+   independentemente do fuso configurado no computador ou no celular. */
+const fmtHora = iso => formatarHoraBrasil(iso);
+const fmtDataHora = iso => formatarDataHoraBrasil(iso);
 
 function linhaMedicao(c, qtd) {
   const attr = c.tipo_especificacao === 'ATRIBUTO';
@@ -846,15 +909,17 @@ function linhaMedicao(c, qtd) {
      limites: nunca fica vermelha nem reprova (ver INSP.avaliarReferencia). */
   const cells = Array.from({ length: qtd }, (_, i) => {
     const a = i + 1; const m = c.medicoes.find(x => x.amostra === a);
-    const val = m ? m.valor : ''; const res = m ? m.resultado : 'pendente';
+    const val = m ? m.valor : '';
+    /* Estado visual derivado da regra (§Erro 01): verde / amarelo / vermelho. */
+    const d = INSP.avaliarMedicaoDetalhe(val, c.minimo, c.maximo, INSP.tipoDeAvaliacao(c));
     if (attr) {
       const sel = String(val ?? '').toUpperCase();
-      return `<td class="insp-samp"><select class="insp-attr ${cellCls(res)}" data-car="${c.id}" data-a="${a}">
+      return `<td class="insp-samp"><select class="insp-attr ${visCls(d.visual)}" data-car="${c.id}" data-a="${a}" title="${escTitle(d.label)}">
         <option value="">—</option><option value="OK" ${sel === 'OK' ? 'selected' : ''}>OK</option><option value="NOK" ${sel === 'NOK' ? 'selected' : ''}>NOK</option></select></td>`;
     }
-    return `<td class="insp-samp"><input class="insp-minput ${informativo ? 'is-ref' : ''} ${cellCls(res)}"
-      data-car="${c.id}" data-a="${a}" data-ref="${informativo ? '1' : ''}" value="${val ?? ''}"
-      inputmode="decimal" placeholder="—" title="Peça ${a} — valor medido${informativo ? ' (referência, sem limites)' : ''}"></td>`;
+    return `<td class="insp-samp"><input class="insp-minput ${informativo ? 'is-ref' : ''} ${visCls(d.visual)}"
+      data-car="${c.id}" data-a="${a}" data-ref="${informativo ? '1' : ''}" value="${escTitle(val ?? '')}"
+      inputmode="decimal" placeholder="—" title="Peça ${a} — ${escTitle(d.label)}${d.motivo ? ' · ' + escTitle(d.motivo) : ''}${informativo ? ' (referência, sem limites)' : ''}"></td>`;
   }).join('');
   const tipoTag = informativo ? ' <span class="insp-tipo-tag">Referência</span>' : (attr ? ' <span class="insp-tipo-tag">OK/NOK</span>' : '');
   const obrigTag = informativo && c.obrigatorio ? ' <span class="insp-tipo-tag insp-tipo-obrig">Obrigatória</span>' : '';
@@ -876,21 +941,54 @@ function linhaMedicao(c, qtd) {
     <td class="cell-sub">${c.referencia || '—'}</td>
     <td>${c.unidade || ''}</td>${dimCols}
     <td class="cell-sub">${c.equipamento || '—'}</td>
-    <td class="cell-sub insp-obs-cell"${obs ? ` title="${escTitle(obs)}"` : ''}>${obs ? `<span class="insp-obs">${escTitle(obs)}</span>` : '—'}</td>
+    ${obsCellHtml(c, obs)}
     ${cells}
     <td class="insp-classe-cell">${informativo ? '<span class="text-muted-2">—</span>' : classeCellHtml(c)}</td>
-    <td class="insp-status-cell">${informativo ? statusReferenciaHtml(c) : statusCellHtml(c.resultado)}</td>
+    <td class="insp-status-cell">${informativo ? statusReferenciaHtml(c) : statusCellHtml(c.resultado, c._visual)}</td>
   </tr>`;
+}
+
+/* §Erro 05 — OBSERVAÇÃO SEMPRE LEGÍVEL.
+   O texto vem inteiro do banco (nada de substring na consulta). Na tela ele é
+   exibido em até 3 linhas; quando não cabe, o auditor abre o conteúdo completo
+   por clique/toque (funciona em celular e tablet, onde tooltip não existe) ou
+   pelo teclado (Enter/Espaço). `title` mantém o tooltip nativo no desktop. */
+function obsCellHtml(c, obs) {
+  if (!obs) return `<td class="cell-sub insp-obs-cell">—</td>`;
+  return `<td class="cell-sub insp-obs-cell">
+    <button type="button" class="insp-obs" data-obs="${c.id}" title="${escTitle(obs)}"
+      aria-label="Observação da cota ${escTitle(String(c.cota ?? ''))}: ${escTitle(obs)}. Toque para ver o texto completo.">
+      <span class="insp-obs__txt">${escTitle(obs)}</span><i class="bi bi-arrows-angle-expand insp-obs__ic"></i>
+    </button></td>`;
+}
+
+/** Abre a observação completa — preserva acentos, símbolos e quebras de linha. */
+function abrirObservacao(carId) {
+  const c = R.caracteristicas.find(x => x.id === carId); if (!c) return;
+  modal({
+    title: `Observação — cota ${c.cota ?? '—'}`,
+    content: `<div class="insp-obs-full">
+        <div class="cell-sub mb-2"><b>${escTitle(c.caracteristica || '')}</b>${c.referencia ? ' · ' + escTitle(c.referencia) : ''}</div>
+        <div class="insp-obs-full__txt">${escTitle(c.observacao_tec || '')}</div>
+        <div class="cell-sub mt-2"><i class="bi bi-lock"></i> Texto cadastrado na Biblioteca Técnica (somente leitura).</div>
+      </div>`,
+    footer: `<button class="rna-btn rna-btn-primary" data-bs-dismiss="modal">Fechar</button>`
+  });
 }
 /* §M07 — padrão brasileiro 00,00 vindo da fonte única (services/formato.js).
    Cota/OP/lote/revisão NÃO passam por aqui: são identificadores. */
 const fmt = v => fmtMedida(v);
 /* Escapa texto livre (observação da Biblioteca) p/ conteúdo e atributo title. */
 const escTitle = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+/* Classe CSS do estado visual (§Erro 01): 'ok' verde · 'atencao' amarelo ·
+   'crit' vermelho. Amarelo NUNCA é reprovação — é aprovado com atenção. */
+const visCls = v => v === 'ok' ? 'is-ok' : v === 'atencao' ? 'is-warn' : v === 'crit' ? 'is-crit' : '';
 const cellCls = r => r === 'aprovado' ? 'is-ok' : r === 'reprovado' ? 'is-crit' : '';
-function statusCellHtml(res) {
-  if (res === 'aprovado') return `<span class="insp-pill insp-ok"><i class="bi bi-check-circle-fill"></i> Aprovado</span>`;
+function statusCellHtml(res, visual = '') {
   if (res === 'reprovado') return `<span class="insp-pill insp-crit"><i class="bi bi-x-circle-fill"></i> Reprovado</span>`;
+  if (res === 'aprovado' && visual === 'atencao')
+    return `<span class="insp-pill insp-warn" title="Valor no limite ou próximo dele — aprovado, com atenção."><i class="bi bi-exclamation-triangle-fill"></i> Aprovado com atenção</span>`;
+  if (res === 'aprovado') return `<span class="insp-pill insp-ok"><i class="bi bi-check-circle-fill"></i> Aprovado</span>`;
   return `<span class="insp-pill insp-pend">Aguardando medição</span>`;
 }
 /* Status NEUTRO da referência (§status visual): jamais "Reprovado", qualquer que
@@ -914,21 +1012,29 @@ function onMedInput(inp) {
   const carId = inp.dataset.car, a = +inp.dataset.a;
   const L = LOCAL[carId];
   L.vals[a] = inp.value;
-  /* Referência: sem validação de tolerância → nunca recebe is-ok/is-crit. */
-  if (!L.informativo) {
-    const res = INSP.avaliarMedicao(inp.value, L.min, L.max, L.tipo);
-    inp.classList.remove('is-ok', 'is-crit'); if (res !== 'pendente') inp.classList.add(cellCls(res));
-  }
+  pintarCampo(inp, avaliarLocal(carId, inp.value));
+  limparErroCampo(inp);
   recalcLinha(carId);
 }
 /* Atributo OK/NOK: recalcula local e persiste imediatamente (select change). */
 function onAttrInput(sel) {
   const carId = sel.dataset.car, a = +sel.dataset.a;
   LOCAL[carId].vals[a] = sel.value;
-  const res = INSP.avaliarMedicao(sel.value, null, null, 'ATRIBUTO');
-  sel.classList.remove('is-ok', 'is-crit'); if (res !== 'pendente') sel.classList.add(cellCls(res));
+  pintarCampo(sel, avaliarLocal(carId, sel.value));
   recalcLinha(carId);
   persistMed(sel);
+}
+/** Avaliação local (mesma regra do servidor) a partir do modelo LOCAL. */
+function avaliarLocal(carId, valor) {
+  const L = LOCAL[carId];
+  return INSP.avaliarMedicaoDetalhe(valor, L.min, L.max, L.informativo ? 'REFERENCIA' : L.tipo);
+}
+/** Pinta o campo com o estado visual (verde/amarelo/vermelho/azul). */
+function pintarCampo(campo, d) {
+  campo.classList.remove('is-ok', 'is-warn', 'is-crit');
+  const cls = visCls(d.visual);
+  if (cls) campo.classList.add(cls);
+  campo.title = `${d.label}${d.motivo ? ' · ' + d.motivo : ''}`;
 }
 /* Recalcula o status da linha e o banner geral a partir do modelo local. */
 function recalcLinha(carId) {
@@ -936,8 +1042,10 @@ function recalcLinha(carId) {
   const row = document.querySelector(`tr[data-row="${carId}"]`);
   const car = R.caracteristicas.find(c => c.id === carId);
   const informativo = !!LOCAL[carId].informativo;
-  const rowRes = INSP.resultadoCaracteristica(resInputs(carId, qtd), { referencia: informativo });
-  if (car) car.resultado = rowRes;
+  const dets = detInputs(carId, qtd);
+  const rowRes = INSP.resultadoCaracteristica(dets.map(d => d.status), { referencia: informativo });
+  const rowVis = INSP.visualCaracteristica(dets.map(d => d.visual));
+  if (car) { car.resultado = rowRes; car._visual = rowVis; }
   if (informativo) {
     /* Referência: status neutro derivado do que está digitado; sem classe de
        defeito e sem impacto no resultado geral (excluída de resultadoGeral). */
@@ -945,23 +1053,109 @@ function recalcLinha(carId) {
       .filter(v => String(v ?? '') !== '').length;
     row.querySelector('.insp-status-cell').innerHTML = statusReferenciaHtml({ medicoes: preenchidas ? [{ valor: '1' }] : [] });
   } else {
-    row.querySelector('.insp-status-cell').innerHTML = statusCellHtml(rowRes);
+    row.querySelector('.insp-status-cell').innerHTML = statusCellHtml(rowRes, rowVis);
     row.querySelector('.insp-classe-cell').innerHTML = classeCellHtml(car);
     bindRowClasse(row);
   }
   R.rel.resultado = INSP.resultadoGeral(R.caracteristicas.filter(c => !c.informativo).map(c => c.resultado));
   refreshBanner();
 }
-function resInputs(carId, qtd) {
-  const out = []; const L = LOCAL[carId];
-  const tipo = L.informativo ? 'REFERENCIA' : L.tipo;
-  for (let s = 1; s <= qtd; s++) out.push(INSP.avaliarMedicao(L.vals[s], L.min, L.max, tipo));
+function detInputs(carId, qtd) {
+  const out = [];
+  for (let s = 1; s <= qtd; s++) out.push(avaliarLocal(carId, LOCAL[carId].vals[s]));
   return out;
 }
 function bindRowClasse(row) {
   row.querySelectorAll('.insp-classe-sel').forEach(sel => sel.addEventListener('change', () => onClasse(sel)));
   row.querySelectorAll('.insp-tratar').forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));
 }
+/* ==================== NAVEGAÇÃO POR TECLADO NAS MEDIÇÕES (§Erro 04) =========
+   Enter          → valida, salva e vai para a PRÓXIMA medição
+   Shift + Enter  → volta para a medição anterior
+   O Enter do teclado numérico chega com a mesma `key` ('Enter'), então os dois
+   funcionam. O padrão do formulário é sempre cancelado: Enter nunca envia nem
+   recarrega a página.
+
+   ORDEM: conclui todas as cotas da Peça 1, depois a Peça 2... (a tabela é
+   desenhada por linha, então a lista é reordenada por amostra e depois por
+   linha). Campos desabilitados, ocultos, somente leitura ou de peça travada
+   por outro auditor são PULADOS. */
+function camposMedicao() {
+  const host = $('#insp-step'); if (!host) return [];
+  return $$('.insp-minput, .insp-attr', host)
+    .filter(el => !el.disabled && !el.readOnly && el.offsetParent !== null && !el.closest('[hidden]'))
+    .map(el => ({ el, amostra: +el.dataset.a || 0, linha: el.closest('tr')?.rowIndex ?? 0 }))
+    .sort((a, b) => a.amostra - b.amostra || a.linha - b.linha)
+    .map(x => x.el);
+}
+
+function onTeclaMedicao(e) {
+  if (e.key !== 'Enter') return;
+  const campo = e.target;
+  if (!campo.classList?.contains('insp-minput') && !campo.classList?.contains('insp-attr')) return;
+  e.preventDefault();                       // nunca envia formulário / recarrega
+  if (e.shiftKey) return moverFoco(campo, -1);
+
+  /* Valor inválido trava o avanço. Fora de especificação NÃO é inválido: a
+     medição pode estar reprovada e o auditor precisa seguir preenchendo. */
+  const erro = erroDeValor(campo);
+  if (erro) { mostrarErroCampo(campo, erro); campo.select?.(); return; }
+  limparErroCampo(campo);
+  persistMed(campo);                        // salva sem bloquear o cursor
+  moverFoco(campo, +1);
+}
+
+/** Mensagem quando o valor digitado não é uma medição válida; null se estiver ok. */
+function erroDeValor(campo) {
+  const carId = campo.dataset.car;
+  const valor = String(campo.value ?? '').trim();
+  const L = LOCAL[carId];
+  if (valor === '') {
+    const car = R.caracteristicas.find(c => c.id === carId);
+    // vazio só é erro quando o registro é obrigatório; senão, segue em frente
+    return (car?.obrigatorio && !car?.informativo) ? 'Esta medição é obrigatória.' : null;
+  }
+  if (L?.tipo === 'ATRIBUTO' || campo.classList.contains('insp-attr')) return null;
+  const d = avaliarLocal(carId, valor);
+  if (d.status === 'pendente' && d.motivo) return d.motivo;   // texto em campo numérico
+  return null;
+}
+
+/** Move o foco N posições na ordem operacional; no fim, vai para "Avançar". */
+function moverFoco(campo, passo) {
+  const campos = camposMedicao();
+  const i = campos.indexOf(campo);
+  const alvo = campos[i + passo];
+  if (!alvo) {
+    /* Última medição: não volta ao início, não finaliza e não troca de etapa
+       sozinho — só oferece o próximo passo (§Erro 04). */
+    if (passo > 0) {
+      const btn = $('#nav-next');
+      if (btn && !btn.disabled) { btn.focus(); toast('Todas as medições desta tela foram percorridas. Avance para a Revisão.', { type: 'info', timeout: 3500 }); }
+    }
+    return;
+  }
+  alvo.focus();
+  if (alvo.select && String(alvo.value ?? '') !== '') alvo.select();   // já preenchido: substitui digitando
+  alvo.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+/* Mensagem de erro colada ao campo (não usa alert nem toast: o auditor precisa
+   ver onde está o problema sem tirar os olhos da tabela). */
+function mostrarErroCampo(campo, msg) {
+  limparErroCampo(campo);
+  campo.classList.add('is-erro');
+  const td = campo.closest('td') || campo.parentElement;
+  td.classList.add('insp-td-erro');
+  td.insertAdjacentHTML('beforeend', `<div class="insp-campo-erro insp-campo-erro--flut" role="alert">${escTitle(msg)}</div>`);
+}
+function limparErroCampo(campo) {
+  campo.classList.remove('is-erro');
+  const td = campo.closest('td') || campo.parentElement;
+  td?.classList.remove('insp-td-erro');
+  td?.querySelector('.insp-campo-erro--flut')?.remove();
+}
+
 async function persistMed(inp) {
   const carId = inp.dataset.car, a = +inp.dataset.a;
   /* §M04 — só grava quem detém a trava da amostra. Guarda de segurança: mesmo

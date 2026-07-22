@@ -17,29 +17,40 @@
    "6,00 características" seria ruído, não padronização. A regra do requisito é
    "apenas medições e valores numéricos".
 
-   Sem dependências: pode ser importado por qualquer camada.
+   Depende apenas de services/medicao.js (leitura decimal sem ponto flutuante):
+   pode ser importado por qualquer camada.
    ========================================================================== */
+import { paraNumeroSeguro, casasDecimais } from './medicao.js';
 
-/** Converte "10,25" | "10.25" | 10.25 → Number. Vazio/inválido → null. */
+/** Converte "10,25" | "10.25" | 10.25 → Number. Vazio/inválido → null.
+    A interpretação do separador é delegada a services/medicao.js (fonte única):
+    o ponto só é milhar quando existe vírgula decimal na mesma string. Antes,
+    "3.350" (três vírgula trezentos e cinquenta) virava 3350 — o ponto era
+    tratado como separador de milhar e a medição aparecia com 1000× o valor. */
 export function paraNumero(v) {
   if (v === '' || v == null) return null;
   if (typeof v === 'number') return Number.isNaN(v) ? null : v;
-  // remove separador de milhar pt-BR antes de trocar a vírgula decimal
-  const s = String(v).trim().replace(/\s/g, '').replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.');
-  const n = parseFloat(s);
-  return Number.isNaN(n) ? null : n;
+  return paraNumeroSeguro(v);
 }
 
-/** Formata um valor MEDIDO no padrão pt-BR com casas fixas (padrão: 2).
+/** Formata um valor MEDIDO no padrão pt-BR com no MÍNIMO `casas` decimais
+    (padrão: 2 — §M07 "00,00") e sem NUNCA esconder a precisão informada:
+    3,350 continua "3,350" e 3,351 continua "3,351" — arredondar para duas casas
+    faria dois valores diferentes aparecerem iguais no relatório (§Erro 01).
     `agrupar` fica desligado por padrão: numa tabela de metrologia "1.520,00"
     se confunde com separador decimal — "1520,00" é o que a folha de medição usa.
-    Valor não numérico é devolvido como texto (ex.: "Conforme desenho"). */
-export function fmtNum(v, { casas = 2, agrupar = false, vazio = '—' } = {}) {
+    Valor não numérico é devolvido como texto (ex.: "OK", "Conforme desenho"). */
+export function fmtNum(v, { casas = 2, agrupar = false, vazio = '—', maxCasas } = {}) {
   if (v === '' || v == null) return vazio;
   const n = paraNumero(v);
   if (n == null) return String(v);                 // texto livre passa intacto
+  /* As casas exibidas são o MAIOR entre o padrão (00,00) e as casas realmente
+     informadas — mínimo e máximo iguais, para o zero à direita não sumir:
+     3,350 continua "3,350" e não vira "3,35". Teto de 6 casas por segurança. */
+  const reais = Math.min(casasDecimais(v), 6);
+  const usar = maxCasas != null ? Math.max(casas, maxCasas) : Math.max(casas, reais);
   return n.toLocaleString('pt-BR', {
-    minimumFractionDigits: casas, maximumFractionDigits: casas, useGrouping: agrupar
+    minimumFractionDigits: usar, maximumFractionDigits: usar, useGrouping: agrupar
   });
 }
 

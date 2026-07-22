@@ -11,6 +11,7 @@ import { db } from '../../../services/db.js';
 import * as ATIV from '../../../services/atividades.js';
 import * as INSP from '../../../services/inspecao.js';
 import { INSP_STATUS } from '../../../services/inspecao-data.js';
+import { formatarDataBrasil, formatarDataHoraBrasil } from '../../../services/datahora.js';
 import { $, $$, toast, confirmDialog } from '../ui.js';
 
 const ctx = await mountShell();
@@ -21,8 +22,9 @@ function escopo() {
   if (USER.role === 'auditor') return { somenteAuditor: USER.id };
   return {};   // supervisor/admin: todas (RLS trata em produção)
 }
-const dataBR = iso => (String(iso || '').slice(0, 10).split('-').reverse().join('/')) || '—';
-const fmtQuando = iso => { if (!iso) return '—'; const d = new Date(iso); return isNaN(d) ? iso : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+/* §Erro 06 — data e hora no fuso oficial America/Sao_Paulo (fonte única). */
+const dataBR = iso => formatarDataBrasil(iso);
+const fmtQuando = iso => formatarDataHoraBrasil(iso);
 const badgeStatus = s => ({ aberta: 'badge-crit', em_tratativa: 'badge-warn', resolvida: 'badge-ok' }[s] || 'badge-na');
 const labelStatus = s => ({ aberta: 'Aberta', em_tratativa: 'Em tratativa', resolvida: 'Resolvida' }[s] || s);
 

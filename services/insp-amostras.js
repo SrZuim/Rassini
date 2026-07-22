@@ -30,6 +30,7 @@
    Persistência 100% via db.js (demo ou Supabase, sem alteração).
    ========================================================================== */
 import { db } from './db.js';
+import { avaliarMedicao } from './medicao.js';
 
 /* Uma trava vale por LOCK_TTL_SEG sem sinal de vida. BATIDA_SEG é bem menor que
    o TTL para tolerar uma batida perdida sem derrubar a trava de quem está ativo. */
@@ -219,12 +220,26 @@ export function resultadoDaAmostra(medicoesDaAmostra) {
   return avaliaveis.every(r => r === 'aprovado') ? 'aprovado' : 'pendente';
 }
 
-/** Recalcula e grava o resultado de cada amostra a partir das medições. */
+/** Recalcula e grava o resultado de cada amostra a partir das medições.
+    O status de cada medição é DERIVADO da regra (services/medicao.js) e não do
+    que está gravado: assim um "NOK" antigo, salvo como pendente, passa a
+    reprovar a peça como deve (§Erro 07), sem depender de reprocessamento. */
 export async function recalcularResultados(relatorioId, quantidade) {
-  const meds = await db.list('insp_medicoes', { filter: { relatorio_id: relatorioId } });
+  const [meds, cars] = await Promise.all([
+    db.list('insp_medicoes', { filter: { relatorio_id: relatorioId } }),
+    db.list('insp_caracteristicas', { filter: { relatorio_id: relatorioId } })
+  ]);
+  const carBy = Object.fromEntries(cars.map(c => [c.id, c]));
+  const derivada = m => {
+    const c = carBy[m.caracteristica_id];
+    if (!c) return m;
+    const tipo = (c.informativo || c.tipo_campo === 'informativo' || c.tipo_especificacao === 'REFERENCIA')
+      ? 'REFERENCIA' : (c.tipo_especificacao || (c.tipo_campo === 'atributo' ? 'ATRIBUTO' : 'TOLERANCIA'));
+    return { ...m, resultado: avaliarMedicao(m.valor, c.minimo, c.maximo, tipo) };
+  };
   const linhas = await garantirAmostras(relatorioId, quantidade);
   for (const a of linhas) {
-    const doNumero = meds.filter(m => Number(m.amostra) === Number(a.amostra));
+    const doNumero = meds.filter(m => Number(m.amostra) === Number(a.amostra)).map(derivada);
     const res = resultadoDaAmostra(doNumero);
     if (res !== a.resultado) await db.update('insp_amostras', a.id, { resultado: res });
   }

@@ -16,6 +16,7 @@ import { fontesConsultaDimensional, pnsDoCliente, revisoesDoPN, fmtRevisao } fro
 import { comboFiltro } from '../rna-combo.js';
 import { nomeDoSlug } from '../../../services/tipos-inspecao.js';
 import { fmtMedida } from '../../../services/formato.js';
+import { formatarDataBrasil, formatarHoraBrasil, formatarDataHoraBrasil } from '../../../services/datahora.js';
 import * as AMOSTRAS from '../../../services/insp-amostras.js';
 import { $, $$, toast } from '../ui.js';
 
@@ -46,7 +47,12 @@ function escopo() {
 /* Número do relatório: gerado uma única vez na criação (inspecao.js). Relatórios
    legados sem número recebem fallback visual estável derivado do id — nada é regravado. */
 const numeroDe = r => r?.numero || ('REL-LEGADO-' + (String(r?.id ?? '').replace(/[^a-z0-9]/gi, '').slice(-4).toUpperCase() || '0000'));
-const dataBR = iso => (String(iso || '').slice(0, 10).split('-').reverse().join('/')) || '—';
+/* §Erro 06 — data/hora no fuso oficial America/Sao_Paulo, via fonte única.
+   Antes o código lia o texto do ISO por posição (slice), o que exibia o horário
+   UTC — três horas à frente do horário real da operação. */
+const dataBR = iso => formatarDataBrasil(iso);
+const horaBR = iso => formatarHoraBrasil(iso, { vazio: '' });
+const dataHoraBR = iso => formatarDataHoraBrasil(iso);
 const revLabel = v => (v === '' || v == null) ? '—' : 'Rev ' + fmtRevisao(v);
 
 /* ============================================================ CONSULTA (§28-29) */
@@ -265,7 +271,6 @@ async function abrirRelatorio(relId, autoPrint = false) {
   const acaoBy = Object.fromEntries(acoes.map(a => [a.caracteristica_id, a]));
   const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const s = INSP_STATUS[rel.status] || { label: rel.status, badge: 'badge-na' };
-  const horaBR = iso => (iso || '').slice(11, 16);
   const numero = numeroDe(rel);
   const codigoVerif = 'V-' + (numero.replace(/[^0-9]/g, '').slice(-8) || numero.replace(/[^A-Z0-9]/gi, '').slice(-8));
 
@@ -299,7 +304,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
           ${cell('Tipo de inspeção', rel.tipo_nome)}
           ${cell('Peça aplicável a', tiposVinculoTexto(rel))}
           ${cell('Auditor', rel.auditor_nome)} ${cell('Matrícula', rel.auditor_matricula)}
-          ${cell('Início', dataBR(rel.started_iso) + ' ' + horaBR(rel.started_iso))} ${cell('Conclusão', rel.completed_iso ? dataBR(rel.completed_iso) + ' ' + horaBR(rel.completed_iso) : '—')}
+          ${cell('Início', dataHoraBR(rel.started_iso))} ${cell('Conclusão', rel.completed_iso ? dataHoraBR(rel.completed_iso) : '—')}
           ${podeVerMetricasTempo(USER.role) ? cell('Duração', INSP.fmtDuracao(rel.duracao_seg)) : ''}
         </div></div>
 
@@ -310,8 +315,8 @@ async function abrirRelatorio(relId, autoPrint = false) {
         ${amostras.map(a => `<tr>
           <td>Peça ${a.amostra}</td>
           <td>${esc(a.auditor_nome || '—')}${a.concluido_por_nome && a.concluido_por_nome !== a.auditor_nome ? `<div class="cell-sub">Concluída por ${esc(a.concluido_por_nome)}</div>` : ''}</td>
-          <td>${a.inicio_iso ? dataBR(a.inicio_iso) + ' ' + horaBR(a.inicio_iso) : '—'}</td>
-          <td>${a.fim_iso ? dataBR(a.fim_iso) + ' ' + horaBR(a.fim_iso) : '—'}</td>
+          <td>${dataHoraBR(a.inicio_iso)}</td>
+          <td>${dataHoraBR(a.fim_iso)}</td>
           ${podeVerMetricasTempo(USER.role) ? `<td>${a.duracao_seg != null ? INSP.fmtDuracao(a.duracao_seg) : '—'}</td>` : ''}
           <td>${a.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovada</span>' : a.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovada</span>' : '—'}</td>
           <td class="cell-sub">${esc(a.observacao || '—')}</td></tr>`).join('')}
@@ -320,30 +325,41 @@ async function abrirRelatorio(relId, autoPrint = false) {
 
       <div class="insp-rep-section"><div class="insp-rep-sec-t">Resultados das medições</div>
         <div class="insp-table-wrap"><table class="insp-mtable insp-rep-table"><thead><tr>
-          <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Un.</th><th>Nom.</th><th>Mín</th><th>Máx</th><th>Equip.</th>
+          <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Un.</th><th>Nom.</th><th>Mín</th><th>Máx</th><th>Equip.</th><th>Obs.</th>
           ${Array.from({ length: rel.quantidade || 0 }, (_, i) => `<th>P${i + 1}</th>`).join('')}
           <th>Result.</th><th>Classe</th></tr></thead><tbody>
           ${caracteristicas.map(c => {
             const info = !!c.informativo;
-            const nomeCel = `${c.caracteristica}${c.referencia ? `<div class="cell-sub"><i class="bi bi-info-circle"></i> ${c.referencia}</div>` : ''}`;
+            const nomeCel = `${esc(c.caracteristica)}${c.referencia ? `<div class="cell-sub"><i class="bi bi-info-circle"></i> ${esc(c.referencia)}</div>` : ''}`;
             // Referência: sem limites, mas COM os valores medidos (§referência mensurável).
             const dimCels = info ? `<td colspan="3" class="cell-sub" style="text-align:center">Referência</td>` : `<td>${dash(c.nominal)}</td><td>${dash(c.minimo)}</td><td>${dash(c.maximo)}</td>`;
+            /* §Erro 05 — a observação técnica também vai para o relatório e o PDF,
+               com o texto COMPLETO (quebra de linha, sem corte na consulta). */
+            const obsCel = `<td class="cell-sub insp-rep-obs">${c.observacao_tec ? esc(c.observacao_tec) : '—'}</td>`;
             const sampCels = Array.from({ length: rel.quantidade || 0 }, (_, i) => {
               const m = c.medicoes.find(x => x.amostra === i + 1);
-              // Medição de referência nunca é colorida como aprovada/reprovada.
-              const cls = (!info && m) ? (m.resultado === 'aprovado' ? 'rep-ok' : m.resultado === 'reprovado' ? 'rep-crit' : '') : '';
-              return `<td class="${cls}">${m ? dash(m.valor) : '—'}</td>`;
+              /* Estado visual da medição vem do motor único (§Erro 01): verde,
+                 amarelo (no limite / próximo dele) ou vermelho. Referência nunca
+                 é colorida como aprovada/reprovada. */
+              const cls = (!info && m) ? repCls(m._visual) : '';
+              return `<td class="${cls}">${m ? esc(dash(m.valor)) : '—'}</td>`;
             }).join('');
             const temMedRef = c.medicoes.some(m => String(m.valor ?? '') !== '');
+            /* §Erro 07 — OK vira "✓ Aprovado" e NOK vira "✗ Reprovado". O status
+               é o derivado da regra (INSP.derivarResultados), então características
+               visuais nunca mais aparecem como "—" tendo sido avaliadas. */
             const resCel = info
               ? `<span class="rep-tag">${temMedRef ? 'Registrado — Referência' : 'Referência informativa'}</span>`
-              : (c.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovado</span>' : c.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovado</span>' : '—');
+              : resultadoTag(c.resultado, c._visual);
             return `<tr>
-            <td>${c.cota ?? '—'}</td><td>${nomeCel}</td><td>${c.quadrante || '—'}</td><td>${c.unidade || ''}</td>${dimCels}<td class="cell-sub">${c.equipamento || '—'}</td>
+            <td>${esc(c.cota ?? '—')}</td><td>${nomeCel}</td><td>${esc(c.quadrante || '—')}</td><td>${esc(c.unidade || '')}</td>${dimCels}<td class="cell-sub">${esc(c.equipamento || '—')}</td>${obsCel}
             ${sampCels}
             <td>${resCel}</td>
-            <td>${c.classe_defeito ? 'Classe ' + c.classe_defeito : '—'}</td></tr>`; }).join('')}
-        </tbody></table></div></div>
+            <td>${c.classe_defeito ? 'Classe ' + esc(c.classe_defeito) : '—'}</td></tr>`; }).join('')}
+        </tbody></table></div>
+        <div class="cell-sub mt-1"><span class="rep-tag rep-ok">✓ Aprovado</span> dentro da faixa segura ·
+          <span class="rep-tag rep-warn">▲ Aprovado com atenção</span> no limite ou próximo dele ·
+          <span class="rep-tag rep-crit">✗ Reprovado</span> fora do limite. Limites inclusivos.</div></div>
 
       ${caracteristicas.some(c => c.resultado === 'reprovado') ? `<div class="insp-rep-section"><div class="insp-rep-sec-t">Reprovações e tratamento</div>
         ${caracteristicas.filter(c => c.resultado === 'reprovado').map(c => { const a = acaoBy[c.id] || {}; return `<div class="insp-rep-reprov">
@@ -364,10 +380,10 @@ async function abrirRelatorio(relId, autoPrint = false) {
       </div>
 
       ${hist.length ? `<div class="insp-rep-section no-print-optional"><div class="insp-rep-sec-t">Histórico</div>
-        <table class="rna-table"><tbody>${hist.map(h => `<tr><td class="cell-sub" style="width:150px">${dataBR(h.quando)} ${horaBR(h.quando)}</td><td><b>${h.acao}</b> ${h.campo && h.campo !== '—' ? `· ${h.campo}: ${h.antes} → ${h.depois}` : h.depois} ${h.justificativa ? `<div class="cell-sub">Justificativa: ${h.justificativa}</div>` : ''}</td><td class="cell-sub">${h.user_nome}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        <table class="rna-table"><tbody>${hist.map(h => `<tr><td class="cell-sub" style="width:150px">${dataHoraBR(h.quando)}</td><td><b>${h.acao}</b> ${h.campo && h.campo !== '—' ? `· ${h.campo}: ${h.antes} → ${h.depois}` : h.depois} ${h.justificativa ? `<div class="cell-sub">Justificativa: ${h.justificativa}</div>` : ''}</td><td class="cell-sub">${h.user_nome}</td></tr>`).join('')}</tbody></table></div>` : ''}
 
       <div class="insp-rep-footer">
-        <span>${numero}</span><span>Emitido em ${new Date().toLocaleDateString('pt-BR')}</span>
+        <span>${numero}</span><span>Emitido em ${dataHoraBR(new Date())}</span>
         <span>Código de verificação: ${codigoVerif}</span><span>Documento controlado — RNA One</span>
       </div>
     </div>`;
@@ -378,8 +394,20 @@ async function abrirRelatorio(relId, autoPrint = false) {
   if (autoPrint) setTimeout(() => window.print(), 500);   // Imprimir direto (botão da lista)
 }
 const cell = (l, v) => `<div class="insp-rep-cell"><span class="insp-info-l">${l}</span><span class="insp-info-v">${(v === 0 || v) ? v : '—'}</span></div>`;
-/* §M07 — valores medidos/nominais/tolerâncias no padrão 00,00 (fonte única). */
+/* §M07 — valores medidos/nominais/tolerâncias no padrão 00,00 (fonte única).
+   A precisão informada é preservada: 3,350 e 3,351 não colapsam em "3,35". */
 const dash = v => fmtMedida(v);
+/* Classe da célula do relatório conforme o estado visual da medição (§Erro 01). */
+const repCls = v => v === 'ok' ? 'rep-ok' : v === 'atencao' ? 'rep-warn' : v === 'crit' ? 'rep-crit' : '';
+/* Etiqueta do resultado — a mesma na tela, no relatório, na impressão e no PDF. */
+function resultadoTag(resultado, visual) {
+  if (resultado === 'reprovado') return '<span class="rep-tag rep-crit">✗ Reprovado</span>';
+  if (resultado === 'aprovado') return visual === 'atencao'
+    ? '<span class="rep-tag rep-warn" title="Valor no limite ou próximo dele — aprovado, com atenção.">▲ Aprovado com atenção</span>'
+    : '<span class="rep-tag rep-ok">✓ Aprovado</span>';
+  if (resultado === 'registrado') return '<span class="rep-tag">Registrado — Referência</span>';
+  return '—';
+}
 /* §14 — vínculo peça × tipos de inspeção COMO ERA no momento da auditoria
    (snapshot em peca_tipos_inspecao). Relatório antigo não muda se a peça for
    reconfigurada depois na Biblioteca Técnica. */

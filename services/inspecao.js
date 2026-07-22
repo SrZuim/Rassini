@@ -14,10 +14,16 @@ import { pecaAtendeTipo, tiposDaPeca } from './tipos-inspecao.js';
 import { fmtMedida } from './formato.js';
 import * as AMOSTRAS from './insp-amostras.js';
 import { PLANTA_SIGLAS, INSP_STATUS } from './inspecao-data.js';
+import * as MED from './medicao.js';
+import { agoraISO, hojeBR, formatarDataBrasil, formatarHoraBrasil, duracaoSegundos } from './datahora.js';
+import { normalizarIdentificadorMaiusculo, normalizarOP, opValida, MSG_OP_INVALIDA } from './identificadores.js';
 
-export function nowISO() { return new Date().toISOString(); }
-export function hoje() { return new Date().toISOString().slice(0, 10); }
-export function anoAtual() { return new Date().getFullYear(); }
+/* Gravação sempre em UTC (timestamptz); exibição sempre via services/datahora.js
+   no fuso America/Sao_Paulo (§Erro 06). `hoje()` usa o dia civil de São Paulo —
+   com toISOString a data virava no fim da tarde. */
+export function nowISO() { return agoraISO(); }
+export function hoje() { return hojeBR(); }
+export function anoAtual() { return Number(hojeBR().slice(0, 4)) || new Date().getFullYear(); }
 
 /* ================================================================ ERROS REAIS
    Uma falha de permissão, de sessão ou de migration NÃO é "erro de conexão".
@@ -94,12 +100,10 @@ export async function sessaoValida() {
   }
 }
 
-/* Converte "10,25" → 10.25; vazio/nulo → null; não-número → null. */
-export function num(v) {
-  if (v === '' || v == null) return null;
-  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(',', '.'));
-  return Number.isNaN(n) ? null : n;
-}
+/* Converte "10,25" → 10.25; vazio/nulo → null; não-número → null.
+   Mantido para compatibilidade; a leitura decimal oficial é MED.paraNumeroSeguro
+   e NENHUMA decisão de aprovação passa por ponto flutuante (ver medicao.js). */
+export const num = MED.paraNumeroSeguro;
 
 /* ============================================================ CÁLCULO (§9-11)
    O auditor NUNCA define aprovado/reprovado — estas funções são a única fonte. */
@@ -119,32 +123,29 @@ export function ehCaracteristicaReferencia(car) {
   return !!(car?.informativo || car?.tipo_especificacao === 'REFERENCIA');
 }
 
-/** Avalia atributo OK/NOK → aprovado/reprovado/pendente. */
-export function avaliarAtributo(valor) {
-  const s = String(valor ?? '').trim().toUpperCase();
-  if (s === 'OK') return 'aprovado';
-  if (s === 'NOK' || s === 'NOK.' || s === 'NÃO OK' || s === 'NAO OK') return 'reprovado';
-  return 'pendente';
+/* O motor de avaliação mora em services/medicao.js (fonte única, §Erro 01/07):
+   limites INCLUSIVOS, comparação decimal sem ponto flutuante, faixa de atenção
+   configurável (MED.ALERTA_PCT) e reconhecimento de OK/NOK venha de onde vier.
+   Reexportado aqui para não quebrar quem já importava de inspecao.js. */
+export const avaliarAtributo = MED.avaliarAtributo;
+export const avaliarReferencia = MED.avaliarReferencia;
+export const avaliarMedicao = MED.avaliarMedicao;
+export const avaliarMedicaoDetalhe = MED.avaliarMedicaoDetalhe;
+export const visualMedicao = MED.visualMedicao;
+export const visualCaracteristica = MED.visualCaracteristica;
+export const ALERTA_PCT = MED.ALERTA_PCT;
+export const VISUAL_LABEL = MED.VISUAL_LABEL;
+
+/** Tipo efetivo da característica para avaliação (tolera colunas ausentes). */
+export function tipoDeAvaliacao(car) {
+  if (!car) return 'TOLERANCIA';
+  if (ehCaracteristicaReferencia(car)) return 'REFERENCIA';
+  return car.tipo_especificacao || 'TOLERANCIA';
 }
 
-/** Medição de referência: preenchida → 'registrado' (neutro); vazia → 'pendente'.
-    Nunca 'reprovado' — não há tolerância a comparar. */
-export function avaliarReferencia(valor) {
-  return String(valor ?? '').trim() === '' ? 'pendente' : RESULTADO_REFERENCIA;
-}
-
-/** Uma medição: 'aprovado' | 'reprovado' | 'registrado' | 'pendente' (limites
-    inclusivos, §9). `tipo`: 'ATRIBUTO' avalia OK/NOK; 'REFERENCIA' registra sem
-    validar tolerância; demais usam limites numéricos. */
-export function avaliarMedicao(valor, minimo, maximo, tipo) {
-  if (tipo === 'ATRIBUTO') return avaliarAtributo(valor);
-  if (tipo === 'REFERENCIA') return avaliarReferencia(valor);
-  const v = num(valor);
-  if (v == null) return 'pendente';
-  const min = num(minimo), max = num(maximo);
-  if (min != null && v < min) return 'reprovado';
-  if (max != null && v > max) return 'reprovado';
-  return 'aprovado';
+/** Avaliação completa de uma medição já vinculada à sua característica. */
+export function avaliarDaCaracteristica(car, valor) {
+  return MED.avaliarMedicaoDetalhe(valor, car?.minimo, car?.maximo, tipoDeAvaliacao(car));
 }
 
 /** Resultado da característica (linha): todas aprovadas → aprovado; qualquer
@@ -461,9 +462,7 @@ export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valo
   if (!car) return null;
   // REFERENCIA também é medida e registrada (§Referência): avaliarMedicao devolve
   // 'registrado' — sem tolerância, sem reprovação. Antes esta linha era descartada.
-  const ehRef = ehCaracteristicaReferencia(car);
-  const resultado = ehRef ? avaliarReferencia(valor)
-    : avaliarMedicao(valor, car.minimo, car.maximo, car.tipo_especificacao);
+  const resultado = avaliarDaCaracteristica(car, valor).status;
   const existentes = await db.list('insp_medicoes', { filter: { caracteristica_id: caracteristicaId } });
   const ex = existentes.find(m => m.amostra === amostra);
   /* §M04 — AUTORIA POR MEDIÇÃO. Com vários auditores no mesmo relatório, saber
@@ -527,7 +526,8 @@ export async function recalcularCaracteristica(caracteristicaId) {
   const meds = await db.list('insp_medicoes', { filter: { caracteristica_id: caracteristicaId } });
   // Referência nunca reprova → resultado neutro ('registrado'/'aprovado'), o que
   // a mantém fora de reprovações, pendências e classes de defeito.
-  const resultado = resultadoCaracteristica(meds.map(m => m.resultado),
+  // O status vem sempre da REGRA aplicada ao valor (não do que estava gravado).
+  const resultado = resultadoCaracteristica(meds.map(m => avaliarDaCaracteristica(car, m.valor).status),
     { referencia: ehCaracteristicaReferencia(car) });
   const patch = { resultado };
   // se voltou a aprovada/pendente, limpa a classe de defeito
@@ -545,6 +545,29 @@ export async function recalcularRelatorio(relatorioId) {
     : (cars.some(c => c.resultado !== 'pendente') ? 'em_andamento' : (rel?.status || 'rascunho'));
   await db.update('insp_relatorios', relatorioId, { resultado: geral, status, updated_iso: nowISO() });
   return geral;
+}
+
+/* ================================ IDENTIFICAÇÃO — LOTE E OP (§Erro 02 e 03)
+   Última barreira antes do banco: por mais que a tela filtre a digitação, o
+   valor é normalizado e validado AQUI. Assim a busca por lote é sempre
+   comparável (tudo maiúsculo) e nenhuma OP com letra entra na base — inclusive
+   se a gravação vier de outro ponto do sistema. Zeros à esquerda preservados
+   (a OP é texto: "000145" continua "000145"). */
+export async function salvarIdentificacao(relatorioId, { lote, op, linha, campos_opcionais } = {}) {
+  const patch = {};
+  if (lote !== undefined) patch.lote = normalizarIdentificadorMaiusculo(lote);
+  if (op !== undefined) {
+    const bruto = String(op ?? '').trim();
+    const limpo = normalizarOP(bruto);
+    /* Recusa em vez de "consertar" em silêncio: gravar "26" quando o auditor
+       digitou "26WWW" seria um falso sucesso — ele nunca saberia que a OP
+       gravada não é a que informou. */
+    if (bruto !== limpo) throw new InspError('OP_INVALIDA', MSG_OP_INVALIDA);
+    patch.op = limpo;
+  }
+  if (linha !== undefined) patch.linha = String(linha ?? '').trim().replace(/\s+/g, ' ');
+  if (campos_opcionais !== undefined) patch.campos_opcionais = campos_opcionais;
+  return patchRelatorio(relatorioId, patch, { evento: 'save' });
 }
 
 /* Classe de defeito e observação da característica reprovada (§12). Não altera cálculo. */
@@ -573,7 +596,7 @@ export async function aplicarQuantidade(relatorioId, quantidade) {
 
 /* ================================================================ CARREGAR
    Relatório completo (cabeçalho + características + medições indexadas). */
-export async function carregarRelatorio(relatorioId) {
+export async function carregarRelatorio(relatorioId, { reparar = false } = {}) {
   const rel = await db.get('insp_relatorios', relatorioId);
   if (!rel) return null;
   const [cars, meds, acoes, anexos] = await Promise.all([
@@ -585,8 +608,52 @@ export async function carregarRelatorio(relatorioId) {
   const medBy = {};
   meds.forEach(m => (medBy[m.caracteristica_id] = medBy[m.caracteristica_id] || []).push(m));
   const caracteristicas = cars.sort((a, b) => (a.ordem || 0) - (b.ordem || 0))
-    .map(c => ({ ...c, medicoes: (medBy[c.id] || []).sort((a, b) => a.amostra - b.amostra) }));
+    .map(c => derivarResultados({ ...c, medicoes: (medBy[c.id] || []).sort((a, b) => a.amostra - b.amostra) }));
+  /* Autocorreção do que ficou gravado errado antes das correções (§Erro 01/07):
+     medição OK/NOK marcada como 'pendente', ou valor no limite marcado como
+     'reprovado'. Best-effort e silencioso: quem não tem permissão de escrita
+     (consulta de terceiros) apenas vê o valor derivado, sem erro na tela. */
+  if (reparar && !relatorioFechado(rel)) await repararResultados(relatorioId, caracteristicas).catch(() => {});
   return { rel, caracteristicas, acoes, anexos };
+}
+
+/* ==================================== RESULTADO DERIVADO (§Erro 01 e §Erro 07)
+   A verdade do status é a REGRA aplicada ao valor medido, não o texto que ficou
+   gravado numa versão anterior do sistema. Toda leitura passa por aqui, então
+   tela, revisão, resultado, relatório, impressão, PDF e pendência mostram
+   exatamente a mesma coisa — inclusive para inspeções antigas.
+   `_visual` ('ok'|'atencao'|'crit'|'ref'|'') é derivado e nunca é persistido. */
+export function derivarResultados(c) {
+  const tipo = tipoDeAvaliacao(c);
+  const referencia = ehCaracteristicaReferencia(c);
+  const medicoes = (c.medicoes || []).map(m => {
+    const d = MED.avaliarMedicaoDetalhe(m.valor, c.minimo, c.maximo, tipo);
+    // _gravado guarda o que estava no banco, para o reparo saber o que mudou
+    return { ...m, _gravado: m.resultado, resultado: d.status, _visual: d.visual, _label: d.label, _motivo: d.motivo };
+  });
+  const resultado = resultadoCaracteristica(medicoes.map(m => m.resultado), { referencia });
+  return {
+    ...c, medicoes, resultado,
+    _visual: referencia ? MED.VISUAL.REF : MED.visualCaracteristica(medicoes.map(m => m._visual))
+  };
+}
+
+/** Relatório fechado: só leitura. Nunca é regravado por rotina automática. */
+export function relatorioFechado(rel) {
+  return String(rel?.status || '').startsWith('finalizada') || rel?.status === 'revisada';
+}
+
+/** Regrava no banco apenas o que divergir do resultado derivado. Não altera
+    valores medidos, classes, observações nem horários — só o campo `resultado`.
+    Roda somente em relatórios abertos (ver carregarRelatorio). */
+export async function repararResultados(relatorioId, caracteristicas) {
+  const divergentes = caracteristicas.flatMap(c => c.medicoes.filter(m => m._gravado !== m.resultado));
+  if (!divergentes.length) return false;
+  console.warn(`[INSP] Corrigindo ${divergentes.length} resultado(s) de medição gravado(s) por regra antiga.`);
+  for (const m of divergentes) await db.update('insp_medicoes', m.id, { resultado: m.resultado });
+  for (const c of caracteristicas) await recalcularCaracteristica(c.id);
+  await recalcularRelatorio(relatorioId);
+  return true;
 }
 
 /* Lista os relatórios do auditor (Minhas Auditorias, §26). */
@@ -646,8 +713,10 @@ export async function consultarRelatorios(filtros = {}, escopo = {}) {
     if (f.cliente && !like(r.cliente, f.cliente)) return false;
     if (f.pn && !like(r.peca_codigo, f.pn)) return false;
     if (f.auditor && !like(r.auditor_nome, f.auditor)) return false;
-    if (f.lote && !like(r.lote, f.lote)) return false;
-    if (f.op && !like(r.op, f.op)) return false;
+    /* Lote e OP são pesquisados JÁ NORMALIZADOS (§Erro 02/03): o lote sempre em
+       maiúsculas e a OP só com dígitos — "op 123" e "123" encontram a mesma OP. */
+    if (f.lote && !like(r.lote, normalizarIdentificadorMaiusculo(f.lote))) return false;
+    if (f.op && !like(normalizarOP(r.op), normalizarOP(f.op) || f.op)) return false;
     if (f.revisao && normRev(r.revisao_desenho) !== normRev(f.revisao)) return false;
     if (f.numero && !like(r.numero, f.numero)) return false;
     if (f.tipo && r.tipo_id !== f.tipo) return false;
@@ -717,6 +786,7 @@ export async function validarFinalizacao(relatorioId) {
   if (!rel.quantidade) faltas.push({ etapa:'Amostras', msg:'Selecione a quantidade de peças' });
   if (!String(rel.lote || '').trim()) faltas.push({ etapa:'Identificação', msg:'Informe o lote' });
   if (!String(rel.op || '').trim()) faltas.push({ etapa:'Identificação', msg:'Informe a OP' });
+  else if (!opValida(rel.op)) faltas.push({ etapa:'Identificação', msg:MSG_OP_INVALIDA });
   // medições obrigatórias — a inspeção só finaliza com todas as amostras medidas
   const qtd = rel.quantidade || 0;
   const faltamAmostras = c => {
@@ -771,7 +841,9 @@ export async function finalizar(relatorioId, user) {
   const rel = await db.get('insp_relatorios', relatorioId);
   const geral = await recalcularRelatorio(relatorioId);
   const status = geral === 'reprovado' ? 'finalizada_reprovada' : 'finalizada_aprovada';
-  const dur = Math.max(0, Math.round((Date.now() - new Date(rel.started_iso || Date.now()).getTime()) / 1000));
+  /* Duração calculada sobre os timestamps persistidos (§Erro 06): início real
+     da inspeção → agora. Fuso não interfere — os dois lados são instantes UTC. */
+  const dur = duracaoSegundos(rel.started_iso || nowISO()) ?? 0;
   // rastreabilidade completa (§Regra 8) — congelada no relatório ao finalizar
   const s = await resumoRelatorio(relatorioId);
   const rastreio = {
@@ -826,8 +898,9 @@ export async function criarPendenciaDoRelatorio(rel, user) {
   const o = rel.campos_opcionais || {};
   const numero = await proximoNumeroPendencia();
   const ref = rel.completed_iso || rel.started_iso || nowISO();
-  const dataBR = ref.slice(0, 10).split('-').reverse().join('/');
-  const horaBR = ref.slice(11, 16);
+  // §Erro 06 — data/hora da pendência no fuso America/Sao_Paulo (nunca UTC cru)
+  const dataBR = formatarDataBrasil(ref);
+  const horaBR = formatarHoraBrasil(ref);
   const val = v => fmtMedida(v);          // §M07 — padrão 00,00 (fonte única)
   const detalhes = reprovadas.map(c => ({
     caracteristica: c.caracteristica, cota: c.cota ?? '—', classe: c.classe_defeito || null,

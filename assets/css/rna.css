@@ -887,6 +887,50 @@ body.kiosk .rna-content { padding: 26px; }
 
 @media (max-width:640px){ .bib-tipo-cards{ grid-template-columns:1fr 1fr; } }
 
-/* Minhas Auditorias — coluna Observações (texto da Biblioteca, com reticências) */
-.insp-obs-cell{ max-width:210px; }
-.insp-obs{ display:inline-block; max-width:200px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; vertical-align:bottom; cursor:help; }
+/* ==========================================================================
+   INSPEÇÃO DIMENSIONAL — correções §Erro 01 a §Erro 05
+   ========================================================================== */
+
+/* --- §Erro 01: terceiro estado visual — AMARELO "aprovado com atenção" ------
+   Amarelo NÃO é reprovação: o valor está dentro da faixa (inclusive quando é
+   exatamente igual ao limite), apenas perto do extremo da tolerância. */
+.insp-minput.is-warn{ border-color:var(--rna-yellow-600); background:rgba(244,194,13,.14); color:#8a6a00; }
+.insp-attr.is-warn{ border-color:var(--rna-yellow-600); color:#8a6a00; font-weight:700; }
+.insp-pill.insp-warn{ background:rgba(244,194,13,.20); color:#8a6a00; }
+.rep-tag.rep-warn{ background:rgba(244,194,13,.22); color:#8a6a00; }
+.insp-rep-table td.rep-warn{ color:#8a6a00; font-weight:700; }
+
+/* --- §Erro 03/04: campo com valor inválido + mensagem junto ao campo -------- */
+.insp-minput.is-erro, .form-control.is-erro{ border-color:var(--rna-crit) !important; background:rgba(226,59,59,.06); }
+.insp-campo-erro{ color:var(--rna-crit); font-size:12px; font-weight:600; margin-top:4px; }
+.insp-td-erro{ position:relative; }
+.insp-campo-erro--flut{ position:absolute; left:50%; transform:translateX(-50%); top:100%; z-index:20;
+  white-space:normal; width:max-content; max-width:190px; margin-top:2px; padding:5px 8px; border-radius:8px;
+  background:var(--rna-crit); color:#fff; font-size:11.5px; font-weight:600; box-shadow:0 4px 14px rgba(0,0,0,.18); }
+
+/* --- §Erro 05: Observações legíveis ---------------------------------------
+   Coluna mais larga, até 3 linhas na tabela e conteúdo COMPLETO a um clique
+   (ou toque, no tablet/celular, onde tooltip não existe). O texto nunca é
+   cortado na consulta ao banco — o corte aqui é só de exibição. */
+/* seletor com .insp-mtable para vencer o `white-space:nowrap` da tabela */
+.insp-obs-cell, .insp-mtable td.insp-obs-cell{ max-width:320px; min-width:200px; white-space:normal; vertical-align:top; }
+.insp-obs{ display:flex; align-items:flex-start; gap:6px; width:100%; max-width:320px; text-align:left;
+  border:0; background:transparent; padding:2px 4px; border-radius:8px; color:inherit; font:inherit; cursor:pointer; }
+.insp-obs:hover, .insp-obs:focus-visible{ background:var(--rna-yellow-soft); outline:none; }
+.insp-obs:focus-visible{ box-shadow:0 0 0 2px var(--rna-yellow-600); }
+.insp-obs__txt{ display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+  white-space:normal; word-break:break-word; line-height:1.35; }
+.insp-obs__ic{ flex:0 0 auto; font-size:11px; opacity:.55; margin-top:2px; }
+.insp-obs-full__txt{ white-space:pre-wrap; word-break:break-word; font-size:14px; line-height:1.5;
+  background:var(--rna-bg); border-radius:10px; padding:12px 14px; }
+/* No relatório impresso a observação aparece inteira (sem corte, sem tooltip). */
+.insp-rep-obs{ white-space:normal !important; max-width:240px; word-break:break-word; }
+
+@media (max-width:640px){
+  .insp-obs-cell, .insp-mtable td.insp-obs-cell{ max-width:180px; min-width:140px; }
+  .insp-obs__txt{ -webkit-line-clamp:2; }
+}
+@media print{
+  .insp-rep-obs{ max-width:none; }
+  .insp-campo-erro--flut{ display:none; }
+}

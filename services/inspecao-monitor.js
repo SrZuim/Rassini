@@ -8,6 +8,7 @@
 import { db } from './db.js';
 import { INSP_EVENTO_LABEL, INSP_ALERT_LIMIARES } from './inspecao-data.js';
 import { fmtDuracao, nowISO } from './inspecao.js';
+import { formatarHoraBrasil } from './datahora.js';
 
 export { fmtDuracao };
 
@@ -96,8 +97,9 @@ export async function atividadesAoVivo() {
     const situacao = pausaAberta.has(r.id) ? 'Pausado' : sem ? 'Sem interação' : 'Ativo';
     return {
       id: r.id, auditor: r.auditor_nome, tipo: r.tipo_nome, peca: r.peca_codigo || '—',
-      etapa: etapaLabel(r.etapa), inicio: (r.started_iso || '').slice(11, 16),
-      tempoAtivoSeg: tempoAtivoSeg(evs), ultima: ultimo ? ultimo.quando.slice(11, 16) : '—', situacao
+      // §Erro 06 — horários no fuso America/Sao_Paulo (antes vinham em UTC)
+      etapa: etapaLabel(r.etapa), inicio: formatarHoraBrasil(r.started_iso),
+      tempoAtivoSeg: tempoAtivoSeg(evs), ultima: formatarHoraBrasil(ultimo?.quando), situacao
     };
   }).sort((a, b) => a.situacao.localeCompare(b.situacao));
 }
@@ -184,7 +186,7 @@ function alerta(r, tipo, severidade, descricao) {
 export async function timelineDe(relatorioId) {
   const evs = (await db.list('insp_eventos', { filter: { relatorio_id: relatorioId } }))
     .sort((a, b) => String(a.quando).localeCompare(String(b.quando)));
-  return evs.map(e => ({ ...e, label: INSP_EVENTO_LABEL[e.tipo_evento] || e.tipo_evento, hora: (e.quando || '').slice(11, 19) }));
+  return evs.map(e => ({ ...e, label: INSP_EVENTO_LABEL[e.tipo_evento] || e.tipo_evento, hora: formatarHoraBrasil(e.quando, { segundos: true }) }));
 }
 
 /* ============================================= COMPARATIVO POR AUDITOR (§58) */
