@@ -678,7 +678,8 @@ async function stepMedicoes(host) {
   /* §M04 — estado colaborativo das amostras. Travas abandonadas são liberadas
      ao abrir a tela (higiene), então uma queda de rede não deixa peça presa. */
   await AMOSTRAS.liberarExpiradas(r.id).catch(() => {});
-  AMOST = await AMOSTRAS.estadoAmostras(r.id, qtd).catch(() => []);
+  AMOST_ERRO = null;
+  AMOST = await AMOSTRAS.estadoAmostras(r.id, qtd).catch(e => { AMOST_ERRO = e; INSP.logErro('Falha ao carregar amostras colaborativas', e); return []; });
 
   host.innerHTML = `
     <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
@@ -719,8 +720,24 @@ async function stepMedicoes(host) {
 
 /* ==================== COLABORAÇÃO POR AMOSTRA (§M04) ======================== */
 let AMOST = [];          // estado das amostras (com trava)
+let AMOST_ERRO = null;   // erro ao carregar as amostras (ex.: migration pendente)
 let BATIDA;              // timer do sinal de vida
 let MINHAS = new Set();  // amostras que ESTE navegador está segurando
+
+/* A camada colaborativa vive na tabela `insp_amostras`, criada por
+   database/fix_amostras_colaborativas.sql. Em bancos onde essa migration ainda
+   não rodou, o PostgREST devolve PGRST205 ("tabela não encontrada") e QUALQUER
+   operação de posse (assumir/liberar/concluir) falha. Sem tratamento, o botão
+   "Assumir" morre calado e os campos de medição nunca são liberados — o auditor
+   vê só o placeholder "—". Estas mensagens transformam a falha silenciosa em uma
+   instrução acionável. */
+const MSG_AMOSTRAS_MIGRACAO = 'O módulo de medição colaborativa (§M04) ainda não foi instalado neste banco: a tabela <b>insp_amostras</b> não existe. Peça ao administrador para executar <b>database/fix_amostras_colaborativas.sql</b> no Supabase. Enquanto isso não é possível assumir peças nem registrar medições.';
+const amostrasSemTabela = e => e?.code === 'PGRST205' || /insp_amostras/i.test(String(e?.message || ''));
+function msgErroAmostras(e) {
+  return amostrasSemTabela(e)
+    ? 'Módulo de medição colaborativa não instalado neste banco (tabela insp_amostras ausente). Rode database/fix_amostras_colaborativas.sql no Supabase.'
+    : 'Não foi possível falar com o servidor para assumir a peça. Verifique a conexão e tente novamente.';
+}
 
 const amostraDe = n => AMOST.find(a => Number(a.amostra) === Number(n));
 /* Só edita quem detém a trava. Sem trava ativa, a coluna fica somente-leitura —
@@ -752,6 +769,17 @@ function cabecalhoAmostra(n) {
 /** Faixa "quem está trabalhando agora" + resumo de participação. */
 async function pintarColaboradores() {
   const box = $('#insp-colab'); if (!box) return;
+  /* Migration pendente: sem a tabela insp_amostras não há posse possível. Avisa
+     com destaque de erro em vez de deixar botões "Assumir" inertes na tela. */
+  if (AMOST_ERRO) {
+    box.className = 'insp-blocker mb-2';
+    box.style.borderLeft = '4px solid var(--rna-red-600, #c0392b)';
+    box.innerHTML = `<i class="bi bi-exclamation-octagon-fill"></i> <div>${amostrasSemTabela(AMOST_ERRO)
+      ? MSG_AMOSTRAS_MIGRACAO
+      : 'Não foi possível carregar o estado colaborativo das peças. Verifique a conexão e recarregue a página.'}</div>`;
+    return;
+  }
+  box.style.borderLeft = '';
   const ativos = AMOST.filter(a => a._travaAtiva);
   const donos = new Map();
   AMOST.forEach(a => { if (a.auditor_id) donos.set(a.auditor_id, a.auditor_nome || '—'); });
@@ -823,7 +851,16 @@ async function refreshAmostras() {
 }
 
 async function assumir(n) {
-  const res = await AMOSTRAS.assumirAmostra(R.rel.id, n, USER);
+  let res;
+  try {
+    res = await AMOSTRAS.assumirAmostra(R.rel.id, n, USER);
+  } catch (e) {
+    /* §Erro — assumir falhava calado quando a camada colaborativa não respondia
+       (tabela ausente, RLS, rede). Sem isto o campo ficava travado no "—". */
+    INSP.logErro('Falha ao assumir amostra', e);
+    if (amostrasSemTabela(e)) { AMOST_ERRO = e; pintarColaboradores(); }
+    return toast(msgErroAmostras(e), { type: 'crit', title: 'Não foi possível assumir a peça', timeout: 9000 });
+  }
   if (!res.ok) {
     const msg = res.motivo === 'bloqueada' ? `A Peça ${n} está sendo medida por ${res.por}. Você pode ver os valores, mas não editar.`
       : res.motivo === 'concluida' ? `A Peça ${n} já foi concluída. Use "Reabrir" para corrigir.`
