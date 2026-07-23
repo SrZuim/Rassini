@@ -462,7 +462,7 @@ function tabPane(tab, f) {
     if (!f.metricas.length) return emptyState('Nenhuma especificação cadastrada.');
     const alertas = f.metricas.filter(BIB.foraDePadrao).length;
     const dimCells = m => {
-      if (BIB.ehAtributo(m.tipo_especificacao)) return `<td colspan="3" class="cell-sub" style="text-align:center">OK / NOK (atributo)</td>`;
+      if (BIB.ehAtributo(m.tipo_especificacao)) return `<td colspan="3" class="cell-sub" style="text-align:center">OK / NOK (verificação)</td>`;
       if (BIB.ehInformativo(m.tipo_especificacao)) return `<td colspan="3" class="cell-sub" style="text-align:center"><i class="bi bi-info-circle"></i> Informativa</td>`;
       return `<td>${fmtVal(m.nominal)}</td><td>${fmtVal(m.tol_min)}</td><td>${fmtVal(m.tol_max)}</td>`;
     };
