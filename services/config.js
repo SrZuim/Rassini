@@ -134,7 +134,18 @@ export function podeVerMetricasTempo(role) { return role === 'admin'; }
 
 /* ----------------------------------------------------------------- domínio */
 export const TURNOS = ['1º Turno (06:00–14:20)', '2º Turno (14:20–22:40)', '3º Turno (22:40–06:00)', 'Administrativo'];
-export const PLANTAS = ['Planta Rio Nova Iguaçu', 'Planta SP 01', 'Planta SP 02'];
+
+/* §Erro 14 — PLANTAS: lista fechada oficial (fonte única do sistema).
+   Toda tela que oferece "Planta" (usuários, peças, plantão, gestão operacional,
+   auditorias, relatórios, filtros) consome desta constante — NÃO duplicar a
+   lista em outro arquivo. `BIB_PLANTAS` (biblioteca-data.js) deriva daqui.
+   Dados legados com nomes antigos são padronizados por database/fix_plantas_oficiais.sql. */
+export const PLANTAS = [
+  'Planta RJ - Lâminas',
+  'Planta SP - Lâminas',
+  'Planta SP - Helicoidal',
+  'Planta SP - Grampo'
+];
 
 export const STATUS_ROTINA   = ['Pendente','Em andamento','Concluída','Postergada','Não executada'];
 export const STATUS_NC       = ['Aberta','Em análise','Em andamento','Resolvida','Encerrada'];

@@ -96,7 +96,7 @@ export const OP_ATIVIDADES = [
   {
     id: 'ativ-rot-001', tipo_slug: 'rotina', nome: 'Inspeção de Início de Turno', codigo: 'ROT-001',
     descricao: 'Verificações obrigatórias na abertura do turno.', categoria: 'Inspeção Final',
-    planta: 'Planta Rio Nova Iguaçu', setor: 'Estamparia', turno: '', responsavel: 'todos',
+    planta: 'Planta RJ - Lâminas', setor: 'Estamparia', turno: '', responsavel: 'todos',
     frequencia: 'Diária', horario: '06:30',
     exec_observacao: 'obrigatoria', exec_foto: 'opcional', permite_na: true,
     obrigatoria: true, status: 'publicada', is_template: false, anexos: [],
@@ -215,7 +215,7 @@ export const OP_ATIVIDADE_ITENS = [
 
 /* Atribuições — demonstram a hierarquia (usuário → cargo → planta+turno). */
 export const OP_ATRIBUICOES = [
-  { id: 'atr-1', atividade_id: 'ativ-rot-001', alvo_tipo: 'planta_turno', alvo_valor: '', planta: 'Planta Rio Nova Iguaçu', turno: '', prioridade: 10 },
+  { id: 'atr-1', atividade_id: 'ativ-rot-001', alvo_tipo: 'planta_turno', alvo_valor: '', planta: 'Planta RJ - Lâminas', turno: '', prioridade: 10 },
   { id: 'atr-2', atividade_id: 'ativ-rot-002', alvo_tipo: 'cargo',        alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 },
   { id: 'atr-3', atividade_id: 'ativ-rot-003', alvo_tipo: 'usuario',      alvo_valor: 'u3', planta: '', turno: '', prioridade: 100 },
   { id: 'atr-chk-1', atividade_id: 'ativ-chk-001', alvo_tipo: 'cargo',    alvo_valor: 'auditor', planta: '', turno: '', prioridade: 50 },

@@ -8,6 +8,8 @@
    Tol. Mín · Tol. Máx · Unidade · Equipamento de Medição · Quem Mede · Observação.
    ========================================================================== */
 
+import { PLANTAS } from './config.js';   // §Erro 14 — plantas: fonte única
+
 /* ------------------------------------------------------------- catálogos --- */
 /* ----------------------------------------------------------- CLIENTES (§M05)
    Lista OFICIAL, extraída de "novo_relatrio_16-07-2026.xlsx" (16/07/2026).
@@ -89,11 +91,12 @@ export const BIB_CLIENTES_RENOMEADOS = {
   'Volkswagen':    'Volkswagen TB'       // lista oficial separa TB / Automóveis
 };
 
-/* PLANTA — lista fixa (2 opções canônicas). Sem texto livre. */
-export const BIB_PLANTAS = [
-  { id:'pl1', nome:'Rio de Janeiro – Nova Iguaçu',        ativo:true },
-  { id:'pl2', nome:'São Paulo – São Bernardo do Campo',   ativo:true }
-];
+/* PLANTA — §Erro 14: lista fechada oficial, DERIVADA da fonte única (config.PLANTAS).
+   Não redefinir os nomes aqui: qualquer mudança de planta acontece em config.js e
+   propaga para toda a plataforma (evita listas divergentes). O `id` é um slug
+   estável derivado do nome, usado só como chave de catálogo em modo demo. */
+const slugPlanta = nome => 'pl_' + String(nome).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+export const BIB_PLANTAS = PLANTAS.map(nome => ({ id: slugPlanta(nome), nome, ativo: true }));
 
 export const BIB_FAMILIAS = [
   { id:'fm1', nome:'Feixe de Molas',        ativo:true },
@@ -203,7 +206,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp01', codigo:'RCE-001', nome:'Feixe de Mola Traseiro',
     cliente:'Volvo', familia:'Feixe de Molas', quadrante:'',
     peso:'62,4 kg', material:'SAE 5160H', acabamento:'Pintura eletrostática', cor:'Preto',
-    status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'ABNT NBR 6329', especificacao:'ET-RCE-001 Rev.C',
+    status:'Ativo', planta:'Planta SP - Lâminas', norma:'ABNT NBR 6329', especificacao:'ET-RCE-001 Rev.C',
     revisao_desenho:3, data_revisao_desenho:'2026-05-18', numero_ad:'AD-2026-0158',
     revisao:3, observacoes:'Conferir torque dos grampos em U conforme PC-001.',
     // Tipos de inspeção aplicáveis (slugs de insp_tipos — fonte única §12).
@@ -214,7 +217,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp02', codigo:'RCE-014', nome:'Mola Parabólica Dianteira',
     cliente:'Scania', familia:'Mola Parabólica', quadrante:'',
     peso:'28,1 kg', material:'SAE 51B60', acabamento:'Shot peening + pintura', cor:'Cinza grafite',
-    status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'DIN 17221', especificacao:'ET-RCE-014 Rev.B',
+    status:'Ativo', planta:'Planta SP - Lâminas', norma:'DIN 17221', especificacao:'ET-RCE-014 Rev.B',
     revisao_desenho:2, data_revisao_desenho:'2026-04-30', numero_ad:'AD-2026-0092',
     revisao:2, observacoes:'Dureza pós-têmpera crítica.',
     tipos_inspecao:['layout','final'],
@@ -224,7 +227,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp03', codigo:'LM-206', nome:'Lâmina Principal 2ª',
     cliente:'Mercedes Benz', familia:'Lâmina', quadrante:'',
     peso:'11,7 kg', material:'SAE 5160', acabamento:'Jateado', cor:'Natural',
-    status:'Em revisão', planta:'Rio de Janeiro – Nova Iguaçu', norma:'ABNT NBR 6329', especificacao:'ET-LM-206 Rev.A',
+    status:'Em revisão', planta:'Planta RJ - Lâminas', norma:'ABNT NBR 6329', especificacao:'ET-LM-206 Rev.A',
     revisao_desenho:1, data_revisao_desenho:'2026-06-22', numero_ad:'AD-2026-0203',
     revisao:1, observacoes:'Validar novo raio de dobra.',
     tipos_inspecao:['fisico_dim'],
@@ -234,7 +237,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp04', codigo:'GR-330', nome:'Grampo em U M20',
     cliente:'Randon', familia:'Grampo', quadrante:'',
     peso:'3,2 kg', material:'SAE 1045', acabamento:'Zincado', cor:'Prata',
-    status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'ISO 898-1', especificacao:'ET-GR-330 Rev.D',
+    status:'Ativo', planta:'Planta SP - Grampo', norma:'ISO 898-1', especificacao:'ET-GR-330 Rev.D',
     revisao_desenho:4, data_revisao_desenho:'2026-03-14', numero_ad:'AD-2025-0451',
     revisao:4, observacoes:'Torque 320 N·m ±5%.',
     tipos_inspecao:['ppap'],
@@ -244,7 +247,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp05', codigo:'HC-118', nome:'Mola Helicoidal Traseira',
     cliente:'Volkswagen TB', familia:'Mola Helicoidal', quadrante:'',
     peso:'4,8 kg', material:'SAE 9254', acabamento:'Pintura epóxi', cor:'Preto fosco',
-    status:'Ativo', planta:'São Paulo – São Bernardo do Campo', norma:'SAE J157', especificacao:'ET-HC-118 Rev.A',
+    status:'Ativo', planta:'Planta SP - Helicoidal', norma:'SAE J157', especificacao:'ET-HC-118 Rev.A',
     revisao_desenho:1, data_revisao_desenho:'2026-02-05', numero_ad:'AD-2026-0031',
     revisao:1, observacoes:'',
     tipos_inspecao:['durabilidade','ride'],
@@ -257,7 +260,7 @@ export const BIB_PECAS_DEFAULT = [
     id:'bp06', codigo:'BE-402', nome:'Barra Estabilizadora Dianteira',
     cliente:'Ford', familia:'Barra Estabilizadora', quadrante:'',
     peso:'9,6 kg', material:'SAE 26MnB5', acabamento:'Fosfatizado + pintura', cor:'Preto',
-    status:'Arquivado', planta:'São Paulo – São Bernardo do Campo', norma:'ASTM A513', especificacao:'ET-BE-402 Rev.B',
+    status:'Arquivado', planta:'Planta SP - Helicoidal', norma:'ASTM A513', especificacao:'ET-BE-402 Rev.B',
     revisao_desenho:2, data_revisao_desenho:'2025-10-19', numero_ad:'AD-2025-0288',
     revisao:2, observacoes:'Substituída pela BE-410.',
     imagem:null, galeria:[], ativo:false, created_at:'2025-06-11', updated_at:'2025-10-19', created_by:'u1'

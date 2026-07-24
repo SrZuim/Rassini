@@ -1,6 +1,7 @@
 /* ==========================================================================
    RNA One — Utilitários de UI (toasts, formatação, helpers de DOM)
    ========================================================================== */
+import { formatarDataBrasil } from '../../services/datahora.js';
 
 export const $  = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -23,11 +24,13 @@ export function toast(message, { title = 'RNA One', type = 'info', timeout = 420
   setTimeout(() => { node.style.opacity = '0'; node.style.transform = 'translateX(30px)'; node.style.transition = '.25s'; setTimeout(() => node.remove(), 260); }, timeout);
 }
 
+/* §Erro 13 — data PURA ("AAAA-MM-DD") é formatada literalmente, sem passar por
+   `new Date(...)`. Antes, `new Date("2025-09-10")` era lido como meia-noite UTC
+   e, convertido para o fuso do Brasil (−03:00), voltava um dia (09/09/2025).
+   Delegamos à fonte única (datahora.js), que trata data civil sem fuso e
+   timestamps completos no fuso oficial America/Sao_Paulo. */
 export function fmtDate(d) {
-  if (!d) return '—';
-  const date = (d instanceof Date) ? d : new Date(d);
-  if (isNaN(date)) return d;
-  return date.toLocaleDateString('pt-BR');
+  return formatarDataBrasil(d);
 }
 export function fmtNum(n) { return new Intl.NumberFormat('pt-BR').format(n); }
 

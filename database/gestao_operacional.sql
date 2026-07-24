@@ -176,7 +176,7 @@ on conflict do nothing;
 
 -- Rotinas = AÇÃO ÚNICA (config de Concluir). Sem itens.
 insert into op_atividades (id, tipo_slug, nome, codigo, descricao, categoria, planta, setor, responsavel, frequencia, horario, exec_observacao, exec_foto, permite_na, obrigatoria, status, is_template) values
- ('ativ-rot-001','rotina','Inspeção de Início de Turno','ROT-001','Verificações obrigatórias na abertura do turno.','Inspeção Final','Planta Rio Nova Iguaçu','Estamparia','todos','Diária','06:30','obrigatoria','opcional',true,true,'publicada',false),
+ ('ativ-rot-001','rotina','Inspeção de Início de Turno','ROT-001','Verificações obrigatórias na abertura do turno.','Inspeção Final','Planta RJ - Lâminas','Estamparia','todos','Diária','06:30','obrigatoria','opcional',true,true,'publicada',false),
  ('ativ-rot-002','rotina','Lubrificação de Prensas','ROT-002','Rotina diária de lubrificação das prensas.','Lubrificação','','Estamparia','todos','Diária','07:00','opcional','obrigatoria',true,true,'publicada',false),
  ('ativ-rot-003','rotina','Reunião de Sucata','ROT-003','Alinhamento diário sobre índices de sucata da célula.','5S','','',(select id::text from usuarios where lower(email)='ana@rassini.com' limit 1),'Diária','08:00','opcional','nao',true,false,'publicada',false),
  ('tpl-rot-setup','rotina','Template — Setup de Máquina','TPL-SETUP','Modelo reutilizável de rotina de setup.','Setup','','','todos','Sob demanda','','opcional','opcional',true,false,'publicada',true)
@@ -186,7 +186,7 @@ on conflict (id) do nothing;
 delete from op_atividade_itens where atividade_id in ('ativ-rot-001','ativ-rot-002','ativ-rot-003');
 
 insert into op_atribuicoes (id, atividade_id, alvo_tipo, alvo_valor, planta, turno, prioridade) values
- ('atr-1','ativ-rot-001','planta_turno','','Planta Rio Nova Iguaçu','',10),
+ ('atr-1','ativ-rot-001','planta_turno','','Planta RJ - Lâminas','',10),
  ('atr-2','ativ-rot-002','cargo','auditor','','',50),
  ('atr-3','ativ-rot-003','usuario',(select id::text from usuarios where lower(email)='ana@rassini.com' limit 1),'','',100)
 on conflict (id) do nothing;

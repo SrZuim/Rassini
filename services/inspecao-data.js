@@ -113,8 +113,17 @@ export const INSP_MOTIVOS_PAUSA = [
   'Equipamento indisponível','Suporte do supervisor','Troca de atividade','Outro'
 ];
 
-/* Mapa nome→sigla de planta para a numeração do relatório (§25). */
+/* Mapa nome→sigla de planta para a numeração do relatório (§25).
+   §Erro 14 — plantas OFICIAIS (siglas estáveis e distintas). As entradas antigas
+   permanecem para NÃO alterar o número de relatórios já emitidos com o nome
+   legado (o número é imutável depois de gerado). */
 export const PLANTA_SIGLAS = {
+  // Oficiais (fonte única: services/config.js → PLANTAS)
+  'Planta RJ - Lâminas':'RJL',
+  'Planta SP - Lâminas':'SPL',
+  'Planta SP - Helicoidal':'SPH',
+  'Planta SP - Grampo':'SPG',
+  // Legadas — preservadas p/ continuidade da numeração de relatórios antigos
   'Planta Rio Nova Iguaçu':'RIO',
   'Planta São Bernardo':'SBC',
   'Planta SP 01':'SP1',

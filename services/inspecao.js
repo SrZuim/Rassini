@@ -772,7 +772,19 @@ export function podeColaborar(rel, user) {
 export async function consultarRelatorios(filtros = {}, escopo = {}) {
   let rows = await db.list('insp_relatorios');
   // escopo por perfil: auditor vê os seus; supervisor/gestor/admin veem conforme planta
-  if (escopo.somenteAuditor) rows = rows.filter(r => r.auditor_id === escopo.somenteAuditor);
+  if (escopo.somenteAuditor) {
+    /* §Erro 11 — o auditor enxerga (a) os relatórios que ele criou e (b) aqueles
+       em que ele PARTICIPOU medindo/concluindo amostras na inspeção colaborativa
+       (§M04, registrada em insp_amostras). Sem isto, quem só mediu peças de um
+       relatório aberto por outro auditor não achava o próprio trabalho aqui. */
+    const uid = escopo.somenteAuditor;
+    const participei = new Set();
+    try {
+      const amostras = await db.list('insp_amostras');
+      amostras.forEach(a => { if (a.auditor_id === uid || a.concluido_por === uid) participei.add(a.relatorio_id); });
+    } catch (e) { console.warn('[CONSULTA-DIM] participação por amostra indisponível:', e?.message || e); }
+    rows = rows.filter(r => r.auditor_id === uid || participei.has(r.id));
+  }
   else if (escopo.plantas?.length) rows = rows.filter(r => !r.planta || escopo.plantas.includes(r.planta));
 
   const norm = s => String(s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();

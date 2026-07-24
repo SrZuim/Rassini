@@ -6,16 +6,16 @@
 export const SEED = {
   usuarios: [
     { id:'u1', nome:'Jorge Lucas',     email:'jorgelucaszuim@gmail.com', role:'admin',      matricula:'RNA-0001', area:'Qualidade',  planta:'Planta São Bernardo', avatar:null, ativo:true },
-    { id:'u2', nome:'Hatus de Azevedo Neves', email:'supervisor@rassini.com', role:'supervisor', matricula:'01614', area:'CQ - Supervisor', planta:'Planta Rio Nova Iguaçu', avatar:null, ativo:true },
+    { id:'u2', nome:'Hatus de Azevedo Neves', email:'supervisor@rassini.com', role:'supervisor', matricula:'01614', area:'CQ - Supervisor', planta:'Planta RJ - Lâminas', avatar:null, ativo:true },
     { id:'u3', nome:'Ana Beatriz',     email:'ana@rassini.com',          role:'auditor',    matricula:'RNA-0233', area:'Montagem',   planta:'Planta São Bernardo', avatar:null, ativo:true },
     { id:'u4', nome:'Carlos Mendes',   email:'carlos@rassini.com',       role:'auditor',    matricula:'RNA-0234', area:'Tratamento', planta:'Planta São Bernardo', avatar:null, ativo:true },
     { id:'u5', nome:'Visitante',       email:'visita@rassini.com',       role:'visitante',  matricula:'—',        area:'—',          planta:'Planta São Bernardo', avatar:null, ativo:true }
   ],
   areas: [
-    { id:'a1', nome:'Estamparia',  responsavel:'Hatus de Azevedo Neves', planta:'Planta Rio Nova Iguaçu' },
-    { id:'a2', nome:'Montagem',    responsavel:'Ana Beatriz',     planta:'Planta Rio Nova Iguaçu' },
-    { id:'a3', nome:'Tratamento Térmico', responsavel:'Carlos Mendes', planta:'Planta Rio Nova Iguaçu' },
-    { id:'a4', nome:'Usinagem',    responsavel:'Hatus de Azevedo Neves', planta:'Planta Rio Nova Iguaçu' }
+    { id:'a1', nome:'Estamparia',  responsavel:'Hatus de Azevedo Neves', planta:'Planta RJ - Lâminas' },
+    { id:'a2', nome:'Montagem',    responsavel:'Ana Beatriz',     planta:'Planta RJ - Lâminas' },
+    { id:'a3', nome:'Tratamento Térmico', responsavel:'Carlos Mendes', planta:'Planta RJ - Lâminas' },
+    { id:'a4', nome:'Usinagem',    responsavel:'Hatus de Azevedo Neves', planta:'Planta RJ - Lâminas' }
   ],
   linhas: [
     { id:'l1', nome:'Linha 01 — Molas', area:'Estamparia', maquinas:4 },

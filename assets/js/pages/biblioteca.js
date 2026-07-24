@@ -1099,6 +1099,7 @@ async function salvar(isNew, p, f, upImg) {
         classe_nc: info ? null : (DATA.BIB_CLASSES_NC_VALORES.includes(m.classe_nc) ? m.classe_nc : null)
       });
     }
+    resetAvisoClasseNc();   // §Erro 12 — zera o alarme antes de gravar as especificações
     /* Especificações e documentos são independentes entre si — vão juntos.
        `allSettled` não serve aqui: sucesso parcial silencioso deixaria a ficha
        inconsistente sem ninguém saber. Se qualquer um falhar, o catch reporta. */
@@ -1115,6 +1116,13 @@ async function salvar(isNew, p, f, upImg) {
        isso é um aviso, não um "salvo com sucesso". */
     if (peca.tipos_nao_gravados) {
       toast(BIB.MSG_MIGRACAO_TIPOS, { type: 'warn', title: 'Salvo parcialmente' });
+    } else if (houveClasseNcNaoGravada()) {
+      /* §Erro 12 — a peça foi salva, MAS a Classe da NC não pôde ser gravada
+         porque a coluna `classe_nc` não existe no banco. Nunca anunciar como
+         sucesso limpo: reporta a degradação e diz exatamente o que fazer. */
+      toast('Peça salva, mas a Classe da NC NÃO foi gravada: o banco está sem a coluna "classe_nc". ' +
+        'Rode database/fix_exclusao_e_classe.sql no Supabase e salve novamente para persistir a classe.',
+        { type: 'warn', title: 'Salvo sem a Classe da NC', timeout: 9000 });
     } else {
       toast(isNew ? 'Peça cadastrada com sucesso.' : `Revisão salva (Rev ${String(peca.revisao).padStart(2, '0')}).`, { type: 'ok', title: 'Biblioteca' });
     }
@@ -1175,11 +1183,21 @@ function mudou(atual, campos) {
    avisa uma vez e regrava sem ela (mesmo padrão de inspecao.js). */
 const COLUNAS_OPCIONAIS = ['obrigatorio', 'classe_nc'];
 let _semColunasOpcionais = false;
+/* §Erro 12 — quando o banco está atrás das migrations e a coluna `classe_nc` não
+   existe, o insert/update é regravado SEM ela. Antes isso acontecia em silêncio e
+   a tela anunciava "salvo com sucesso", escondendo a perda: o usuário cadastrava a
+   Classe da NC e ela sumia. Este flag registra que uma classe REALMENTE preenchida
+   deixou de ser gravada, para o salvamento reportar a degradação (não um sucesso
+   limpo) e orientar a rodar a migration. */
+let _classeNcNaoGravada = false;
+export const resetAvisoClasseNc = () => { _classeNcNaoGravada = false; };
+export const houveClasseNcNaoGravada = () => _classeNcNaoGravada;
+const registrarPerdaOpcional = row => { if (row && row.classe_nc) _classeNcNaoGravada = true; };
 const ehErroDeSchema = e =>
   ['PGRST204', 'PGRST205', '42703', '42P01'].includes(String(e?.code || ''))
   || /could not find the .*column|column .* does not exist|schema cache/i.test(`${e?.message || ''} ${e?.details || ''}`);
 async function inserirTolerante(tabela, row) {
-  const semOpcionais = () => { const r = { ...row }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
+  const semOpcionais = () => { registrarPerdaOpcional(row); const r = { ...row }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
   if (_semColunasOpcionais) return db.insert(tabela, semOpcionais());
   try {
     return await db.insert(tabela, row);
@@ -1187,14 +1205,14 @@ async function inserirTolerante(tabela, row) {
     if (!ehErroDeSchema(e)) throw e;
     _semColunasOpcionais = true;
     console.warn(`[BIB] ${tabela} não tem ${COLUNAS_OPCIONAIS.join('/')} — gravando sem esses campos. ` +
-      'Rode database/fix_referencia_mensuravel.sql no Supabase para normalizar o banco. Detalhe:', e?.message || e);
+      'Rode database/fix_exclusao_e_classe.sql no Supabase para normalizar o banco. Detalhe:', e?.message || e);
     return db.insert(tabela, semOpcionais());
   }
 }
 
 /* Mesma tolerância do insert, para o UPDATE do diff de especificações. */
 async function atualizarTolerante(tabela, id, patch) {
-  const semOpcionais = () => { const r = { ...patch }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
+  const semOpcionais = () => { registrarPerdaOpcional(patch); const r = { ...patch }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
   if (_semColunasOpcionais) return db.update(tabela, id, semOpcionais());
   try {
     return await db.update(tabela, id, patch);
@@ -1202,7 +1220,7 @@ async function atualizarTolerante(tabela, id, patch) {
     if (!ehErroDeSchema(e)) throw e;
     _semColunasOpcionais = true;
     console.warn(`[BIB] ${tabela} não tem ${COLUNAS_OPCIONAIS.join('/')} — gravando sem esses campos. ` +
-      'Rode database/fix_referencia_mensuravel.sql no Supabase. Detalhe:', e?.message || e);
+      'Rode database/fix_exclusao_e_classe.sql no Supabase. Detalhe:', e?.message || e);
     return db.update(tabela, id, semOpcionais());
   }
 }

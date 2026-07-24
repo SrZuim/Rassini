@@ -183,7 +183,11 @@ create policy "bib_fav_own" on bib_favoritos for all to authenticated
 -- SEED — catálogos + peças + especificações de exemplo (idempotente)
 -- =============================================================================
 insert into bib_clientes (nome) values ('Volvo'),('Scania'),('Mercedes-Benz'),('Volkswagen'),('Ford'),('Randon'),('DAF'),('Iveco') on conflict do nothing;
-insert into bib_plantas (nome) values ('Planta Jarinu'),('Planta Rio Nova Iguaçu'),('Planta SP 01'),('Planta SP 02') on conflict do nothing;
+-- §Erro 14 — plantas oficiais (fonte única: services/config.js → PLANTAS).
+-- Para padronizar bancos já existentes, rode database/fix_plantas_oficiais.sql.
+insert into bib_plantas (nome)
+select v.nome from (values ('Planta RJ - Lâminas'),('Planta SP - Lâminas'),('Planta SP - Helicoidal'),('Planta SP - Grampo')) as v(nome)
+where not exists (select 1 from bib_plantas b where b.nome = v.nome);
 insert into bib_familias (nome) values ('Feixe de Molas'),('Mola Parabólica'),('Mola Helicoidal'),('Lâmina'),('Grampo'),('Barra Estabilizadora'),('Tirante') on conflict do nothing;
 
 -- QUEM MEDE (inicial)
@@ -226,12 +230,12 @@ on conflict (nome) do nothing;
 insert into bib_pecas (id, codigo, nome, cliente, familia, quadrante, peso, material, acabamento, cor, status, planta, norma, especificacao,
   revisao_desenho, data_revisao_desenho, numero_ad, revisao, observacoes, ativo)
 values
- ('bp01','RCE-001','Feixe de Mola Traseiro','Volvo','Feixe de Molas',null,'62,4 kg','SAE 5160H','Pintura eletrostática','Preto','Ativo','Planta Jarinu','ABNT NBR 6329','ET-RCE-001 Rev.C',3,'2026-05-18','AD-2026-0158',3,'Conferir torque dos grampos em U conforme PC-001.',true),
- ('bp02','RCE-014','Mola Parabólica Dianteira','Scania','Mola Parabólica',null,'28,1 kg','SAE 51B60','Shot peening + pintura','Cinza grafite','Ativo','Planta Jarinu','DIN 17221','ET-RCE-014 Rev.B',2,'2026-04-30','AD-2026-0092',2,'Dureza pós-têmpera crítica.',true),
- ('bp03','LM-206','Lâmina Principal 2ª','Mercedes-Benz','Lâmina',null,'11,7 kg','SAE 5160','Jateado','Natural','Em revisão','Planta Rio Nova Iguaçu','ABNT NBR 6329','ET-LM-206 Rev.A',1,'2026-06-22','AD-2026-0203',1,'Validar novo raio de dobra.',true),
- ('bp04','GR-330','Grampo em U M20','Randon','Grampo',null,'3,2 kg','SAE 1045','Zincado','Prata','Ativo','Planta SP 01','ISO 898-1','ET-GR-330 Rev.D',4,'2026-03-14','AD-2025-0451',4,'Torque 320 N·m ±5%.',true),
- ('bp05','HC-118','Mola Helicoidal Traseira','Volkswagen','Mola Helicoidal',null,'4,8 kg','SAE 9254','Pintura epóxi','Preto fosco','Ativo','Planta SP 02','SAE J157','ET-HC-118 Rev.A',1,'2026-02-05','AD-2026-0031',1,'',true),
- ('bp06','BE-402','Barra Estabilizadora Dianteira','Ford','Barra Estabilizadora',null,'9,6 kg','SAE 26MnB5','Fosfatizado + pintura','Preto','Arquivado','Planta Jarinu','ASTM A513','ET-BE-402 Rev.B',2,'2025-10-19','AD-2025-0288',2,'Substituída pela BE-410.',false)
+ ('bp01','RCE-001','Feixe de Mola Traseiro','Volvo','Feixe de Molas',null,'62,4 kg','SAE 5160H','Pintura eletrostática','Preto','Ativo','Planta SP - Lâminas','ABNT NBR 6329','ET-RCE-001 Rev.C',3,'2026-05-18','AD-2026-0158',3,'Conferir torque dos grampos em U conforme PC-001.',true),
+ ('bp02','RCE-014','Mola Parabólica Dianteira','Scania','Mola Parabólica',null,'28,1 kg','SAE 51B60','Shot peening + pintura','Cinza grafite','Ativo','Planta SP - Lâminas','DIN 17221','ET-RCE-014 Rev.B',2,'2026-04-30','AD-2026-0092',2,'Dureza pós-têmpera crítica.',true),
+ ('bp03','LM-206','Lâmina Principal 2ª','Mercedes-Benz','Lâmina',null,'11,7 kg','SAE 5160','Jateado','Natural','Em revisão','Planta RJ - Lâminas','ABNT NBR 6329','ET-LM-206 Rev.A',1,'2026-06-22','AD-2026-0203',1,'Validar novo raio de dobra.',true),
+ ('bp04','GR-330','Grampo em U M20','Randon','Grampo',null,'3,2 kg','SAE 1045','Zincado','Prata','Ativo','Planta SP - Grampo','ISO 898-1','ET-GR-330 Rev.D',4,'2026-03-14','AD-2025-0451',4,'Torque 320 N·m ±5%.',true),
+ ('bp05','HC-118','Mola Helicoidal Traseira','Volkswagen','Mola Helicoidal',null,'4,8 kg','SAE 9254','Pintura epóxi','Preto fosco','Ativo','Planta SP - Helicoidal','SAE J157','ET-HC-118 Rev.A',1,'2026-02-05','AD-2026-0031',1,'',true),
+ ('bp06','BE-402','Barra Estabilizadora Dianteira','Ford','Barra Estabilizadora',null,'9,6 kg','SAE 26MnB5','Fosfatizado + pintura','Preto','Arquivado','Planta SP - Helicoidal','ASTM A513','ET-BE-402 Rev.B',2,'2025-10-19','AD-2025-0288',2,'Substituída pela BE-410.',false)
 on conflict (id) do nothing;
 
 -- ESPECIFICAÇÕES — remove as de exemplo e reinsere no novo formato (não afeta peças reais)
