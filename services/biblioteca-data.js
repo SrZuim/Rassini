@@ -15,9 +15,12 @@ import { PLANTAS } from './config.js';   // §Erro 14 — plantas: fonte única
    Lista OFICIAL, extraída de "novo_relatrio_16-07-2026.xlsx" (16/07/2026).
    Da planilha (57 linhas) foram descartados, conforme a regra do requisito:
      • 1 registro com nome vazio (código 1012943928);
-     • 1 registro "GTS Equipamentos" com status Concluído — note que a versão
-       ATIVA "Gts Equipamentos" permanece (era duplicata por caixa alta).
-   Restaram 55 clientes ativos. "FRUM " teve o espaço final removido.
+     • a duplicata por caixa alta foi unificada em "GTS Equipamentos" (grafia
+       oficial em maiúsculas) — "Gts Equipamentos" saiu.
+   Atualização (lista oficial de 54 clientes): "Rassini México" removido da base;
+   "Gts Equipamentos" → "GTS Equipamentos". "FRUM " teve o espaço final removido.
+   Registros antigos ("Gts Equipamentos", "Rassini México") são migrados por
+   database/fix_clientes_oficiais.sql sem perder o vínculo peça→cliente.
 
    LEGADOS: clientes que existiam no cadastro antigo e ainda são referenciados
    por peças permanecem aqui como `ativo:false` — não aparecem em novos
@@ -41,7 +44,7 @@ export const BIB_CLIENTES = [
   { id:'cl15', nome:'General Motors',        ativo:true },
   { id:'cl16', nome:'Grunner',               ativo:true },
   { id:'cl17', nome:'Grupo Traton',          ativo:true },
-  { id:'cl18', nome:'Gts Equipamentos',      ativo:true },
+  { id:'cl18', nome:'GTS Equipamentos',      ativo:true },
   { id:'cl19', nome:'GUERRA',                ativo:true },
   { id:'cl20', nome:'GWM Motors',            ativo:true },
   { id:'cl21', nome:'Haldex',                ativo:true },
@@ -64,7 +67,6 @@ export const BIB_CLIENTES = [
   { id:'cl38', nome:'NHK',                   ativo:true },
   { id:'cl39', nome:'NIJU',                  ativo:true },
   { id:'cl40', nome:'Nissan',                ativo:true },
-  { id:'cl41', nome:'Rassini México',        ativo:true },
   { id:'cl42', nome:'Reposição',             ativo:true },
   { id:'cl43', nome:'RUMO',                  ativo:true },
   { id:'cl44', nome:'Scania',                ativo:true },
@@ -87,8 +89,9 @@ export const BIB_CLIENTES = [
    existente"): o cliente é o MESMO, apenas grafado de outro jeito na lista nova.
    Consumido pela migração (fix_clientes_oficiais.sql) e pelo seed demo. */
 export const BIB_CLIENTES_RENOMEADOS = {
-  'Mercedes-Benz': 'Mercedes Benz',      // lista oficial não usa hífen
-  'Volkswagen':    'Volkswagen TB'       // lista oficial separa TB / Automóveis
+  'Mercedes-Benz':     'Mercedes Benz',      // lista oficial não usa hífen
+  'Volkswagen':        'Volkswagen TB',      // lista oficial separa TB / Automóveis
+  'Gts Equipamentos':  'GTS Equipamentos'    // grafia oficial em maiúsculas (dedup de caixa)
 };
 
 /* PLANTA — §Erro 14: lista fechada oficial, DERIVADA da fonte única (config.PLANTAS).

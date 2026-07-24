@@ -189,7 +189,8 @@ async function renderCatalogo() {
 
   // popula selects de filtro
   for (const [campo, , tabela] of FILTROS_DEF) {
-    const opts = (await db.list(tabela)).filter(o => o.ativo !== false);
+    const opts = (await db.list(tabela)).filter(o => o.ativo !== false)
+      .sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'));   // ordem alfabética na interface
     const sel = $(`.bib-filter[data-filtro="${campo}"]`);
     opts.forEach(o => { const op = document.createElement('option'); op.value = o.nome; op.textContent = o.nome; if (state.filtros[campo] === o.nome) op.selected = true; sel.appendChild(op); });
     sel.addEventListener('change', () => { state.filtros[campo] = sel.value; refreshResults(); });
@@ -572,7 +573,8 @@ async function renderEditor() {
      §M05), ele entra como opção LEGADA — do contrário, abrir a peça para editar
      apagaria silenciosamente o vínculo. Mesmo tratamento já dado a Planta. */
   const opt = (arr, val) => {
-    const ativos = arr.filter(o => o.ativo !== false);
+    // ordena alfabeticamente (acentuação-aware) — a interface não depende da ordem do catálogo
+    const ativos = arr.filter(o => o.ativo !== false).slice().sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
     const legado = val && !ativos.some(o => o.nome === val) ? `<option selected>${escHtml(val)}</option>` : '';
     return `<option value="">—</option>` + legado
       + ativos.map(o => `<option ${o.nome === val ? 'selected' : ''}>${o.nome}</option>`).join('');
@@ -1099,7 +1101,6 @@ async function salvar(isNew, p, f, upImg) {
         classe_nc: info ? null : (DATA.BIB_CLASSES_NC_VALORES.includes(m.classe_nc) ? m.classe_nc : null)
       });
     }
-    resetAvisoClasseNc();   // §Erro 12 — zera o alarme antes de gravar as especificações
     /* Especificações e documentos são independentes entre si — vão juntos.
        `allSettled` não serve aqui: sucesso parcial silencioso deixaria a ficha
        inconsistente sem ninguém saber. Se qualquer um falhar, o catch reporta. */
@@ -1116,14 +1117,10 @@ async function salvar(isNew, p, f, upImg) {
        isso é um aviso, não um "salvo com sucesso". */
     if (peca.tipos_nao_gravados) {
       toast(BIB.MSG_MIGRACAO_TIPOS, { type: 'warn', title: 'Salvo parcialmente' });
-    } else if (houveClasseNcNaoGravada()) {
-      /* §Erro 12 — a peça foi salva, MAS a Classe da NC não pôde ser gravada
-         porque a coluna `classe_nc` não existe no banco. Nunca anunciar como
-         sucesso limpo: reporta a degradação e diz exatamente o que fazer. */
-      toast('Peça salva, mas a Classe da NC NÃO foi gravada: o banco está sem a coluna "classe_nc". ' +
-        'Rode database/fix_exclusao_e_classe.sql no Supabase e salve novamente para persistir a classe.',
-        { type: 'warn', title: 'Salvo sem a Classe da NC', timeout: 9000 });
     } else {
+      /* §Classe da NC — o sucesso só é anunciado quando TUDO gravou, inclusive a
+         classe. Se a coluna classe_nc não existir, sincronizarMetricas lança
+         ERRO_CLASSE_NC e o fluxo cai no catch (nunca chega aqui como "sucesso"). */
       toast(isNew ? 'Peça cadastrada com sucesso.' : `Revisão salva (Rev ${String(peca.revisao).padStart(2, '0')}).`, { type: 'ok', title: 'Biblioteca' });
     }
     state.view = 'ficha'; state.pecaId = peca.id; render();
@@ -1177,52 +1174,52 @@ function mudou(atual, campos) {
   });
 }
 
-/* Colunas opcionais criadas por migrations posteriores. Como `substituir` APAGA
-   antes de reinserir, um banco atrás das migrations perderia as métricas se o
-   insert falhasse no meio. Por isso o insert é tolerante: se a coluna não existe,
-   avisa uma vez e regrava sem ela (mesmo padrão de inspecao.js). */
-const COLUNAS_OPCIONAIS = ['obrigatorio', 'classe_nc'];
+/* Tolerância a banco atrás das migrations no insert/update das especificações.
+   Distinção importante (§Classe da NC):
+   • `classe_nc` é OBRIGATÓRIA. Se a coluna não existir, o salvamento FALHA com
+     mensagem clara — nunca mais "salvo sem a classe". Rode
+     database/fix_classe_nc_persistencia.sql para criar a coluna.
+   • `obrigatorio` (referência mensurável) permanece tolerante: se faltar, grava
+     sem ela e apenas avisa no console — é recurso à parte, fora desta correção. */
+const COLUNAS_OPCIONAIS = ['obrigatorio'];
 let _semColunasOpcionais = false;
-/* §Erro 12 — quando o banco está atrás das migrations e a coluna `classe_nc` não
-   existe, o insert/update é regravado SEM ela. Antes isso acontecia em silêncio e
-   a tela anunciava "salvo com sucesso", escondendo a perda: o usuário cadastrava a
-   Classe da NC e ela sumia. Este flag registra que uma classe REALMENTE preenchida
-   deixou de ser gravada, para o salvamento reportar a degradação (não um sucesso
-   limpo) e orientar a rodar a migration. */
-let _classeNcNaoGravada = false;
-export const resetAvisoClasseNc = () => { _classeNcNaoGravada = false; };
-export const houveClasseNcNaoGravada = () => _classeNcNaoGravada;
-const registrarPerdaOpcional = row => { if (row && row.classe_nc) _classeNcNaoGravada = true; };
+const ERRO_CLASSE_NC = 'Não foi possível salvar a Classe da Não Conformidade. Verifique a estrutura do banco de dados.';
 const ehErroDeSchema = e =>
   ['PGRST204', 'PGRST205', '42703', '42P01'].includes(String(e?.code || ''))
   || /could not find the .*column|column .* does not exist|schema cache/i.test(`${e?.message || ''} ${e?.details || ''}`);
+const ehErroClasseNc = e => /classe_nc/i.test(`${e?.message || ''} ${e?.details || ''} ${e?.hint || ''}`);
+const semOpcionais = row => { const r = { ...row }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
+
+/* Trata erro de schema: coluna classe_nc ausente → erro claro; coluna opcional
+   (obrigatorio) ausente → regrava sem ela. Se o retry ainda esbarrar em
+   classe_nc, o erro claro prevalece. */
+async function regravarSemOpcionais(e, retry) {
+  if (!ehErroDeSchema(e)) throw e;
+  if (ehErroClasseNc(e)) throw new Error(ERRO_CLASSE_NC);
+  _semColunasOpcionais = true;
+  console.warn('[BIB] coluna opcional "obrigatorio" ausente — regravando sem ela. ' +
+    'Rode database/fix_referencia_mensuravel.sql para normalizar. Detalhe:', e?.message || e);
+  try { return await retry(); }
+  catch (e2) { if (ehErroClasseNc(e2)) throw new Error(ERRO_CLASSE_NC); throw e2; }
+}
+
 async function inserirTolerante(tabela, row) {
-  const semOpcionais = () => { registrarPerdaOpcional(row); const r = { ...row }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
-  if (_semColunasOpcionais) return db.insert(tabela, semOpcionais());
-  try {
-    return await db.insert(tabela, row);
-  } catch (e) {
-    if (!ehErroDeSchema(e)) throw e;
-    _semColunasOpcionais = true;
-    console.warn(`[BIB] ${tabela} não tem ${COLUNAS_OPCIONAIS.join('/')} — gravando sem esses campos. ` +
-      'Rode database/fix_exclusao_e_classe.sql no Supabase para normalizar o banco. Detalhe:', e?.message || e);
-    return db.insert(tabela, semOpcionais());
+  if (_semColunasOpcionais) {
+    try { return await db.insert(tabela, semOpcionais(row)); }
+    catch (e) { if (ehErroClasseNc(e)) throw new Error(ERRO_CLASSE_NC); throw e; }
   }
+  try { return await db.insert(tabela, row); }
+  catch (e) { return regravarSemOpcionais(e, () => db.insert(tabela, semOpcionais(row))); }
 }
 
 /* Mesma tolerância do insert, para o UPDATE do diff de especificações. */
 async function atualizarTolerante(tabela, id, patch) {
-  const semOpcionais = () => { registrarPerdaOpcional(patch); const r = { ...patch }; COLUNAS_OPCIONAIS.forEach(k => delete r[k]); return r; };
-  if (_semColunasOpcionais) return db.update(tabela, id, semOpcionais());
-  try {
-    return await db.update(tabela, id, patch);
-  } catch (e) {
-    if (!ehErroDeSchema(e)) throw e;
-    _semColunasOpcionais = true;
-    console.warn(`[BIB] ${tabela} não tem ${COLUNAS_OPCIONAIS.join('/')} — gravando sem esses campos. ` +
-      'Rode database/fix_exclusao_e_classe.sql no Supabase. Detalhe:', e?.message || e);
-    return db.update(tabela, id, semOpcionais());
+  if (_semColunasOpcionais) {
+    try { return await db.update(tabela, id, semOpcionais(patch)); }
+    catch (e) { if (ehErroClasseNc(e)) throw new Error(ERRO_CLASSE_NC); throw e; }
   }
+  try { return await db.update(tabela, id, patch); }
+  catch (e) { return regravarSemOpcionais(e, () => db.update(tabela, id, semOpcionais(patch))); }
 }
 
 async function excluirPeca(pecaId) {

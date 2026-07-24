@@ -182,6 +182,9 @@ create policy "bib_fav_own" on bib_favoritos for all to authenticated
 -- =============================================================================
 -- SEED — catálogos + peças + especificações de exemplo (idempotente)
 -- =============================================================================
+-- Seed mínimo de bootstrap (casa com as peças-amostra abaixo). A LISTA OFICIAL
+-- de 54 clientes e a normalização de grafia são aplicadas por
+-- database/fix_clientes_oficiais.sql — rode-o após este arquivo.
 insert into bib_clientes (nome) values ('Volvo'),('Scania'),('Mercedes-Benz'),('Volkswagen'),('Ford'),('Randon'),('DAF'),('Iveco') on conflict do nothing;
 -- §Erro 14 — plantas oficiais (fonte única: services/config.js → PLANTAS).
 -- Para padronizar bancos já existentes, rode database/fix_plantas_oficiais.sql.
