@@ -213,6 +213,40 @@ export function resultadoGeral(resultadosCaracteristicas) {
   return 'pendente';
 }
 
+/* ===================== GATE DE COMPLETUDE DAS MEDIÇÕES (fonte única) =========
+   Uma inspeção só avança de Medições → Revisão e só finaliza quando TODA
+   característica obrigatória tiver as suas amostras preenchidas. Esta é a regra
+   canônica usada pelo front (bloqueio do "Próximo"/Revisão) E pelo back
+   (validarFinalizacao) — não pode existir só na tela. */
+
+/** Valor de medição VAZIO = null, undefined, '' ou só espaços em branco.
+    OK/NOK e números preenchidos nunca são vazios; '0'/'0,00' também não. */
+export const medicaoVazia = v => String(v ?? '').trim() === '';
+
+/** Característica obrigatória para MEDIÇÃO: toda não-referência é obrigatória;
+    a referência é obrigatória apenas quando marcada `obrigatorio` na Biblioteca.
+    Referência obrigatória exige o registro do valor, mas NUNCA reprova a peça
+    (ver resultadoCaracteristica → referência jamais retorna 'reprovado'). */
+export const caracteristicaObrigatoriaMedicao = c => !c?.informativo || !!c?.obrigatorio;
+
+/** Lista as características obrigatórias com medição pendente, para o front
+    destacar as cotas e o back barrar o avanço/finalização. Cada item traz
+    quantas amostras faltam e se é referência. */
+export function medicoesPendentes(caracteristicas, quantidade) {
+  const qtd = quantidade || 0;
+  const pend = [];
+  (caracteristicas || []).forEach(c => {
+    if (!caracteristicaObrigatoriaMedicao(c)) return;
+    let faltam = 0;
+    for (let a = 1; a <= qtd; a++) {
+      const m = (c.medicoes || []).find(x => x.amostra === a);
+      if (medicaoVazia(m?.valor)) faltam++;
+    }
+    if (faltam) pend.push({ id: c.id, cota: c.cota, caracteristica: c.caracteristica, referencia: !!c.informativo, faltam });
+  });
+  return pend;
+}
+
 /* ==================================================== NUMERAÇÃO ÚNICA (§25)
    Formato DIM-<PLANTA>-<ANO>-<SEQ 6 dígitos>. Sequencial "no banco":
    demo = tabela insp_seq; Supabase = RPC next_insp_seq (ver migration). */
@@ -877,25 +911,20 @@ export async function validarFinalizacao(relatorioId) {
   if (!String(rel.op || '').trim()) faltas.push({ etapa:'Identificação', msg:'Informe a OP' });
   else if (!opValida(rel.op)) faltas.push({ etapa:'Identificação', msg:MSG_OP_INVALIDA });
   // medições obrigatórias — a inspeção só finaliza com todas as amostras medidas
+  // (regra canônica: medicoesPendentes → mesma usada pelo gate de avanço no front)
   const qtd = rel.quantidade || 0;
-  const faltamAmostras = c => {
-    let n = 0;
-    for (let a = 1; a <= qtd; a++) {
-      const m = c.medicoes.find(x => x.amostra === a);
-      if (!m || String(m.valor ?? '') === '') n++;
-    }
-    return n;
-  };
-  let semMedicao = 0;
-  caracteristicas.filter(c => !c.informativo).forEach(c => { semMedicao += faltamAmostras(c); });
-  if (semMedicao) faltas.push({ etapa:'Medições', msg:`${semMedicao} medição(ões) não preenchida(s)` });
+  const pendentes = medicoesPendentes(caracteristicas, qtd);
+  const pendNaoRef = pendentes.filter(p => !p.referencia);
+  if (pendNaoRef.length) {
+    const totalFaltam = pendNaoRef.reduce((s, p) => s + p.faltam, 0);
+    faltas.push({ etapa:'Medições', msg:`${totalFaltam} medição(ões) não preenchida(s) em ${pendNaoRef.length} característica(s): ${
+      pendNaoRef.map(p => `Cota ${p.cota ?? '—'}`).join(', ')}` });
+  }
   /* Referência marcada como obrigatória: exige o registro do valor medido antes de
      finalizar (§validação de preenchimento). É obrigatoriedade de REGISTRO — não
      reprova a característica nem a auditoria, apenas garante rastreabilidade. */
-  caracteristicas.filter(c => c.informativo && c.obrigatorio).forEach(c => {
-    if (faltamAmostras(c)) {
-      faltas.push({ etapa:'Medições', msg:`Informe o valor medido da característica de referência: ${c.caracteristica}.` });
-    }
+  pendentes.filter(p => p.referencia).forEach(p => {
+    faltas.push({ etapa:'Medições', msg:`Informe o valor medido da característica de referência: ${p.caracteristica} (cota ${p.cota ?? '—'}).` });
   });
   /* NOVO FLUXO (§Regra 3): a reprovação NÃO bloqueia a finalização. A inspeção
      sempre conclui e gera relatório; havendo reprovação, o tratamento (classe,

@@ -657,6 +657,22 @@ body.kiosk .rna-content { padding: 26px; }
 .insp-minput:focus{ outline:none; border-color:var(--rna-yellow); box-shadow:0 0 0 3px var(--rna-yellow-soft); }
 .insp-minput.is-ok{ border-color:var(--rna-ok); background:rgba(34,168,90,.07); color:#177a41; }
 .insp-minput.is-crit{ border-color:var(--rna-crit); background:rgba(226,59,59,.07); color:#b62828; }
+
+/* §Gate de completude das medições — destaque de pendência + barra de progresso */
+.insp-minput.is-pend, .insp-attr.is-pend{ border-color:var(--rna-crit); background:rgba(226,59,59,.10); box-shadow:0 0 0 2px rgba(226,59,59,.12); }
+.insp-mtable tbody tr.insp-row-pend > td{ background:rgba(226,59,59,.055); }
+.insp-mtable tbody tr.insp-row-pend .sticky-l{ background:rgba(226,59,59,.10); box-shadow:inset 3px 0 0 var(--rna-crit); }
+.insp-pend-ic{ color:var(--rna-crit); }
+.insp-med-progress{ border:1px solid var(--rna-border); border-radius:12px; padding:10px 14px; margin-bottom:12px; background:var(--rna-surface); }
+.insp-med-progress.is-done{ border-color:var(--rna-ok); background:rgba(34,168,90,.05); }
+.insp-med-progress__top{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:13px; margin-bottom:7px; }
+.insp-med-progress__t{ font-weight:700; }
+.insp-med-progress__n{ font-weight:700; color:var(--rna-graphite); }
+.insp-med-progress.is-done .insp-med-progress__n{ color:var(--rna-ok); }
+.insp-med-progress__bar{ height:8px; border-radius:6px; background:var(--rna-bg); overflow:hidden; }
+.insp-med-progress__bar>span{ display:block; height:100%; background:var(--rna-yellow-600); transition:width .25s ease; }
+.insp-med-progress.is-done .insp-med-progress__bar>span{ background:var(--rna-ok); }
+.insp-med-progress__ok{ margin-top:7px; font-size:12.5px; font-weight:600; color:var(--rna-ok); }
 .insp-classe-cell{ min-width:130px; }
 .insp-classe-sel{ min-width:120px; }
 .insp-cls-box{ border:1px solid var(--rna-border); border-left-width:4px; border-radius:10px; padding:10px 12px; font-size:13px; }

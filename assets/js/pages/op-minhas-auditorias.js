@@ -253,7 +253,10 @@ function maxStepAllowed() {
   if (r.tipo_id && pecaVinculada()) m = 1;
   if (m >= 1 && r.lote && opValida(r.op)) m = 2;
   if (m >= 2 && r.quantidade) m = 3;
-  if (m >= 3 && R.caracteristicas.some(c => c.medicoes.length)) m = 4;
+  // §Gate — só libera a Revisão (etapa 4) quando NÃO houver característica
+  // obrigatória sem preenchimento. Antes bastava "alguma medição existir", o que
+  // deixava avançar com cotas em branco (ex.: Cota 17/23 sem medição).
+  if (m >= 3 && pendentesMedicao().length === 0) m = 4;
   if (m >= 4) m = 5;
   return m;
 }
@@ -309,8 +312,14 @@ function pecaVinculada() { return !!(R?.rel?.peca_id && R.caracteristicas.length
 function atualizarNav() {
   const next = $('#nav-next');
   if (!next || VIEWONLY) return;
-  const bloqueio = STEP === 0 && !(pecaVinculada() && !SELECIONANDO)
-    ? 'Selecione uma peça da Biblioteca Técnica para avançar.' : '';
+  let bloqueio = '';
+  if (STEP === 0 && !(pecaVinculada() && !SELECIONANDO)) {
+    bloqueio = 'Selecione uma peça da Biblioteca Técnica para avançar.';
+  } else if (STEP === 3) {
+    // §Gate — Próximo só habilita com 100% das obrigatórias preenchidas.
+    const n = pendentesMedicao().length;
+    if (n) bloqueio = `Faltam ${n} característica(s) obrigatória(s) sem medição. Preencha todas para avançar à Revisão.`;
+  }
   next.disabled = !!bloqueio;
   next.title = bloqueio;
 }
@@ -324,6 +333,12 @@ async function onNext() {
   // §Erro 03 — campo obrigatório inválido não deixa avançar
   if (STEP === 1 && !opValida(r.op)) { $('#id-op')?.focus(); return toast(MSG_OP_INVALIDA, { type: 'warn', title: 'OP inválida' }); }
   if (STEP === 2 && !r.quantidade) return toast('Selecione a quantidade de peças.', { type: 'warn' });
+  /* §Gate — Medições → Revisão só com TODAS as obrigatórias preenchidas. Lista as
+     cotas faltantes e destaca as linhas; não avança enquanto houver pendência. */
+  if (STEP === 3) {
+    const pend = pendentesMedicao();
+    if (pend.length) { alertaPendenciasMedicao(pend); return; }
+  }
   if (STEP < ETAPAS.length - 1) { STEP++; await INSP.patchRelatorio(r.id, { etapa: STEP }); renderStep(); }
 }
 
@@ -688,6 +703,7 @@ async function stepMedicoes(host) {
       <div class="flex-fill"></div>
       <span class="text-muted-2" style="font-size:12.5px"><i class="bi bi-lock"></i> Nominal/limites vêm da Biblioteca (somente leitura)</span>
     </div>
+    ${progressoMedicaoHtml()}
     <div id="insp-colab"></div>
     <div id="insp-classe-alerta"></div>
     <div class="insp-table-wrap"><table class="insp-mtable"><thead><tr>
@@ -716,6 +732,8 @@ async function stepMedicoes(host) {
   $$('.insp-tratar', host).forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));
   wireAmostras();
   aplicarBloqueios();
+  marcarPendentesMedicao();     // §Gate — destaca as obrigatórias sem preenchimento
+  atualizarNav();               // reflete o estado do "Próximo" ao abrir a etapa
 }
 
 /* ==================== COLABORAÇÃO POR AMOSTRA (§M04) ======================== */
@@ -922,11 +940,106 @@ async function concluirAmostraUI(n) {
 function medicoesFaltantes(n) {
   let f = 0;
   R.caracteristicas.forEach(c => {
-    if (c.informativo && !c.obrigatorio) return;
+    if (!INSP.caracteristicaObrigatoriaMedicao(c)) return;
     const v = LOCAL[c.id]?.vals[n];
-    if (String(v ?? '') === '') f++;
+    if (INSP.medicaoVazia(v)) f++;
   });
   return f;
+}
+
+/* ============== GATE DE COMPLETUDE DAS MEDIÇÕES (frontend, espelha o serviço) ==
+   Bloqueia Medições → Revisão enquanto houver característica obrigatória sem
+   preencher. "Obrigatória" e "vazio" vêm da FONTE ÚNICA no serviço
+   (INSP.caracteristicaObrigatoriaMedicao / INSP.medicaoVazia); o back revalida em
+   validarFinalizacao, então a regra não é apenas visual. */
+
+/** Valor atual da amostra: na etapa Medições prioriza o valor AO VIVO digitado
+    (LOCAL); fora dela usa o persistido (R.caracteristicas). */
+function valorAmostra(c, a) {
+  const L = LOCAL?.[c.id];
+  if (STEP === 3 && L && Object.prototype.hasOwnProperty.call(L.vals, a)) return L.vals[a];
+  const m = (c.medicoes || []).find(x => x.amostra === a);
+  return m ? m.valor : undefined;
+}
+
+/** Características obrigatórias ainda sem preenchimento completo. */
+function pendentesMedicao() {
+  const qtd = R.rel.quantidade || 0;
+  const pend = [];
+  R.caracteristicas.forEach(c => {
+    if (!INSP.caracteristicaObrigatoriaMedicao(c)) return;
+    let faltam = 0;
+    for (let a = 1; a <= qtd; a++) if (INSP.medicaoVazia(valorAmostra(c, a))) faltam++;
+    if (faltam) pend.push({ id: c.id, cota: c.cota, caracteristica: c.caracteristica, referencia: !!c.informativo });
+  });
+  return pend;
+}
+
+/** Progresso das medições obrigatórias (característica 100% medida = concluída). */
+function progressoMedicao() {
+  const qtd = R.rel.quantidade || 0;
+  const obrig = R.caracteristicas.filter(c => INSP.caracteristicaObrigatoriaMedicao(c));
+  const feitas = obrig.filter(c => {
+    for (let a = 1; a <= qtd; a++) if (INSP.medicaoVazia(valorAmostra(c, a))) return false;
+    return true;
+  }).length;
+  const total = obrig.length;
+  return { feitas, total, pct: total ? Math.round(feitas / total * 100) : 100 };
+}
+
+function progressoMedicaoHtml() {
+  const { feitas, total, pct } = progressoMedicao();
+  const done = total > 0 && feitas >= total;
+  return `<div class="insp-med-progress ${done ? 'is-done' : ''}" id="insp-med-progress">
+    <div class="insp-med-progress__top">
+      <span class="insp-med-progress__t"><i class="bi ${done ? 'bi-check-circle-fill' : 'bi-rulers'}"></i> Medições obrigatórias</span>
+      <span class="insp-med-progress__n">${feitas} / ${total} concluídas · ${pct}%</span>
+    </div>
+    <div class="insp-med-progress__bar"><span style="width:${pct}%"></span></div>
+    ${done ? `<div class="insp-med-progress__ok"><i class="bi bi-check2-all"></i> Todas as medições obrigatórias realizadas.</div>` : ''}
+  </div>`;
+}
+
+/** Recalcula barra de progresso, destaque das pendências e o botão Próximo. */
+function atualizarProgressoMedicoes() {
+  $('#insp-med-progress')?.replaceWith(el(progressoMedicaoHtml()));
+  marcarPendentesMedicao();
+  atualizarNav();
+}
+
+/** Destaque visual (borda/fundo vermelhos + ícone) das obrigatórias sem preencher. */
+function marcarPendentesMedicao() {
+  const qtd = R.rel.quantidade || 0;
+  R.caracteristicas.forEach(c => {
+    const row = document.querySelector(`tr[data-row="${c.id}"]`);
+    if (!row) return;
+    const obrig = INSP.caracteristicaObrigatoriaMedicao(c);
+    const faltam = [];
+    if (obrig) for (let a = 1; a <= qtd; a++) if (INSP.medicaoVazia(valorAmostra(c, a))) faltam.push(a);
+    row.classList.toggle('insp-row-pend', faltam.length > 0);
+    row.querySelectorAll('.insp-minput, .insp-attr').forEach(elm => {
+      elm.classList.toggle('is-pend', obrig && faltam.includes(+elm.dataset.a));
+    });
+    const cota = row.querySelector('.sticky-l');
+    if (cota) {
+      const ic = cota.querySelector('.insp-pend-ic');
+      if (faltam.length && !ic) cota.insertAdjacentHTML('afterbegin', '<i class="bi bi-exclamation-triangle-fill insp-pend-ic" title="Medição obrigatória pendente"></i> ');
+      else if (!faltam.length && ic) ic.remove();
+    }
+  });
+}
+
+/** Modal de pendências ao tentar avançar com medições faltando (§gate). */
+function alertaPendenciasMedicao(pend) {
+  marcarPendentesMedicao();
+  const itens = pend.map(p => `<li><span class="rna-badge badge-pend">Cota ${escTitle(p.cota ?? '—')}</span> ${escTitle(p.caracteristica || '')}${p.referencia ? ' <span class="cell-sub">(referência — obrigatória)</span>' : ''}</li>`).join('');
+  modal({
+    title: 'Medições pendentes',
+    content: `<p style="margin:0 0 10px;font-size:14px">Existem características sem medição. Finalize todas as medições antes de prosseguir para a etapa de revisão.</p>
+      <div class="insp-card-lite"><b class="text-crit"><i class="bi bi-exclamation-triangle"></i> Pendentes (${pend.length})</b>
+      <ul class="insp-ul mt-2">${itens}</ul></div>`,
+    footer: `<button class="rna-btn rna-btn-primary" data-bs-dismiss="modal">OK</button>`
+  });
 }
 
 /* Sinal de vida: enquanto este navegador segura amostras, renova a trava. Sem
@@ -1127,6 +1240,7 @@ function recalcLinha(carId) {
   }
   R.rel.resultado = INSP.resultadoGeral(R.caracteristicas.filter(c => !c.informativo).map(c => c.resultado));
   refreshBanner();
+  atualizarProgressoMedicoes();   // §Gate — atualiza contador/%, destaque e "Próximo" ao vivo
 }
 function detInputs(carId, qtd) {
   const out = [];
@@ -1415,10 +1529,10 @@ async function stepResultado(host) {
         <a class="rna-btn rna-btn-primary" href="consulta-dimensional.html?rel=${r.id}"><i class="bi bi-file-earmark-text"></i> Ver relatório</a>
         <a class="rna-btn rna-btn-ghost" href="consulta-dimensional.html?rel=${r.id}&print=1"><i class="bi bi-printer"></i> Imprimir</a>
         ${r.status === 'finalizada_reprovada' ? `<a class="rna-btn rna-btn-dark" href="op-pendencias.html?rel=${r.id}"><i class="bi bi-exclamation-triangle"></i> Ver pendência</a>` : ''}</div>`
-    : val.ok ? `<div class="insp-blocker insp-ok-blocker mt-3"><i class="bi bi-check2-all"></i> Medições concluídas. ${r.resultado === 'reprovado' ? 'A inspeção pode ser finalizada — como há reprovação, uma <b>pendência será criada automaticamente</b>.' : 'Você pode finalizar a inspeção.'}</div>
+    : val.ok ? `<div class="insp-blocker insp-ok-blocker mt-3"><i class="bi bi-check2-all"></i> Medições concluídas. ${r.resultado === 'reprovado' ? 'O relatório pode ser finalizado — como há reprovação, o resultado será salvo como <b>REPROVADO</b> e uma <b>pendência será criada automaticamente</b>.' : 'Você pode finalizar o relatório.'}</div>
       <div class="d-flex gap-2 mt-3">
         <button class="rna-btn rna-btn-ghost" id="btn-rev">Voltar e revisar</button>
-        <button class="rna-btn rna-btn-primary rna-btn-xl" id="btn-fin"><i class="bi bi-check2-circle"></i> Finalizar inspeção</button></div>`
+        <button class="rna-btn rna-btn-primary rna-btn-xl" id="btn-fin"><i class="bi bi-check2-circle"></i> Finalizar Relatório</button></div>`
     : `<div class="insp-card-lite mt-3"><b class="text-crit"><i class="bi bi-exclamation-triangle"></i> ${val.faltas.length} pendência(s) impedem a finalização</b>
       <ul class="insp-ul mt-2">${val.faltas.map(f => `<li><span class="rna-badge badge-pend">${f.etapa}</span> ${f.msg}</li>`).join('')}</ul>
       <button class="rna-btn rna-btn-dark rna-btn-sm mt-2" id="btn-goto"><i class="bi bi-arrow-right-circle"></i> Ir à primeira pendência</button></div>`}`;
@@ -1434,20 +1548,37 @@ async function stepResultado(host) {
    reprovado [tudo em INSP.finalizar] → (4) fechar modal → (5) atualizar UI → (6) ir p/ leitura. */
 function finalizarInspecao(r) {
   const reprovado = r.resultado === 'reprovado';
-  const m = modal({
-    title: 'Finalizar inspeção',
-    content: `
-      <p style="margin:0 0 12px;font-size:14px">Deseja finalizar esta inspeção? Após a finalização, o relatório fica bloqueado para edição comum.</p>
+  /* §Finalização de reprovado — a reprovação NÃO bloqueia; é apenas o RESULTADO.
+     Quando há NOK, a confirmação é específica (título e itens do requisito) para o
+     auditor reconhecer que está encerrando um relatório REPROVADO — não é impeditivo. */
+  const conteudoReprovado = `
+      <p style="margin:0 0 12px;font-size:14px">Esta inspeção possui características fora da especificação (NOK).</p>
       <div class="insp-result-final ${bannerClass(r.resultado)}" style="padding:12px 16px">
-        <div class="insp-result-final__ic"><i class="bi ${reprovado ? 'bi-x-octagon-fill' : 'bi-check-circle-fill'}"></i></div>
-        <div><div class="insp-result-final__t">RESULTADO CALCULADO</div><div class="insp-result-final__v">${reprovado ? 'REPROVADO' : 'APROVADO'}</div></div>
+        <div class="insp-result-final__ic"><i class="bi bi-x-octagon-fill"></i></div>
+        <div><div class="insp-result-final__t">RESULTADO GERAL</div><div class="insp-result-final__v">REPROVADO</div></div>
       </div>
-      <p class="text-muted-2" style="font-size:13px;margin:10px 0 0">${reprovado
-        ? 'A inspeção será concluída, o relatório gerado e uma <b>pendência criada automaticamente</b> a partir da reprovação.'
-        : 'A inspeção será concluída e o relatório gerado.'}</p>
-      <div id="fin-erro" class="insp-blocker mt-2" style="display:none"></div>`,
+      <p style="font-size:14px;margin:12px 0 6px">Ao finalizar:</p>
+      <ul class="insp-ul" style="font-size:13.5px;margin:0">
+        <li>o relatório será encerrado;</li>
+        <li>o resultado será salvo como <b>REPROVADO</b>;</li>
+        <li>as pendências serão criadas automaticamente;</li>
+        <li>toda a rastreabilidade será preservada.</li>
+      </ul>
+      <p style="font-size:14px;margin:12px 0 0"><b>Deseja realmente finalizar?</b></p>
+      <div id="fin-erro" class="insp-blocker mt-2" style="display:none"></div>`;
+  const conteudoAprovado = `
+      <p style="margin:0 0 12px;font-size:14px">Deseja finalizar este relatório? Após a finalização, ele fica bloqueado para edição comum.</p>
+      <div class="insp-result-final ${bannerClass(r.resultado)}" style="padding:12px 16px">
+        <div class="insp-result-final__ic"><i class="bi bi-check-circle-fill"></i></div>
+        <div><div class="insp-result-final__t">RESULTADO GERAL</div><div class="insp-result-final__v">APROVADO</div></div>
+      </div>
+      <p class="text-muted-2" style="font-size:13px;margin:10px 0 0">A inspeção será concluída e o relatório gerado.</p>
+      <div id="fin-erro" class="insp-blocker mt-2" style="display:none"></div>`;
+  const m = modal({
+    title: reprovado ? 'Finalizar Relatório Reprovado' : 'Finalizar Relatório',
+    content: reprovado ? conteudoReprovado : conteudoAprovado,
     footer: `<button class="rna-btn rna-btn-ghost" id="fin-cancel" data-bs-dismiss="modal">Cancelar</button>
-             <button class="rna-btn rna-btn-primary" id="fin-ok"><i class="bi bi-check2-circle"></i> Confirmar finalização</button>`
+             <button class="rna-btn ${reprovado ? 'rna-btn-dark' : 'rna-btn-primary'}" id="fin-ok"><i class="bi bi-check2-circle"></i> Finalizar Relatório</button>`
   });
   const okBtn = $('#fin-ok', m.host), cancelBtn = $('#fin-cancel', m.host), errBox = $('#fin-erro', m.host);
   const original = okBtn.innerHTML;
