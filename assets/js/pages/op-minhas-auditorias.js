@@ -1137,7 +1137,12 @@ const fmtHora = iso => formatarHoraBrasil(iso);
 const fmtDataHora = iso => formatarDataHoraBrasil(iso);
 
 function linhaMedicao(c, qtd) {
-  const attr = c.tipo_especificacao === 'ATRIBUTO';
+  /* O tipo cadastrado na Biblioteca decide o COMPONENTE de entrada: Verificação
+     (ATRIBUTO) → <select> OK/NOK; demais tipos → campo numérico. Comparação
+     tolerante a caixa/espaço para que um tipo legado ('atributo') nunca escorregue
+     para o campo numérico (as leituras já normalizam via normalizarCaracteristica;
+     isto é a rede de segurança final na própria renderização). */
+  const attr = String(c.tipo_especificacao ?? '').trim().toUpperCase() === 'ATRIBUTO';
   const informativo = !!c.informativo;
   /* Célula por amostra: OK/NOK (atributo) ou campo numérico — inclusive para
      REFERÊNCIA, que também é medida e registrada. A referência só não possui

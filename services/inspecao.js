@@ -362,10 +362,20 @@ async function patchRelatorioTolerante(relatorioId, patch) {
    preservado em `tipo_campo` ('numerico'|'atributo'|'informativo') e é
    reconstruído aqui na leitura — a auditoria calcula igual nos dois cenários.
    Todo caminho de leitura de insp_caracteristicas passa por aqui. */
+/* Tipo de especificação em forma CANÔNICA (maiúsculas, sem espaços). O
+   componente de medição é escolhido por igualdade estrita com 'ATRIBUTO'
+   (OK/NOK) ou 'REFERENCIA'; sem esta normalização, um valor legado/importado
+   como 'atributo' ou ' ATRIBUTO ' cairia no campo numérico — exatamente o
+   sintoma de "Verificação exibindo campo numérico". Valores já corretos
+   (SPEC_TIPOS são todos maiúsculos) passam inalterados. */
+export function canonTipoEspec(tipo) {
+  const t = String(tipo ?? '').trim().toUpperCase();
+  return t || 'TOLERANCIA';
+}
 export function normalizarCaracteristica(c) {
   if (!c) return c;
-  const tipo = c.tipo_especificacao
-    ?? (c.tipo_campo === 'atributo' ? 'ATRIBUTO' : c.tipo_campo === 'informativo' ? 'REFERENCIA' : 'TOLERANCIA');
+  const tipo = canonTipoEspec(c.tipo_especificacao
+    ?? (c.tipo_campo === 'atributo' ? 'ATRIBUTO' : c.tipo_campo === 'informativo' ? 'REFERENCIA' : 'TOLERANCIA'));
   return {
     ...c, tipo_especificacao: tipo,
     informativo: !!(c.informativo ?? (c.tipo_campo === 'informativo')),
@@ -466,7 +476,10 @@ export async function carregarEspecs(relatorioId, pecaId) {
   let ordem = 0;
   for (const m of f.metricas) {
     ordem++;
-    const tipo = m.tipo_especificacao || 'TOLERANCIA';
+    // Congela o tipo em forma canônica: o snapshot é a fonte de render da
+    // inspeção, então uma variação de caixa/espaço vinda da Biblioteca não pode
+    // transformar uma Verificação (OK/NOK) em campo numérico.
+    const tipo = canonTipoEspec(m.tipo_especificacao);
     const informativo = ehInformativo(tipo);
     const atributo = ehAtributo(tipo);
     await inserirCaracteristica({

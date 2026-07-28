@@ -278,8 +278,12 @@ export async function porCodigo(codigo) {
    calcula tol_min/tol_max (fonte usada por Auditoria, Relatório, indicadores).
    Compartilhado por editor (preview em tempo real) e salvamento. */
 export const SPEC_TIPOS = ['MAX_MIN','ATRIBUTO','UNID_MAX','UNID_MIN','REFERENCIA','TOLERANCIA'];
-export function ehInformativo(tipo) { return tipo === 'REFERENCIA'; }
-export function ehAtributo(tipo)    { return tipo === 'ATRIBUTO'; }
+/* Comparação tolerante a caixa/espaço: um tipo salvo como 'atributo' ou
+   ' ATRIBUTO ' (legado/importação) ainda é reconhecido como Verificação (OK/NOK)
+   e nunca cai no campo numérico. Tipos já canônicos passam inalterados. */
+const canonTipo = t => String(t ?? '').trim().toUpperCase();
+export function ehInformativo(tipo) { return canonTipo(tipo) === 'REFERENCIA'; }
+export function ehAtributo(tipo)    { return canonTipo(tipo) === 'ATRIBUTO'; }
 function round(n) { return Math.round(n * 1e6) / 1e6; }
 
 /** Calcula { tol_min, tol_max } a partir do tipo e dos campos do editor.
