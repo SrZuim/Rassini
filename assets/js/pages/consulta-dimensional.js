@@ -197,7 +197,7 @@ function renderResultados(rows) {
   }
   host.innerHTML = `
     <div class="rna-table-wrap cdim-table"><table class="rna-table"><thead><tr>
-      <th>Relatório</th><th>Data</th><th>Cliente</th><th>PN · Rev</th><th>Lote · OP</th><th>Auditor</th><th>Tipo</th><th>Result.</th><th>Classe</th><th>Ações</th>
+      <th>Relatório</th><th>Data</th><th>Cliente</th><th>PN · Rev</th><th>Lote · OP</th><th>Qtd. Peças</th><th>Auditor</th><th>Tipo</th><th>Result.</th><th>Classe</th><th>Ações</th>
       </tr></thead><tbody>${rows.map(rowHtml).join('')}</tbody></table></div>
     <div class="cdim-cards">${rows.map(cardHtml).join('')}</div>`;
   $$('[data-open]', host).forEach(b => b.addEventListener('click', () => go(`consulta-dimensional.html?rel=${b.dataset.open}`)));
@@ -280,6 +280,7 @@ function rowHtml(r) {
     <td>${r.cliente || '—'}</td>
     <td>${r.peca_codigo || '—'}<div class="cell-sub">${revLabel(r.revisao_desenho)}</div></td>
     <td>${r.lote || '—'}<div class="cell-sub">OP ${r.op || '—'}</div></td>
+    <td class="cell-strong" style="text-align:center">${(r.quantidade === 0 || r.quantidade) ? r.quantidade : '—'}</td>
     <td>${r.auditor_nome || '—'}</td>
     <td class="cell-sub">${r.tipo_nome || '—'}</td>
     <td>${resPill(r.resultado)}</td>
@@ -301,6 +302,7 @@ function cardHtml(r) {
       ${mini('Cliente', r.cliente)} ${mini('Part Number', r.peca_codigo)}
       ${mini('Revisão', revLabel(r.revisao_desenho))} ${mini('Auditor', r.auditor_nome)}
       ${mini('Lote', r.lote)} ${mini('OP', r.op)}
+      ${mini('Qtd. de Peças', r.quantidade)}
     </div>
     <div class="d-flex align-items-center gap-2 cdim-actions">
       <div>${clsBadge(r)}</div><div class="flex-fill"></div>
@@ -319,9 +321,9 @@ const resultadoLabel = r => r === 'aprovado' ? 'Aprovado' : r === 'reprovado' ? 
    Exporta somente os resultados da pesquisa atual, sem "Nome da peça" (§25). */
 function exportar(fmt) {
   if (!ULT_RESULT.length) return toast('Não existem relatórios para exportar.', { type: 'warn' });
-  const cols = ['Nº do Relatório', 'Data', 'Cliente', 'Part Number', 'Revisão', 'Lote', 'OP', 'Auditor', 'Tipo', 'Status', 'Resultado', 'Maior Classe'];
+  const cols = ['Nº do Relatório', 'Data', 'Cliente', 'Part Number', 'Revisão', 'Lote', 'OP', 'Qtd. de Peças', 'Auditor', 'Tipo', 'Status', 'Resultado', 'Maior Classe'];
   const linhas = ULT_RESULT.map(r => [numeroDe(r), dataBR(r.started_iso), r.cliente, r.peca_codigo, (r.revisao_desenho === '' || r.revisao_desenho == null) ? '' : fmtRevisao(r.revisao_desenho),
-    r.lote, r.op, r.auditor_nome, r.tipo_nome, INSP_STATUS[r.status]?.label || r.status, resultadoLabel(r.resultado), r._maiorClasse || '']);
+    r.lote, r.op, (r.quantidade === 0 || r.quantidade) ? r.quantidade : '', r.auditor_nome, r.tipo_nome, INSP_STATUS[r.status]?.label || r.status, resultadoLabel(r.resultado), r._maiorClasse || '']);
   const sep = fmt === 'csv' ? ';' : '\t';
   const esc = v => { const s = String(v ?? ''); return (s.includes(sep) || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s; };
   const conteudo = [cols.join(sep), ...linhas.map(l => l.map(esc).join(sep))].join('\r\n');
@@ -398,7 +400,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
         <div class="cell-sub mt-1">Rastreabilidade da inspeção colaborativa: cada peça registra o auditor responsável, os horários e o resultado apurado.</div></div>` : ''}
 
       <div class="insp-rep-section"><div class="insp-rep-sec-t">Resultados das medições</div>
-        <div class="insp-table-wrap"><table class="insp-mtable insp-rep-table"><thead><tr>
+        <div class="insp-table-wrap"><table class="insp-mtable insp-rep-table ${(rel.quantidade || 0) > 5 ? 'insp-rep-table--wide' : ''}"><thead><tr>
           <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Un.</th><th>Nom.</th><th>Mín</th><th>Máx</th><th>Equip.</th><th>Obs.</th>
           ${Array.from({ length: rel.quantidade || 0 }, (_, i) => `<th>P${i + 1}</th>`).join('')}
           <th>Result.</th><th>Classe</th></tr></thead><tbody>

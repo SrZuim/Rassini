@@ -825,6 +825,13 @@ body.kiosk .rna-content { padding: 26px; }
   .insp-rep-table td.rep-warn::after{ content:' (A!)'; }
   .no-print-optional{ display:none; }
   @page{ size:A4 landscape; margin:12mm; }
+
+  /* §M02 — inspeção de até 10 peças: com 6+ colunas de amostra a tabela de
+     medições fica larga demais para o A4 paisagem. Em vez de cortar ou sobrepor
+     texto, reduz-se PROPORCIONALMENTE a fonte e os espaçamentos e força-se a
+     quebra de palavra, mantendo todas as colunas P1..P10 visíveis e legíveis. */
+  .insp-rep-table--wide{ table-layout:fixed; }
+  .insp-rep-table--wide th, .insp-rep-table--wide td{ font-size:9px; padding:3px 4px; word-break:break-word; }
 }
 
 /* ==========================================================================
@@ -996,6 +1003,9 @@ body.kiosk .rna-content { padding: 26px; }
 .cdim-row-actions{ display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
 .cdim-del{ color:var(--rna-crit); }
 .cdim-del:hover{ background:rgba(226,59,59,.10); color:#b62828; }
+/* §M01 — botão Excluir em "Meus Relatórios Dimensionais" (mesma ação destrutiva) */
+.insp-btn-del{ color:var(--rna-crit); }
+.insp-btn-del:hover{ background:rgba(226,59,59,.10); color:#b62828; }
 .cdim-del-box{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 16px;
   padding:12px 14px; background:var(--rna-bg); border-radius:10px; }
 @media (max-width:520px){ .cdim-del-box{ grid-template-columns:1fr; } }

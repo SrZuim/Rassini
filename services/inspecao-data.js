@@ -92,8 +92,13 @@ export const INSP_CLASSES_DEFAULT = [
   }
 ];
 
-/* ------------------------------------------------------- QUANTIDADE DE PEÇAS (§6) */
-export const INSP_QUANTIDADES = [1, 2, 3, 4, 5];
+/* ------------------------------------------------------- QUANTIDADE DE PEÇAS (§6)
+   Limite ampliado de 5 → 10 peças. A geração de colunas de medição, o cálculo,
+   a revisão, o relatório/PDF e as exportações leem esta lista e iteram por
+   `quantidade` (nunca pressupõem um teto fixo), então relatórios antigos (1–5)
+   continuam válidos e os novos aceitam até 10 sem alteração de schema. */
+export const INSP_QUANTIDADES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+export const INSP_QTD_MAX = 10;
 
 /* ------------------------------------------------ STATUS DO RELATÓRIO (§26) */
 export const INSP_STATUS = {

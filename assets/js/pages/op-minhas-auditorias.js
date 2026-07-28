@@ -94,6 +94,61 @@ async function renderList() {
   $('#btn-nova')?.addEventListener('click', novaInspecao);
   $$('[data-open]', cont).forEach(b => b.addEventListener('click', () => go(`op-minhas-auditorias.html?rel=${b.dataset.open}`)));
   $$('[data-view]', cont).forEach(b => b.addEventListener('click', () => go(`op-minhas-auditorias.html?rel=${b.dataset.view}&view=1`)));
+  $$('[data-del]', cont).forEach(b => b.addEventListener('click', () => { const r = rels.find(x => x.id === b.dataset.del); confirmarExclusao(r || { id: b.dataset.del }); }));
+}
+
+/* §M01 — Confirmação de exclusão com a IDENTIFICAÇÃO do relatório (excluir é
+   permanente, então o admin reconhece o registro antes de confirmar) e a lista
+   explícita do que será removido em cascata. A exclusão em si (cascata + Log
+   Administrativo + revalidação do perfil no servidor) fica no serviço, fonte
+   única compartilhada com a Consulta de Relatórios. */
+async function confirmarExclusao(r) {
+  if (!podeExcluirRel()) return toast('Acesso negado.', { type: 'crit', title: 'Sem permissão' });
+  if (!r) return;
+  const st = INSP_STATUS[r.status] || { label: r.status, badge: 'badge-na' };
+  const cell = (l, v) => `<div><span class="insp-info-l">${l}</span><span class="insp-info-v">${(v === 0 || v) ? escTitle(v) : '—'}</span></div>`;
+  const m = modal({
+    title: 'Excluir Relatório Dimensional',
+    content: `
+      <div class="cdim-del-box">
+        ${cell('Nº do relatório', r.numero)} ${cell('Cliente', r.cliente)}
+        ${cell('PN', r.peca_codigo)} ${cell('Tipo de inspeção', r.tipo_nome)}
+        ${cell('Auditor', r.auditor_nome)} ${cell('Status', st.label)}
+      </div>
+      <div class="insp-blocker mt-3" style="border-left:4px solid var(--rna-crit)">
+        <i class="bi bi-exclamation-octagon"></i>
+        <div><b>Tem certeza que deseja excluir este relatório?</b>
+        <div class="cell-sub">Esta ação removerá permanentemente: relatório, medições, resultados,
+        anexos, colaboradores, revisões, histórico e pendências vinculadas.
+        <b>Esta ação não poderá ser desfeita.</b></div></div>
+      </div>
+      <div id="del-erro" class="insp-blocker mt-2" style="display:none"></div>`,
+    footer: `<button class="rna-btn rna-btn-ghost" id="del-cancel" data-bs-dismiss="modal">Cancelar</button>
+             <button class="rna-btn rna-btn-dark" id="del-ok"><i class="bi bi-trash"></i> Excluir relatório</button>`
+  });
+  const ok = $('#del-ok', m.host), cancel = $('#del-cancel', m.host), err = $('#del-erro', m.host);
+  ok.addEventListener('click', async () => {
+    ok.disabled = true; cancel.disabled = true;
+    ok.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Excluindo...';
+    err.style.display = 'none';
+    try {
+      const res = await INSP.excluirRelatorios([r.id], USER);
+      if (res.erros.length) throw new Error(res.erros[0].mensagem);
+      m.close();
+      if (res.ok[0]?.logRegistrado === false) {
+        toast('Relatório excluído, mas o Log Administrativo não pôde ser gravado. Verifique as permissões de log.',
+          { type: 'warn', title: 'Excluído com ressalva', timeout: 8000 });
+      } else {
+        toast(`Relatório ${res.ok[0]?.numero || ''} excluído permanentemente.`, { type: 'ok', title: 'Exclusão concluída' });
+      }
+      await renderList();                              // atualiza tabela + indicadores sem recarregar a página
+    } catch (e) {
+      INSP.logErro('Falha ao excluir o relatório', e);
+      err.style.display = 'flex';
+      err.innerHTML = `<i class="bi bi-exclamation-octagon"></i> <div><b>Não foi possível excluir</b><div class="cell-sub">${escTitle(INSP.mensagemErro(e))}</div></div>`;
+      ok.disabled = false; cancel.disabled = false; ok.innerHTML = '<i class="bi bi-trash"></i> Excluir relatório';
+    }
+  });
 }
 
 function tabela(rels) {
@@ -121,10 +176,22 @@ function tabela(rels) {
           <a class="rna-btn rna-btn-ghost rna-btn-sm" href="consulta-dimensional.html?rel=${r.id}&print=1" title="Imprimir relatório"><i class="bi bi-printer"></i> Imprimir</a>
           ${r.status === 'finalizada_reprovada' ? `<a class="rna-btn rna-btn-dark rna-btn-sm" href="op-pendencias.html?rel=${r.id}" title="Ver pendência vinculada"><i class="bi bi-exclamation-triangle"></i> Ver Pendência</a>` : ''}`
         : `<button class="rna-btn rna-btn-primary rna-btn-sm" data-open="${r.id}"><i class="bi ${r._colaborativo ? 'bi-people-fill' : 'bi-pencil-square'}"></i> ${r._colaborativo ? 'Colaborar' : 'Continuar'}</button>`}
+        ${btnExcluir(r)}
       </div></td></tr>`;
     }).join('')}
   </tbody></table></div>`;
 }
+
+/* §M01 — Exclusão direta na tela "Meus Relatórios Dimensionais", sem depender da
+   Biblioteca. Regra de permissão vinda da fonte única do serviço (reavaliada no
+   clique e de novo no servidor antes de gravar): SOMENTE administrador. Os demais
+   perfis (auditor, supervisor, visitante) nem recebem o botão no HTML. Admin pode
+   excluir em QUALQUER status — inclusive relatórios colaborativos de terceiros. */
+const podeExcluirRel = () => INSP.podeExcluirRelatorio(USER) && can(USER.role, 'op_auditorias', 'delete');
+const btnExcluir = r => podeExcluirRel()
+  ? `<button class="rna-btn rna-btn-ghost rna-btn-sm insp-btn-del" data-del="${r.id}" title="Excluir relatório"
+       aria-label="Excluir relatório ${escTitle(r.numero || '')}"><i class="bi bi-trash"></i> Excluir</button>`
+  : '';
 
 const mini = (v, l, ic, icon) => `<div class="col-6 col-md-3"><div class="rna-stat"><div class="rna-stat__icon ${ic}"><i class="bi ${icon}"></i></div><div class="rna-stat__val" style="font-size:22px">${v}</div><div class="rna-stat__label">${l}</div></div></div>`;
 
@@ -654,7 +721,7 @@ function stepAmostras(host) {
   const r = R.rel;
   host.innerHTML = `
     <h3 class="insp-h"><i class="bi bi-collection"></i> Quantidade de peças auditadas</h3>
-    <p class="text-muted-2">Define automaticamente as colunas de medição (1 a 5 peças).</p>
+    <p class="text-muted-2">Define automaticamente as colunas de medição (1 a 10 peças).</p>
     <div class="insp-qtd">${INSP_QUANTIDADES.map(q => `<button class="insp-qtd__b ${r.quantidade === q ? 'is-sel' : ''}" data-q="${q}" ${VIEWONLY ? 'disabled' : ''}>
       <span class="insp-qtd__n">${q}</span><span>peça${q > 1 ? 's' : ''}</span></button>`).join('')}</div>`;
   if (VIEWONLY) return;
