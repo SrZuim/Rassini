@@ -889,6 +889,20 @@ body.kiosk .rna-content { padding: 26px; }
 .insp-attr{ width:82px; font-size:12.5px; padding:4px 6px; border-radius:7px; border:1px solid var(--rna-border); background:var(--rna-surface); }
 .insp-attr.is-ok{ border-color:var(--rna-ok); color:var(--rna-ok); font-weight:700; }
 .insp-attr.is-crit{ border-color:var(--rna-crit); color:var(--rna-crit); font-weight:700; }
+
+/* Verificação (OK/NOK) — dois botões segmentados. NÃO é campo digitável: o
+   auditor apenas marca. Verde quando OK ativo, vermelho quando NOK ativo. */
+.insp-oknok{ display:inline-flex; gap:0; border:1px solid var(--rna-border); border-radius:8px; overflow:hidden; background:var(--rna-surface); }
+.insp-oknok__b{ display:inline-flex; align-items:center; gap:3px; border:0; background:transparent; cursor:pointer;
+  font-size:12px; font-weight:700; padding:5px 9px; color:var(--rna-gray); transition:.12s; -webkit-user-select:none; user-select:none; }
+.insp-oknok__b + .insp-oknok__b{ border-left:1px solid var(--rna-border); }
+.insp-oknok__b:hover:not(:disabled){ background:var(--rna-bg); }
+.insp-oknok__ok.is-on{ background:var(--rna-ok); color:#fff; }
+.insp-oknok__nok.is-on{ background:var(--rna-crit); color:#fff; }
+.insp-oknok__b:disabled{ cursor:not-allowed; opacity:.55; }
+.insp-oknok.is-pend{ border-color:var(--rna-crit); box-shadow:0 0 0 2px rgba(226,59,59,.12); }
+.insp-oknok.is-bloqueada{ opacity:.6; }
+@media print{ .insp-oknok{ border:0; } .insp-oknok__b:not(.is-on){ display:none; } .insp-oknok__b.is-on{ padding:0; font-weight:700; color:#000 !important; } }
 .insp-info-cell{ background:rgba(43,108,176,.06); color:var(--rna-info); font-size:12.5px; text-align:center; }
 .insp-tipo-tag{ display:inline-block; font-size:9.5px; font-weight:700; padding:1px 6px; border-radius:12px;
   background:var(--rna-yellow-soft); color:var(--rna-yellow-600); vertical-align:middle; }

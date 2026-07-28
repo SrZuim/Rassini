@@ -240,7 +240,7 @@ export function medicoesPendentes(caracteristicas, quantidade) {
     let faltam = 0;
     for (let a = 1; a <= qtd; a++) {
       const m = (c.medicoes || []).find(x => x.amostra === a);
-      if (medicaoVazia(m?.valor)) faltam++;
+      if (celulaPendente(c, m?.valor)) faltam++;   // OK/NOK exige valor válido, não só "não-vazio"
     }
     if (faltam) pend.push({ id: c.id, cota: c.cota, caracteristica: c.caracteristica, referencia: !!c.informativo, faltam });
   });
@@ -372,17 +372,70 @@ export function canonTipoEspec(tipo) {
   const t = String(tipo ?? '').trim().toUpperCase();
   return t || 'TOLERANCIA';
 }
+
+/* Normalização forte para COMPARAÇÃO de rótulos de tipo/unidade/equipamento:
+   maiúsculas, sem acento e sem espaços nas pontas. 'verificação' e 'VERIFICACAO'
+   passam a comparar iguais (pedido explícito do cliente). */
+const _cmp = s => String(s ?? '').trim().toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+
+/* Rótulos de tipo que representam Verificação (OK/NOK), em qualquer variação
+   de cadastro/importação. 'ATRIBUTO' é o id interno canônico. */
+const _TIPOS_OKNOK = ['ATRIBUTO', 'VERIFICACAO', 'VERIFICACAO_OK_NOK', 'VERIFICACAO OK NOK', 'OK_NOK', 'OKNOK', 'OK/NOK', 'VISUAL'];
+/* Marcadores em UNIDADE ou EQUIPAMENTO que indicam inspeção visual/funcional
+   sem valor dimensional — o auditor só responde OK/NOK. */
+const _MARCADORES_VISUAIS = ['VISUAL', 'OK/NOK', 'OK NOK', 'OKNOK', 'OK-NOK', 'INSPECAO VISUAL'];
+
+/* Uma característica é de VERIFICAÇÃO (OK/NOK) quando:
+   (a) o tipo salvo é atributo/verificação/visual (tolerante a caixa/acento), OU
+   (b) NÃO é dimensional nem referência (sem nominal/limites) E a unidade ou o
+       equipamento apontam inspeção visual/OK-NOK ("Visual", "OK/NOK").
+   O caso (b) cobre cadastros como "Gravação a quente" (unidade Visual) que nunca
+   foram marcados explicitamente como ATRIBUTO — eles jamais devem cair no campo
+   numérico. A unidade "Visual" nunca é a ÚNICA condição: exige também ausência de
+   limites, para não confundir uma cota dimensional com cadastro incompleto. */
+export function ehVerificacaoOkNok(c) {
+  if (!c) return false;
+  if (c.informativo || _cmp(c.tipo_especificacao) === 'REFERENCIA') return false;   // referência é medida numérica
+  if (_TIPOS_OKNOK.includes(_cmp(c.tipo_especificacao))) return true;
+  const vazio = v => v == null || String(v).trim() === '';   // null, undefined ou '' = sem limite
+  const semLimites = vazio(c.nominal) && vazio(c.minimo) && vazio(c.maximo);
+  if (!semLimites) return false;
+  return _MARCADORES_VISUAIS.includes(_cmp(c.unidade)) || _MARCADORES_VISUAIS.includes(_cmp(c.equipamento));
+}
+
+/* Valor de VERIFICAÇÃO válido = exatamente OK ou NOK (após normalizar caixa).
+   Lixo legado ('85', 'okkkk', espaços) é INVÁLIDO: não conta como preenchido e
+   força o auditor a reescolher (pedido do cliente). */
+export function valorOkNokValido(v) {
+  const s = String(v ?? '').trim().toUpperCase();
+  return s === 'OK' || s === 'NOK';
+}
+
+/* Célula PENDENTE (fonte única do gate, front e back): característica OK/NOK só
+   está preenchida com OK/NOK exatos; as demais, com qualquer valor não-vazio. */
+export function celulaPendente(c, valor) {
+  if (c && c.tipo_especificacao === 'ATRIBUTO') return !valorOkNokValido(valor);
+  return medicaoVazia(valor);
+}
+
 export function normalizarCaracteristica(c) {
   if (!c) return c;
   const tipo = canonTipoEspec(c.tipo_especificacao
     ?? (c.tipo_campo === 'atributo' ? 'ATRIBUTO' : c.tipo_campo === 'informativo' ? 'REFERENCIA' : 'TOLERANCIA'));
-  return {
+  const out = {
     ...c, tipo_especificacao: tipo,
     informativo: !!(c.informativo ?? (c.tipo_campo === 'informativo')),
     // Obrigatoriedade de registro (§validação de preenchimento). Coluna opcional:
     // ausente = não obrigatória, para não travar auditorias/bases já existentes.
     obrigatorio: !!c.obrigatorio
   };
+  /* Verificação/visual sem tipo explícito passa a ser tratada como ATRIBUTO em
+     TODA a aplicação (render OK/NOK, gate, cálculo, relatório/PDF) — calculado
+     na leitura, então vale para relatórios novos E antigos, sem migração. */
+  if (!out.informativo && out.tipo_especificacao !== 'ATRIBUTO' && ehVerificacaoOkNok(out)) {
+    out.tipo_especificacao = 'ATRIBUTO';
+  }
+  return out;
 }
 async function lerCaracteristica(id) {
   return normalizarCaracteristica(await db.get('insp_caracteristicas', id));
@@ -479,9 +532,18 @@ export async function carregarEspecs(relatorioId, pecaId) {
     // Congela o tipo em forma canônica: o snapshot é a fonte de render da
     // inspeção, então uma variação de caixa/espaço vinda da Biblioteca não pode
     // transformar uma Verificação (OK/NOK) em campo numérico.
-    const tipo = canonTipoEspec(m.tipo_especificacao);
-    const informativo = ehInformativo(tipo);
-    const atributo = ehAtributo(tipo);
+    const tipoRaw = canonTipoEspec(m.tipo_especificacao);
+    const informativo = ehInformativo(tipoRaw);
+    /* Verificação/visual (ex.: "Gravação a quente", unidade Visual) é congelada já
+       como ATRIBUTO, mesmo sem ter sido marcada explicitamente — nunca vira campo
+       numérico. Mesma regra da leitura (ehVerificacaoOkNok), aplicada na escrita
+       para o dado nascer consistente. */
+    const equipamentoNome = cat.eqMap[m.equipamento_id] || m.equipamento || '';
+    const atributo = !informativo && ehVerificacaoOkNok({
+      tipo_especificacao: tipoRaw, unidade: m.unidade, equipamento: equipamentoNome,
+      nominal: m.nominal, minimo: m.tol_min, maximo: m.tol_max, informativo
+    });
+    const tipo = atributo ? 'ATRIBUTO' : tipoRaw;
     await inserirCaracteristica({
       relatorio_id: relatorioId, metrica_id: m.id,
       cota: m.cota ?? ordem, quadrante: m.quadrante || p.quadrante || '',

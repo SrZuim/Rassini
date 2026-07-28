@@ -786,12 +786,12 @@ async function stepMedicoes(host) {
   pintarAlertaClasse();
   /* §Erro 05 — observação completa por clique/toque (também em modo leitura). */
   $$('[data-obs]', host).forEach(b => b.addEventListener('click', () => abrirObservacao(b.dataset.obs)));
-  if (VIEWONLY) { $$('.insp-minput', host).forEach(i => i.disabled = true); $$('.insp-attr', host).forEach(s => s.disabled = true); return; }
+  if (VIEWONLY) { $$('.insp-minput', host).forEach(i => i.disabled = true); $$('.insp-oknok__b', host).forEach(b => b.disabled = true); return; }
   $$('.insp-minput', host).forEach(inp => {
     inp.addEventListener('input', () => onMedInput(inp));
     inp.addEventListener('change', () => persistMed(inp));
   });
-  $$('.insp-attr', host).forEach(sel => sel.addEventListener('change', () => onAttrInput(sel)));
+  $$('.insp-oknok__b', host).forEach(btn => btn.addEventListener('click', () => onOkNok(btn)));
   /* §Erro 04 — Enter avança para a próxima medição. UM ÚNICO listener delegado
      no container da etapa: ele morre junto com o HTML quando a etapa é
      repintada, então não há acúmulo de listeners nem vazamento. */
@@ -897,22 +897,32 @@ function pintarAlertaClasse() {
 /** Liga/desliga os campos conforme a posse da coluna. */
 function aplicarBloqueios() {
   if (VIEWONLY) return;
-  $$('.insp-minput, .insp-attr').forEach(el => {
+  const tituloTrava = n => { const a = amostraDe(n); return a?.status === 'concluida'
+    ? `Peça ${n} concluída — use Reabrir para corrigir.`
+    : a?._travaAtiva ? `Peça ${n} em edição por ${a.bloqueado_nome}.`
+    : `Clique em "Assumir" no topo da coluna da Peça ${n} para medir.`; };
+  $$('.insp-minput').forEach(el => {
     const n = +el.dataset.a;
     const livre = euEdito(n);
     el.disabled = !livre;
     el.classList.toggle('is-bloqueada', !livre);
-    if (!livre) {
-      const a = amostraDe(n);
-      el.title = a?.status === 'concluida' ? `Peça ${n} concluída — use Reabrir para corrigir.`
-        : a?._travaAtiva ? `Peça ${n} em edição por ${a.bloqueado_nome}.`
-        : `Clique em "Assumir" no topo da coluna da Peça ${n} para medir.`;
-    } else {
+    if (!livre) el.title = tituloTrava(n);
+    else {
       /* Campo liberado: o tooltip volta a explicar o STATUS da medição
          (aprovado / aprovado com atenção / reprovado), não a trava. */
       const d = LOCAL[el.dataset.car] ? avaliarLocal(el.dataset.car, el.value) : null;
       el.title = d ? `${d.label}${d.motivo ? ' · ' + d.motivo : ''}` : '';
     }
+  });
+  /* Grupos OK/NOK: bloqueio = desabilitar os DOIS botões + marca visual na célula. */
+  $$('.insp-oknok').forEach(grupo => {
+    const n = +grupo.dataset.a;
+    const livre = euEdito(n);
+    grupo.classList.toggle('is-bloqueada', !livre);
+    grupo.querySelectorAll('.insp-oknok__b').forEach(b => { b.disabled = !livre; });
+    if (!livre) grupo.title = tituloTrava(n);
+    else { const d = LOCAL[grupo.dataset.car] ? avaliarLocal(grupo.dataset.car, grupo.dataset.val) : null;
+      grupo.title = d ? `${d.label}${d.motivo ? ' · ' + d.motivo : ''}` : ''; }
   });
 }
 
@@ -1009,7 +1019,7 @@ function medicoesFaltantes(n) {
   R.caracteristicas.forEach(c => {
     if (!INSP.caracteristicaObrigatoriaMedicao(c)) return;
     const v = LOCAL[c.id]?.vals[n];
-    if (INSP.medicaoVazia(v)) f++;
+    if (INSP.celulaPendente(c, v)) f++;
   });
   return f;
 }
@@ -1036,7 +1046,7 @@ function pendentesMedicao() {
   R.caracteristicas.forEach(c => {
     if (!INSP.caracteristicaObrigatoriaMedicao(c)) return;
     let faltam = 0;
-    for (let a = 1; a <= qtd; a++) if (INSP.medicaoVazia(valorAmostra(c, a))) faltam++;
+    for (let a = 1; a <= qtd; a++) if (INSP.celulaPendente(c, valorAmostra(c, a))) faltam++;
     if (faltam) pend.push({ id: c.id, cota: c.cota, caracteristica: c.caracteristica, referencia: !!c.informativo });
   });
   return pend;
@@ -1047,7 +1057,7 @@ function progressoMedicao() {
   const qtd = R.rel.quantidade || 0;
   const obrig = R.caracteristicas.filter(c => INSP.caracteristicaObrigatoriaMedicao(c));
   const feitas = obrig.filter(c => {
-    for (let a = 1; a <= qtd; a++) if (INSP.medicaoVazia(valorAmostra(c, a))) return false;
+    for (let a = 1; a <= qtd; a++) if (INSP.celulaPendente(c, valorAmostra(c, a))) return false;
     return true;
   }).length;
   const total = obrig.length;
@@ -1082,9 +1092,9 @@ function marcarPendentesMedicao() {
     if (!row) return;
     const obrig = INSP.caracteristicaObrigatoriaMedicao(c);
     const faltam = [];
-    if (obrig) for (let a = 1; a <= qtd; a++) if (INSP.medicaoVazia(valorAmostra(c, a))) faltam.push(a);
+    if (obrig) for (let a = 1; a <= qtd; a++) if (INSP.celulaPendente(c, valorAmostra(c, a))) faltam.push(a);
     row.classList.toggle('insp-row-pend', faltam.length > 0);
-    row.querySelectorAll('.insp-minput, .insp-attr').forEach(elm => {
+    row.querySelectorAll('.insp-minput, .insp-oknok').forEach(elm => {
       elm.classList.toggle('is-pend', obrig && faltam.includes(+elm.dataset.a));
     });
     const cota = row.querySelector('.sticky-l');
@@ -1153,9 +1163,14 @@ function linhaMedicao(c, qtd) {
     /* Estado visual derivado da regra (§Erro 01): verde / amarelo / vermelho. */
     const d = INSP.avaliarMedicaoDetalhe(val, c.minimo, c.maximo, INSP.tipoDeAvaliacao(c));
     if (attr) {
-      const sel = String(val ?? '').toUpperCase();
-      return `<td class="insp-samp"><select class="insp-attr ${visCls(d.visual)}" data-car="${c.id}" data-a="${a}" title="${escTitle(d.label)}">
-        <option value="">—</option><option value="OK" ${sel === 'OK' ? 'selected' : ''}>OK</option><option value="NOK" ${sel === 'NOK' ? 'selected' : ''}>NOK</option></select></td>`;
+      /* Verificação (OK/NOK): NENHUM campo digitável. Dois botões [OK] [NOK] —
+         o auditor só MARCA. Valor legado inválido ('85', 'okkkk') não seleciona
+         nada: a característica aparece pendente e exige nova escolha. */
+      const sel = INSP.valorOkNokValido(val) ? String(val).trim().toUpperCase() : '';
+      return `<td class="insp-samp"><div class="insp-oknok ${visCls(d.visual)}" data-car="${c.id}" data-a="${a}" data-val="${sel}" role="group" aria-label="Resultado da Peça ${a}" title="${escTitle(d.label)}">
+        <button type="button" class="insp-oknok__b insp-oknok__ok ${sel === 'OK' ? 'is-on' : ''}" data-oknok="OK" data-car="${c.id}" data-a="${a}" aria-pressed="${sel === 'OK'}" title="Peça ${a} — Conforme (OK)"><i class="bi bi-check-lg"></i> OK</button>
+        <button type="button" class="insp-oknok__b insp-oknok__nok ${sel === 'NOK' ? 'is-on' : ''}" data-oknok="NOK" data-car="${c.id}" data-a="${a}" aria-pressed="${sel === 'NOK'}" title="Peça ${a} — Não conforme (NOK)"><i class="bi bi-x-lg"></i> NOK</button>
+      </div></td>`;
     }
     return `<td class="insp-samp"><input class="insp-minput ${informativo ? 'is-ref' : ''} ${visCls(d.visual)}"
       data-car="${c.id}" data-a="${a}" data-ref="${informativo ? '1' : ''}" value="${escTitle(val ?? '')}"
@@ -1266,13 +1281,40 @@ function onMedInput(inp) {
   limparErroCampo(inp);
   recalcLinha(carId);
 }
-/* Atributo OK/NOK: recalcula local e persiste imediatamente (select change). */
-function onAttrInput(sel) {
-  const carId = sel.dataset.car, a = +sel.dataset.a;
-  LOCAL[carId].vals[a] = sel.value;
-  pintarCampo(sel, avaliarLocal(carId, sel.value));
+/* Verificação OK/NOK: um clique MARCA a opção (nunca digita). Recalcula local e
+   persiste imediatamente. O valor gravado é sempre 'OK' ou 'NOK' exatos — não há
+   caminho para texto livre. */
+function onOkNok(btn) {
+  const grupo = btn.closest('.insp-oknok'); if (!grupo) return;
+  const carId = grupo.dataset.car, a = +grupo.dataset.a;
+  /* §M04 — só marca quem detém a trava da peça (defesa além do `disabled`). */
+  if (!VIEWONLY && !euEdito(a)) {
+    const dono = amostraDe(a);
+    return toast(dono?.status === 'concluida'
+      ? `A Peça ${a} está concluída. Use "Reabrir" para corrigir.`
+      : `A Peça ${a} está com ${dono?.bloqueado_nome || 'outro auditor'}. Assuma a peça para medir.`,
+      { type: 'warn', title: 'Peça bloqueada' });
+  }
+  const val = btn.dataset.oknok;                 // 'OK' | 'NOK'
+  grupo.dataset.val = val;
+  selecionarBotaoOkNok(grupo, val);
+  LOCAL[carId].vals[a] = val;
+  pintarCampo(grupo, avaliarLocal(carId, val));
   recalcLinha(carId);
-  persistMed(sel);
+  /* Persiste como qualquer medição: grava autoria + histórico com 'OK'/'NOK'. */
+  autosave(async () => {
+    await INSP.salvarMedicao(R.rel.id, carId, a, val, USER);
+    await AMOSTRAS.recalcularResultados(R.rel.id, R.rel.quantidade).catch(() => {});
+    await reload();
+  });
+}
+/** Marca visualmente só o botão escolhido (apenas um ativo por vez). */
+function selecionarBotaoOkNok(grupo, val) {
+  grupo.querySelectorAll('.insp-oknok__b').forEach(b => {
+    const on = b.dataset.oknok === val;
+    b.classList.toggle('is-on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
 }
 /** Avaliação local (mesma regra do servidor) a partir do modelo LOCAL. */
 function avaliarLocal(carId, valor) {

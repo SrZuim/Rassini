@@ -406,9 +406,12 @@ async function abrirRelatorio(relId, autoPrint = false) {
           <th>Result.</th><th>Classe</th></tr></thead><tbody>
           ${caracteristicas.map(c => {
             const info = !!c.informativo;
+            const attr = c.tipo_especificacao === 'ATRIBUTO';   // Verificação (OK/NOK) — sem limites dimensionais
             const nomeCel = `${esc(c.caracteristica)}${c.referencia ? `<div class="cell-sub"><i class="bi bi-info-circle"></i> ${esc(c.referencia)}</div>` : ''}`;
             // Referência: sem limites, mas COM os valores medidos (§referência mensurável).
-            const dimCels = info ? `<td colspan="3" class="cell-sub" style="text-align:center">Referência</td>` : `<td>${dash(c.nominal)}</td><td>${dash(c.minimo)}</td><td>${dash(c.maximo)}</td>`;
+            const dimCels = info ? `<td colspan="3" class="cell-sub" style="text-align:center">Referência</td>`
+              : attr ? `<td colspan="3" class="cell-sub" style="text-align:center">OK / NOK</td>`
+              : `<td>${dash(c.nominal)}</td><td>${dash(c.minimo)}</td><td>${dash(c.maximo)}</td>`;
             /* §Erro 05 — a observação técnica também vai para o relatório e o PDF,
                com o texto COMPLETO (quebra de linha, sem corte na consulta). */
             const obsCel = `<td class="cell-sub insp-rep-obs">${c.observacao_tec ? esc(c.observacao_tec) : '—'}</td>`;
