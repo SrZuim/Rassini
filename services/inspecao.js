@@ -1137,16 +1137,12 @@ export async function validarFinalizacao(relatorioId) {
   pendentes.filter(p => p.referencia).forEach(p => {
     faltas.push({ etapa:'Medições', msg:`Informe o valor medido da característica de referência: ${p.caracteristica} (cota ${p.cota ?? '—'}).` });
   });
-  /* Inspeção Após Pintura: toda característica visual precisa de resposta OK/NOK
-     e, havendo características visuais, o Relatório de Pintura é obrigatório. Sem
-     isto não é possível avançar/finalizar (§Inspeção Após Pintura). */
-  const visuais = caracteristicas.filter(c => ehCaracteristicaVisual(c));
+  /* Inspeção Após Pintura: toda característica visual precisa de resposta OK/NOK.
+     O Relatório de Pintura é OPCIONAL (documento complementar) — nunca bloqueia
+     salvar/avançar/finalizar; se anexado, apenas fica registrado. */
   visuaisPendentes(caracteristicas).forEach(v => {
     faltas.push({ etapa: 'Inspeção Após Pintura', msg: `Informe o resultado (OK/NOK) da característica visual: ${v.caracteristica} (cota ${v.cota ?? '—'}).` });
   });
-  if (visuais.length && temColunaPintura() && !relatorioPintura(rel)) {
-    faltas.push({ etapa: 'Inspeção Após Pintura', msg: 'Anexe o Relatório de Pintura (PDF, JPG, JPEG ou PNG).' });
-  }
 
   /* NOVO FLUXO (§Regra 3): a reprovação NÃO bloqueia a finalização. A inspeção
      sempre conclui e gera relatório; havendo reprovação, o tratamento (classe,

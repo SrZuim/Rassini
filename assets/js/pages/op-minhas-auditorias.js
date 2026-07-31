@@ -341,7 +341,7 @@ function maxStepAllowed() {
   // dimensional obrigatória sem preenchimento (visuais saem deste gate).
   if (m >= ET.MEDICOES && pendentesMedicao().length === 0) m = ET.APOS_PINTURA;
   // §Gate visual — só libera a Revisão com toda característica visual respondida
-  // (OK/NOK) e o Relatório de Pintura anexado quando obrigatório.
+  // (OK/NOK). O Relatório de Pintura é opcional e não participa deste gate.
   if (m >= ET.APOS_PINTURA && visualCompleto()) m = ET.REVISAO;
   if (m >= ET.REVISAO) m = ET.RESULTADO;
   return m;
@@ -1675,9 +1675,9 @@ function ajudaClasses() {
 /* ==================================================== ETAPA — INSPEÇÃO APÓS PINTURA
    Características de equipamento "Visual" (separadas de Medições). Cada uma é
    respondida como OK/NOK (resposta única na amostra AMOSTRA_VISUAL). Inclui o
-   anexo do Relatório de Pintura. Reabre preenchida (as respostas vêm do banco).
-   O gate impede avançar à Revisão/Resultado enquanto houver visual sem resposta
-   ou o Relatório de Pintura obrigatório não estiver anexado. */
+   anexo (opcional) do Relatório de Pintura. Reabre preenchida (as respostas vêm
+   do banco). O gate impede avançar à Revisão/Resultado apenas enquanto houver
+   característica visual sem resposta OK/NOK — o Relatório de Pintura não bloqueia. */
 async function stepInspecaoPintura(host) {
   const r = R.rel;
   const visuais = caracteristicasVisuais();
@@ -1754,10 +1754,10 @@ function resultadoVisualHtml(visuais) {
 /** Campo de anexo do Relatório de Pintura (PDF/JPG/JPEG/PNG). */
 function campoRelatorioPintura(pintura, semColuna) {
   return `<div class="insp-card-lite mt-3" id="insp-pintura-box">
-    <b><i class="bi bi-file-earmark-arrow-up"></i> Relatório de Pintura *</b>
-    <div class="cell-sub">Anexe o Relatório de Pintura — PDF, JPG, JPEG ou PNG (máx. ${PINTURA_MAX_MB} MB).</div>
+    <b><i class="bi bi-file-earmark-arrow-up"></i> Relatório de Pintura</b>
+    <div class="cell-sub">Documento complementar (opcional) — PDF, JPG, JPEG ou PNG (máx. ${PINTURA_MAX_MB} MB).</div>
     ${semColuna ? `<div class="insp-blocker mt-2" style="border-left:4px solid var(--rna-yellow-600)"><i class="bi bi-exclamation-triangle"></i>
-      <div>O anexo do Relatório de Pintura ainda não pode ser salvo neste banco. Rode <b>database/inspecao_apos_pintura.sql</b> no Supabase para habilitar (a validação de anexo obrigatório fica suspensa até lá).</div></div>` : ''}
+      <div>O anexo (opcional) do Relatório de Pintura ainda não pode ser salvo neste banco. Rode <b>database/inspecao_apos_pintura.sql</b> no Supabase para habilitar. A inspeção pode ser salva e finalizada normalmente sem ele.</div></div>` : ''}
     <div id="insp-pintura-atual" class="mt-2">${pinturaAtualHtml(pintura)}</div>
     ${VIEWONLY ? '' : `<div class="mt-2">
       <input type="file" id="insp-pintura-file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" hidden>
@@ -1772,16 +1772,14 @@ function pinturaAtualHtml(p) {
     <span>${nome}</span>${VIEWONLY ? '' : `<button class="rna-btn rna-btn-ghost rna-btn-sm" id="insp-pintura-rm" title="Remover"><i class="bi bi-x-lg"></i></button>`}</div>`;
 }
 
-/* ------------------------------------------------------- gate da inspeção visual */
+/* ------------------------------------------------------- gate da inspeção visual
+   Só o preenchimento OK/NOK das características visuais bloqueia o avanço. O
+   Relatório de Pintura é OPCIONAL (documento complementar) — nunca bloqueia. */
 function visualPendentes() { return INSP.visuaisPendentes(caracteristicasVisuais()); }
-function faltaRelatorioPintura() {
-  return caracteristicasVisuais().length > 0 && INSP.temColunaPintura() && !INSP.relatorioPintura(R.rel);
-}
-function visualCompleto() { return visualPendentes().length === 0 && !faltaRelatorioPintura(); }
+function visualCompleto() { return visualPendentes().length === 0; }
 function bloqueioVisual() {
   const p = visualPendentes();
   if (p.length) return `Responda OK/NOK em ${p.length} característica(s) visual(is) para avançar.`;
-  if (faltaRelatorioPintura()) return 'Anexe o Relatório de Pintura para avançar.';
   return '';
 }
 function alertaVisualPendente() {
@@ -1791,10 +1789,7 @@ function alertaVisualPendente() {
     const pend = p.some(x => x.id === g.dataset.vcar);
     g.closest('tr')?.classList.toggle('insp-row-pend', pend && !g.dataset.val);
   });
-  const itens = [
-    ...p.map(x => `<li><span class="rna-badge badge-pend">Cota ${escTitle(x.cota ?? '—')}</span> ${escTitle(x.caracteristica || '')} — sem OK/NOK</li>`),
-    ...(faltaRelatorioPintura() ? ['<li><span class="rna-badge badge-pend">Relatório de Pintura</span> anexo obrigatório não enviado</li>'] : [])
-  ].join('');
+  const itens = p.map(x => `<li><span class="rna-badge badge-pend">Cota ${escTitle(x.cota ?? '—')}</span> ${escTitle(x.caracteristica || '')} — sem OK/NOK</li>`).join('');
   modal({
     title: 'Inspeção Após Pintura pendente',
     content: `<p style="margin:0 0 10px;font-size:14px">Conclua a Inspeção Após Pintura antes de avançar para a Revisão.</p>
