@@ -119,9 +119,62 @@ export const num = MED.paraNumeroSeguro;
 export const RESULTADO_REFERENCIA = 'registrado';
 
 /** true quando a característica é de referência (informativa). Tolera bases sem
-    as colunas novas — `informativo` é reconstruído em normalizarCaracteristica. */
+    as colunas novas — `informativo` é reconstruído em normalizarCaracteristica.
+    Visual NUNCA é referência: reprova em NOK e entra no resultado geral. */
 export function ehCaracteristicaReferencia(car) {
+  if (ehCaracteristicaVisual(car)) return false;
   return !!(car?.informativo || car?.tipo_especificacao === 'REFERENCIA');
+}
+
+/* ============================================ INSPEÇÃO APÓS PINTURA (§Visual)
+   Toda característica cujo EQUIPAMENTO cadastrado na Biblioteca Técnica é
+   "Visual" sai da etapa de Medições e passa a ser respondida — como OK/NOK — na
+   etapa "Inspeção Após Pintura". A separação é SÓ de fluxo/leitura: nada é
+   excluído nem duplicado no banco. O mesmo snapshot em insp_caracteristicas é
+   lido e, na leitura (normalizarCaracteristica), marcado `visual: true` e
+   avaliado como ATRIBUTO (reprova em NOK). A resposta é guardada como UMA
+   medição na amostra AMOSTRA_VISUAL (0) — fora das amostras dimensionais
+   (1..N) —, então nunca colide com a medição colaborativa por peça. */
+
+/** Normaliza texto p/ comparação robusta: apara espaços, minúsculas e remove
+    acentos. Reconhece "VISUAL", "Visual", " visual " e "visual" como iguais. */
+export function normalizarTexto(s) {
+  return String(s ?? '').trim().toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '');
+}
+
+/** true quando a característica é de inspeção visual (equipamento "Visual"). */
+export function ehCaracteristicaVisual(car) {
+  return normalizarTexto(car?.equipamento) === 'visual';
+}
+
+/** Amostra reservada para a resposta única (OK/NOK) da inspeção visual. */
+export const AMOSTRA_VISUAL = 0;
+
+/** Divide as características em dimensionais (Medições) e visuais (Inspeção Após
+    Pintura), sem tocar no banco. Fonte única usada pelo front e pelo relatório. */
+export function separarPorEquipamento(caracteristicas = []) {
+  const medicao = [], visuais = [];
+  for (const c of (caracteristicas || [])) (ehCaracteristicaVisual(c) ? visuais : medicao).push(c);
+  return { medicao, visuais };
+}
+
+/** Características visuais ainda sem resposta OK/NOK — base do gate de avanço e
+    da validação de finalização. Espera características já derivadas (com
+    `resultado` calculado por derivarResultados). */
+export function visuaisPendentes(caracteristicas = []) {
+  return (caracteristicas || [])
+    .filter(c => ehCaracteristicaVisual(c) && c.resultado === 'pendente')
+    .map(c => ({ id: c.id, cota: c.cota, caracteristica: c.caracteristica }));
+}
+
+/** Resultado consolidado da inspeção visual: nenhuma visual → 'na'; qualquer NOK
+    → 'reprovado'; alguma sem resposta → 'pendente'; todas OK → 'aprovado'. */
+export function resultadoVisual(caracteristicas = []) {
+  const vis = (caracteristicas || []).filter(c => ehCaracteristicaVisual(c));
+  if (!vis.length) return 'na';
+  if (vis.some(c => c.resultado === 'reprovado')) return 'reprovado';
+  if (vis.some(c => c.resultado === 'pendente')) return 'pendente';
+  return 'aprovado';
 }
 
 /* O motor de avaliação mora em services/medicao.js (fonte única, §Erro 01/07):
@@ -237,6 +290,7 @@ export function medicoesPendentes(caracteristicas, quantidade) {
   const qtd = quantidade || 0;
   const pend = [];
   (caracteristicas || []).forEach(c => {
+    if (ehCaracteristicaVisual(c)) return;         // visual tem etapa e validação próprias (Inspeção Após Pintura)
     if (!caracteristicaObrigatoriaMedicao(c)) return;
     let faltam = 0;
     for (let a = 1; a <= qtd; a++) {
@@ -423,9 +477,15 @@ export function normalizarCaracteristica(c) {
   if (!c) return c;
   const tipo = canonTipoEspec(c.tipo_especificacao
     ?? (c.tipo_campo === 'atributo' ? 'ATRIBUTO' : c.tipo_campo === 'informativo' ? 'REFERENCIA' : 'TOLERANCIA'));
+  /* Característica de equipamento "Visual" pertence à etapa Inspeção Após Pintura:
+     nunca é informativa (reprova em NOK e entra no resultado geral). O snapshot
+     no banco permanece intacto — `visual` é uma marca de LEITURA, sem exclusão
+     nem cópia. */
+  const visual = ehCaracteristicaVisual(c);
   const out = {
     ...c, tipo_especificacao: tipo,
-    informativo: !!(c.informativo ?? (c.tipo_campo === 'informativo')),
+    informativo: visual ? false : !!(c.informativo ?? (c.tipo_campo === 'informativo')),
+    visual,
     // Obrigatoriedade de registro (§validação de preenchimento). Coluna opcional:
     // ausente = não obrigatória, para não travar auditorias/bases já existentes.
     obrigatorio: !!c.obrigatorio
@@ -433,7 +493,7 @@ export function normalizarCaracteristica(c) {
   /* Verificação/visual sem tipo explícito passa a ser tratada como ATRIBUTO em
      TODA a aplicação (render OK/NOK, gate, cálculo, relatório/PDF) — calculado
      na leitura, então vale para relatórios novos E antigos, sem migração. */
-  if (!out.informativo && out.tipo_especificacao !== 'ATRIBUTO' && ehVerificacaoOkNok(out)) {
+  if (!out.informativo && out.tipo_especificacao !== 'ATRIBUTO' && (visual || ehVerificacaoOkNok(out))) {
     out.tipo_especificacao = 'ATRIBUTO';
   }
   return out;
@@ -769,6 +829,50 @@ export async function salvarObservacao(caracteristicaId, observacao) {
   return db.update('insp_caracteristicas', caracteristicaId, { observacao: observacao ?? '' });
 }
 
+/* ==================================== INSPEÇÃO APÓS PINTURA — RESPOSTA VISUAL
+   A resposta OK/NOK é UMA medição na amostra AMOSTRA_VISUAL (0). Reusa
+   salvarMedicao (recalcula a característica, o resultado geral e emite eventos),
+   então a reprovação visual participa do resultado do relatório e da pendência
+   automática sem nenhum caminho paralelo. Salva ao sair e reabre preenchida. */
+export async function salvarResultadoVisual(relatorioId, caracteristicaId, valor, user = null) {
+  const car = await lerCaracteristica(caracteristicaId);
+  if (!car || !ehCaracteristicaVisual(car)) return null;
+  const v = String(valor ?? '').trim().toUpperCase();     // '', 'OK' ou 'NOK'
+  return salvarMedicao(relatorioId, caracteristicaId, AMOSTRA_VISUAL, v, user);
+}
+
+/* ================================ RELATÓRIO DE PINTURA (anexo único do relatório)
+   Guardado no próprio relatório (coluna jsonb `relatorio_pintura`), tolerando
+   bases que ainda não rodaram a migration: se a coluna não existir, avisa uma
+   vez e devolve null (sem derrubar o fluxo) — a validação de anexo obrigatório
+   fica suspensa até rodar database/inspecao_apos_pintura.sql. */
+let _semColunaPintura = false;
+export function temColunaPintura() { return !_semColunaPintura; }
+export function relatorioPintura(rel) { return rel?.relatorio_pintura || null; }
+
+export async function salvarRelatorioPintura(relatorioId, anexo, user = null) {
+  const doc = anexo ? {
+    nome: anexo.nome || 'relatorio-pintura', tipo: anexo.tipo || '', url: anexo.url || '',
+    tamanho: anexo.tamanho || '', uploaded_by: user?.id || null, uploaded_nome: user?.nome || '',
+    created_at: nowISO()
+  } : null;
+  if (_semColunaPintura) return null;
+  try {
+    const r = await patchRelatorio(relatorioId, { relatorio_pintura: doc });
+    try {
+      await registrarHistorico(relatorioId, user, doc ? 'Anexou relatório de pintura' : 'Removeu relatório de pintura',
+        'relatorio_pintura', '—', doc?.nome || '—');
+    } catch (e) { console.warn('[INSP] Histórico do relatório de pintura não gravado:', e?.message || e); }
+    return r;
+  } catch (e) {
+    if (!ehErroDeSchema(e)) throw e;
+    _semColunaPintura = true;
+    console.warn('[INSP] insp_relatorios não tem relatorio_pintura — anexo de pintura não persistido. ' +
+      'Rode database/inspecao_apos_pintura.sql no Supabase. Detalhe:', e?.message || e);
+    return null;
+  }
+}
+
 /* ============================================ QUANTIDADE DE AMOSTRAS (§6)
    Ao reduzir a quantidade, retorna as medições que SERÃO removidas para o
    chamador confirmar (nunca apaga silenciosamente). */
@@ -965,7 +1069,9 @@ export function fmtDuracao(seg) {
 /* ================================================================ RESUMO (§22) */
 export async function resumoRelatorio(relatorioId) {
   const { rel, caracteristicas: todas } = await carregarRelatorio(relatorioId);
-  const caracteristicas = todas.filter(c => !c.informativo);   // informativas fora dos indicadores
+  // Dimensionais = tudo que não é informativo NEM visual. As visuais têm o seu
+  // próprio bloco (Inspeção Após Pintura), mas continuam no resultado geral.
+  const caracteristicas = todas.filter(c => !c.informativo && !c.visual);
   const totalCar = caracteristicas.length;
   const carAprov = caracteristicas.filter(c => c.resultado === 'aprovado').length;
   const carReprov = caracteristicas.filter(c => c.resultado === 'reprovado').length;
@@ -982,6 +1088,13 @@ export async function resumoRelatorio(relatorioId) {
      em conformidade, aprovadas/reprovadas nem no resultado geral. */
   const refs = todas.filter(c => c.informativo);
   const medsRef = refs.flatMap(c => c.medicoes).filter(m => String(m.valor ?? '') !== '');
+  /* Inspeção Após Pintura (características de equipamento "Visual"): bloco próprio,
+     respondido em OK/NOK. Contado à parte, mas o resultado reprovado JÁ participa
+     do resultado geral (recalcularRelatorio inclui visuais, informativo=false). */
+  const visuais = todas.filter(c => c.visual);
+  const visualAprov = visuais.filter(c => c.resultado === 'aprovado').length;
+  const visualReprov = visuais.filter(c => c.resultado === 'reprovado').length;
+  const visualPend = visuais.filter(c => c.resultado === 'pendente').length;
   return {
     totalCaracteristicas: totalCar, caracteristicasAprovadas: carAprov, caracteristicasReprovadas: carReprov,
     totalMedicoes: meds.length, medicoesAprovadas: medAprov, medicoesReprovadas: medReprov,
@@ -989,6 +1102,10 @@ export async function resumoRelatorio(relatorioId) {
     amostras: rel.quantidade || 0, conformidade,
     classeA: classe('A'), classeB: classe('B'), classeC: classe('C'),
     classeNaoAplica: classeNA, classeNaoCadastrada: semClasse,
+    inspecaoVisual: {
+      total: visuais.length, aprovadas: visualAprov, reprovadas: visualReprov, pendentes: visualPend,
+      resultado: resultadoVisual(todas), relatorioPintura: relatorioPintura(rel)
+    },
     resultado: rel.resultado, duracaoSeg: rel.duracao_seg
   };
 }
@@ -1020,6 +1137,17 @@ export async function validarFinalizacao(relatorioId) {
   pendentes.filter(p => p.referencia).forEach(p => {
     faltas.push({ etapa:'Medições', msg:`Informe o valor medido da característica de referência: ${p.caracteristica} (cota ${p.cota ?? '—'}).` });
   });
+  /* Inspeção Após Pintura: toda característica visual precisa de resposta OK/NOK
+     e, havendo características visuais, o Relatório de Pintura é obrigatório. Sem
+     isto não é possível avançar/finalizar (§Inspeção Após Pintura). */
+  const visuais = caracteristicas.filter(c => ehCaracteristicaVisual(c));
+  visuaisPendentes(caracteristicas).forEach(v => {
+    faltas.push({ etapa: 'Inspeção Após Pintura', msg: `Informe o resultado (OK/NOK) da característica visual: ${v.caracteristica} (cota ${v.cota ?? '—'}).` });
+  });
+  if (visuais.length && temColunaPintura() && !relatorioPintura(rel)) {
+    faltas.push({ etapa: 'Inspeção Após Pintura', msg: 'Anexe o Relatório de Pintura (PDF, JPG, JPEG ou PNG).' });
+  }
+
   /* NOVO FLUXO (§Regra 3): a reprovação NÃO bloqueia a finalização. A inspeção
      sempre conclui e gera relatório; havendo reprovação, o tratamento (classe,
      observação, ações) é opcional e a pendência é criada automaticamente ao
@@ -1028,9 +1156,13 @@ export async function validarFinalizacao(relatorioId) {
   /* §M04 — trabalho colaborativo: só finaliza com TODAS as amostras concluídas
      e NENHUMA em edição. Finalizar com um colega ainda medindo descartaria o
      trabalho dele e congelaria um relatório pela metade. Tolerante: se a tabela
-     de amostras ainda não existe (migration pendente), a validação antiga vale. */
+     de amostras ainda não existe (migration pendente), a validação antiga vale.
+     Só se aplica quando há trabalho DIMENSIONAL por amostra: uma peça só com
+     características visuais (respondidas uma vez, na Inspeção Após Pintura) não
+     tem amostras a concluir. */
+  const temDimensional = caracteristicas.some(c => !ehCaracteristicaVisual(c));
   try {
-    const amostras = await AMOSTRAS.estadoAmostras(relatorioId, qtd);
+    const amostras = temDimensional ? await AMOSTRAS.estadoAmostras(relatorioId, qtd) : [];
     const emEdicao = amostras.filter(a => a._travaAtiva);
     if (emEdicao.length) {
       faltas.push({ etapa: 'Medições', msg: `${emEdicao.length} peça(s) em edição por outro auditor: ${
@@ -1114,12 +1246,17 @@ export async function criarPendenciaDoRelatorio(rel, user) {
   const dataBR = formatarDataBrasil(ref);
   const horaBR = formatarHoraBrasil(ref);
   const val = v => fmtMedida(v);          // §M07 — padrão 00,00 (fonte única)
-  const detalhes = reprovadas.map(c => ({
+  const detalhes = reprovadas.map(c => c.visual ? {
+    // Reprovação visual (Inspeção Após Pintura): sem limites dimensionais.
+    caracteristica: c.caracteristica, cota: c.cota ?? '—', classe: c.classe_defeito || null,
+    limite: 'Inspeção visual (OK/NOK)', amostras: 'Resultado: NOK', origem: 'inspecao_apos_pintura',
+    observacao: c.observacao || ''
+  } : {
     caracteristica: c.caracteristica, cota: c.cota ?? '—', classe: c.classe_defeito || null,
     limite: `${val(c.minimo)} a ${val(c.maximo)} ${c.unidade || ''}`.trim(),
     amostras: c.medicoes.filter(m => m.resultado === 'reprovado').map(m => `#${m.amostra}=${val(m.valor)}`).join(', '),
     observacao: c.observacao || ''
-  }));
+  });
   const descricao = `Reprovação dimensional no relatório ${rel.numero}: ${reprovadas.length} característica(s) reprovada(s) — ` +
     `${detalhes.map(d => d.caracteristica).join(', ')}. Cliente ${rel.cliente || '—'} · PN ${rel.peca_codigo || '—'} · ` +
     `Lote ${rel.lote || '—'} · OP ${rel.op || '—'}.`;

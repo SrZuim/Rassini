@@ -404,7 +404,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
           <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Un.</th><th>Nom.</th><th>Mín</th><th>Máx</th><th>Equip.</th><th>Obs.</th>
           ${Array.from({ length: rel.quantidade || 0 }, (_, i) => `<th>P${i + 1}</th>`).join('')}
           <th>Result.</th><th>Classe</th></tr></thead><tbody>
-          ${caracteristicas.map(c => {
+          ${caracteristicas.filter(c => !c.visual).map(c => {
             const info = !!c.informativo;
             const attr = c.tipo_especificacao === 'ATRIBUTO';   // Verificação (OK/NOK) — sem limites dimensionais
             const nomeCel = `${esc(c.caracteristica)}${c.referencia ? `<div class="cell-sub"><i class="bi bi-info-circle"></i> ${esc(c.referencia)}</div>` : ''}`;
@@ -440,8 +440,10 @@ async function abrirRelatorio(relId, autoPrint = false) {
           <span class="rep-tag rep-warn">▲ Aprovado com atenção</span> no limite ou próximo dele ·
           <span class="rep-tag rep-crit">✗ Reprovado</span> fora do limite. Limites inclusivos.</div></div>
 
-      ${caracteristicas.some(c => c.resultado === 'reprovado') ? `<div class="insp-rep-section"><div class="insp-rep-sec-t">Reprovações e tratamento</div>
-        ${caracteristicas.filter(c => c.resultado === 'reprovado').map(c => { const a = acaoBy[c.id] || {}; return `<div class="insp-rep-reprov">
+      ${inspecaoAposPinturaHtml(caracteristicas, resumo)}
+
+      ${caracteristicas.some(c => c.resultado === 'reprovado' && !c.visual) ? `<div class="insp-rep-section"><div class="insp-rep-sec-t">Reprovações e tratamento</div>
+        ${caracteristicas.filter(c => c.resultado === 'reprovado' && !c.visual).map(c => { const a = acaoBy[c.id] || {}; return `<div class="insp-rep-reprov">
           <b>${esc(c.caracteristica)}</b> (cota ${esc(c.cota)}) — ${classeCel(c)}
           <div class="insp-rep-grid mt-1">
             ${cell('Limite', `${dash(c.minimo)} a ${dash(c.maximo)} ${c.unidade || ''}`)} ${cell('Amostras reprovadas', c.medicoes.filter(m => m.resultado === 'reprovado').map(m => `#${m.amostra}=${dash(m.valor)}`).join(', '))}
@@ -507,4 +509,31 @@ function resultadoTag(resultado, visual) {
 function tiposVinculoTexto(rel) {
   const arr = Array.isArray(rel.peca_tipos_inspecao) ? rel.peca_tipos_inspecao : [];
   return arr.length ? arr.map(s => nomeDoSlug(s)).join(' · ') : '—';
+}
+
+/* Seção "Inspeção Após Pintura" do relatório/PDF: características visuais (cota,
+   característica, quadrante, referência, especificação visual), resultados
+   OK/NOK, observações, nome do Relatório de Pintura anexado e resultado final da
+   inspeção visual. Não aparece quando a peça não tem características visuais
+   (relatórios antigos continuam idênticos). */
+function inspecaoAposPinturaHtml(caracteristicas, resumo) {
+  const visuais = (caracteristicas || []).filter(c => c.visual);
+  if (!visuais.length) return '';
+  const v = resumo?.inspecaoVisual || {};
+  const res = v.resultado || INSP.resultadoVisual(visuais);
+  const resLabel = res === 'aprovado' ? 'APROVADO' : res === 'reprovado' ? 'REPROVADO' : res === 'pendente' ? 'EM PREENCHIMENTO' : '—';
+  const pint = v.relatorioPintura || null;   // vem de resumo.inspecaoVisual (resumoRelatorio)
+  return `<div class="insp-rep-section"><div class="insp-rep-sec-t">Inspeção Após Pintura</div>
+    <div class="insp-table-wrap"><table class="insp-mtable insp-rep-table"><thead><tr>
+      <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Ref.</th><th>Especificação visual</th><th>Resultado</th><th>Obs.</th>
+    </tr></thead><tbody>
+      ${visuais.map(c => `<tr>
+        <td>${esc(c.cota ?? '—')}</td><td>${esc(c.caracteristica || '—')}</td><td>${esc(c.quadrante || '—')}</td>
+        <td class="cell-sub">${esc(c.referencia || '—')}</td><td class="cell-sub">${esc(c.observacao_tec || '—')}</td>
+        <td>${resultadoTag(c.resultado, c._visual)}</td><td class="cell-sub">${esc(c.observacao || '—')}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="insp-rep-grid mt-2">
+      ${cell('Relatório de Pintura anexado', pint ? esc(pint.nome) : '—')}
+      ${cell('Resultado da inspeção visual', resLabel)}
+    </div></div>`;
 }

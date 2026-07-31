@@ -23,10 +23,25 @@ import { BIB_IMG_PLACEHOLDER } from '../../../services/biblioteca-data.js';
 import { INSP_QUANTIDADES, INSP_STATUS, INSP_MOTIVOS_PAUSA } from '../../../services/inspecao-data.js';
 import { usuarioPodeMedirCaracteristica, motivoBloqueioMedicao, obterCargoResponsavel,
          rotuloCargoResponsavel, rotuloCargo, normalizarQuemMede } from '../../../services/quem-mede.js';
+import { SUPABASE } from '../../../services/config.js';
+import { getSupabase } from '../../../services/supabaseClient.js';
 import { $, $$, el, toast, modal, confirmDialog, initials } from '../ui.js';
 import { initEvidenceUpload } from '../evidence.js';
 
-const ETAPAS = ['Tipo e peça', 'Identificação', 'Amostras', 'Medições', 'Revisão', 'Resultado'];
+/* Fluxo por etapas. "Inspeção Após Pintura" (características de equipamento
+   "Visual", respondidas OK/NOK) entra ENTRE Medições e Revisão. Ao inserir aqui,
+   todos os índices de STEP abaixo passam a valer por NOME via ETAPAS.indexOf. */
+const ETAPAS = ['Tipo e peça', 'Identificação', 'Amostras', 'Medições', 'Inspeção Após Pintura', 'Revisão', 'Resultado'];
+/* Índices nomeados — fonte única para o dispatch e os gates (evita números soltos). */
+const ET = {
+  TIPO_PECA: ETAPAS.indexOf('Tipo e peça'),
+  IDENTIFICACAO: ETAPAS.indexOf('Identificação'),
+  AMOSTRAS: ETAPAS.indexOf('Amostras'),
+  MEDICOES: ETAPAS.indexOf('Medições'),
+  APOS_PINTURA: ETAPAS.indexOf('Inspeção Após Pintura'),
+  REVISAO: ETAPAS.indexOf('Revisão'),
+  RESULTADO: ETAPAS.indexOf('Resultado')
+};
 
 // Estado do módulo declarado ANTES do route() de topo — evita TDZ quando a página
 // abre já com ?rel= (route → openWizard roda durante a init, antes das seções abaixo).
@@ -255,7 +270,7 @@ async function openWizard(relId, viewonly = false) {
   // ou localStorage. Relê os dados ATUAIS da peça na Biblioteca Técnica.
   PECA_ATUAL = await carregarPecaVinculada(R.rel.peca_id);
   dbg('Auditoria aberta:', { id: R.rel.id, numero: R.rel.numero, peca_id: R.rel.peca_id, caracteristicas: R.caracteristicas.length });
-  STEP = VIEWONLY ? 4 : (R.rel.etapa || 0);
+  STEP = VIEWONLY ? ET.REVISAO : (R.rel.etapa || 0);
   paintWizard();
 }
 
@@ -319,14 +334,16 @@ function maxStepAllowed() {
   const r = R.rel;
   if (VIEWONLY) return ETAPAS.length - 1;
   let m = 0;
-  if (r.tipo_id && pecaVinculada()) m = 1;
-  if (m >= 1 && r.lote && opValida(r.op)) m = 2;
-  if (m >= 2 && r.quantidade) m = 3;
-  // §Gate — só libera a Revisão (etapa 4) quando NÃO houver característica
-  // obrigatória sem preenchimento. Antes bastava "alguma medição existir", o que
-  // deixava avançar com cotas em branco (ex.: Cota 17/23 sem medição).
-  if (m >= 3 && pendentesMedicao().length === 0) m = 4;
-  if (m >= 4) m = 5;
+  if (r.tipo_id && pecaVinculada()) m = ET.IDENTIFICACAO;
+  if (m >= ET.IDENTIFICACAO && r.lote && opValida(r.op)) m = ET.AMOSTRAS;
+  if (m >= ET.AMOSTRAS && r.quantidade) m = ET.MEDICOES;
+  // §Gate — só libera a Inspeção Após Pintura quando NÃO houver característica
+  // dimensional obrigatória sem preenchimento (visuais saem deste gate).
+  if (m >= ET.MEDICOES && pendentesMedicao().length === 0) m = ET.APOS_PINTURA;
+  // §Gate visual — só libera a Revisão com toda característica visual respondida
+  // (OK/NOK) e o Relatório de Pintura anexado quando obrigatório.
+  if (m >= ET.APOS_PINTURA && visualCompleto()) m = ET.REVISAO;
+  if (m >= ET.REVISAO) m = ET.RESULTADO;
   return m;
 }
 
@@ -382,12 +399,15 @@ function atualizarNav() {
   const next = $('#nav-next');
   if (!next || VIEWONLY) return;
   let bloqueio = '';
-  if (STEP === 0 && !(pecaVinculada() && !SELECIONANDO)) {
+  if (STEP === ET.TIPO_PECA && !(pecaVinculada() && !SELECIONANDO)) {
     bloqueio = 'Selecione uma peça da Biblioteca Técnica para avançar.';
-  } else if (STEP === 3) {
-    // §Gate — Próximo só habilita com 100% das obrigatórias preenchidas.
+  } else if (STEP === ET.MEDICOES) {
+    // §Gate — Próximo só habilita com 100% das dimensionais obrigatórias preenchidas.
     const n = pendentesMedicao().length;
-    if (n) bloqueio = `Faltam ${n} característica(s) obrigatória(s) sem medição. Preencha todas para avançar à Revisão.`;
+    if (n) bloqueio = `Faltam ${n} característica(s) obrigatória(s) sem medição. Preencha todas para avançar à Inspeção Após Pintura.`;
+  } else if (STEP === ET.APOS_PINTURA) {
+    // §Gate visual — todas OK/NOK respondidas + Relatório de Pintura anexado.
+    bloqueio = bloqueioVisual();
   }
   next.disabled = !!bloqueio;
   next.title = bloqueio;
@@ -395,18 +415,24 @@ function atualizarNav() {
 
 async function onNext() {
   const r = R.rel;
-  if (STEP === 0 && !r.tipo_id) return toast('Tipo de inspeção ausente. Reabra a inspeção.', { type: 'warn' });
-  if (STEP === 0 && !pecaVinculada())
+  if (STEP === ET.TIPO_PECA && !r.tipo_id) return toast('Tipo de inspeção ausente. Reabra a inspeção.', { type: 'warn' });
+  if (STEP === ET.TIPO_PECA && !pecaVinculada())
     return toast('Selecione uma peça da Biblioteca Técnica. O vínculo precisa estar salvo antes de avançar.', { type: 'warn', title: 'Peça obrigatória' });
-  if (STEP === 1 && (!String(r.lote).trim() || !String(r.op).trim())) return toast('Informe o lote e a OP.', { type: 'warn' });
+  if (STEP === ET.IDENTIFICACAO && (!String(r.lote).trim() || !String(r.op).trim())) return toast('Informe o lote e a OP.', { type: 'warn' });
   // §Erro 03 — campo obrigatório inválido não deixa avançar
-  if (STEP === 1 && !opValida(r.op)) { $('#id-op')?.focus(); return toast(MSG_OP_INVALIDA, { type: 'warn', title: 'OP inválida' }); }
-  if (STEP === 2 && !r.quantidade) return toast('Selecione a quantidade de peças.', { type: 'warn' });
-  /* §Gate — Medições → Revisão só com TODAS as obrigatórias preenchidas. Lista as
-     cotas faltantes e destaca as linhas; não avança enquanto houver pendência. */
-  if (STEP === 3) {
+  if (STEP === ET.IDENTIFICACAO && !opValida(r.op)) { $('#id-op')?.focus(); return toast(MSG_OP_INVALIDA, { type: 'warn', title: 'OP inválida' }); }
+  if (STEP === ET.AMOSTRAS && !r.quantidade) return toast('Selecione a quantidade de peças.', { type: 'warn' });
+  /* §Gate — Medições → Inspeção Após Pintura só com TODAS as dimensionais
+     obrigatórias preenchidas. Lista as cotas faltantes e destaca as linhas. */
+  if (STEP === ET.MEDICOES) {
     const pend = pendentesMedicao();
     if (pend.length) { alertaPendenciasMedicao(pend); return; }
+  }
+  /* §Gate visual — não avança à Revisão com característica visual sem OK/NOK ou
+     sem o Relatório de Pintura anexado (não é possível pular para Resultado). */
+  if (STEP === ET.APOS_PINTURA) {
+    const b = bloqueioVisual();
+    if (b) { alertaVisualPendente(); return; }
   }
   if (STEP < ETAPAS.length - 1) { STEP++; await INSP.patchRelatorio(r.id, { etapa: STEP }); renderStep(); }
 }
@@ -421,7 +447,11 @@ function renderStep() {
   if (next) next.style.display = STEP >= ETAPAS.length - 1 ? 'none' : '';
   /* stepMedicoes é async (carrega o estado colaborativo das amostras); os demais
      são síncronos. `Promise.resolve` uniformiza sem quebrar os existentes. */
-  Promise.resolve(({ 0: stepTipoPeca, 1: stepIdentificacao, 2: stepAmostras, 3: stepMedicoes, 4: stepRevisao, 5: stepResultado }[STEP])(host))
+  const passos = {
+    [ET.TIPO_PECA]: stepTipoPeca, [ET.IDENTIFICACAO]: stepIdentificacao, [ET.AMOSTRAS]: stepAmostras,
+    [ET.MEDICOES]: stepMedicoes, [ET.APOS_PINTURA]: stepInspecaoPintura, [ET.REVISAO]: stepRevisao, [ET.RESULTADO]: stepResultado
+  };
+  Promise.resolve(passos[STEP](host))
     .catch(e => { INSP.logErro('Falha ao renderizar a etapa', e); toast(INSP.mensagemErro(e), { type: 'crit' }); });
   atualizarNav();
 }
@@ -751,13 +781,27 @@ async function aplicarQtd(q) {
 
 /* ============================================================ ETAPA 3 (§8-17)
    LOCAL: modelo p/ cálculo em tempo real { [carId]: { min,max,vals:{amostra:valor} } } */
+/* ================================================= SEPARAÇÃO POR EQUIPAMENTO ==
+   Características de equipamento "Visual" NÃO aparecem em Medições — elas vivem
+   exclusivamente na etapa Inspeção Após Pintura. A separação é só de fluxo (o
+   banco não muda): fonte única no serviço (INSP.ehCaracteristicaVisual). */
+function caracteristicasMedicao() { return R.caracteristicas.filter(c => !INSP.ehCaracteristicaVisual(c)); }
+function caracteristicasVisuais() { return R.caracteristicas.filter(c => INSP.ehCaracteristicaVisual(c)); }
+
 async function stepMedicoes(host) {
   const r = R.rel;
-  if (!r.quantidade) { host.innerHTML = `<div class="insp-blocker"><i class="bi bi-info-circle"></i> Selecione a quantidade de peças na etapa <b>Amostras</b> antes de medir.</div>`; return; }
-  if (!R.caracteristicas.length) { host.innerHTML = `<div class="insp-blocker"><i class="bi bi-info-circle"></i> Esta peça não possui características cadastradas.</div>`; return; }
+  if (!r.quantidade) { host.innerHTML = `<div class="insp-blocker"><i class="bi bi-info-circle"></i> Selecione a quantidade de peças na etapa <b>Amostras</b> antes de medir.</div>`; atualizarNav(); return; }
+  const medCars = caracteristicasMedicao();
+  if (!medCars.length) {
+    // Peça só com características visuais (ou sem cadastro dimensional): nada a medir.
+    host.innerHTML = `<div class="insp-blocker"><i class="bi bi-info-circle"></i> Esta peça não possui características dimensionais para medir. ${
+      caracteristicasVisuais().length ? 'Avance para a etapa <b>Inspeção Após Pintura</b>.' : 'Verifique o cadastro na Biblioteca Técnica.'}</div>`;
+    atualizarNav();
+    return;
+  }
   const qtd = r.quantidade;
   LOCAL = {};
-  R.caracteristicas.forEach(c => { LOCAL[c.id] = { min: c.minimo, max: c.maximo, tipo: c.tipo_especificacao, informativo: !!c.informativo, vals: {} }; c.medicoes.forEach(m => LOCAL[c.id].vals[m.amostra] = m.valor); });
+  medCars.forEach(c => { LOCAL[c.id] = { min: c.minimo, max: c.maximo, tipo: c.tipo_especificacao, informativo: !!c.informativo, vals: {} }; c.medicoes.forEach(m => LOCAL[c.id].vals[m.amostra] = m.valor); });
 
   /* §M04 — estado colaborativo das amostras. Travas abandonadas são liberadas
      ao abrir a tela (higiene), então uma queda de rede não deixa peça presa. */
@@ -781,7 +825,7 @@ async function stepMedicoes(host) {
       ${Array.from({ length: qtd }, (_, i) => cabecalhoAmostra(i + 1)).join('')}
       <th>Classe</th><th>Status</th>
     </tr></thead><tbody>
-      ${R.caracteristicas.map(c => linhaMedicao(c, qtd)).join('')}
+      ${medCars.map(c => linhaMedicao(c, qtd)).join('')}
     </tbody></table></div>`;
 
   $('#btn-ajuda-classe').addEventListener('click', ajudaClasses);
@@ -890,7 +934,7 @@ async function pintarColaboradores() {
    O sistema jamais "chuta" A, B ou C. */
 function pintarAlertaClasse() {
   const box = $('#insp-classe-alerta'); if (!box) return;
-  const faltando = INSP.caracteristicasSemClasse(R.caracteristicas);
+  const faltando = INSP.caracteristicasSemClasse(caracteristicasMedicao());
   if (!faltando.length) { box.innerHTML = ''; box.className = ''; return; }
   box.className = 'insp-blocker mb-2';
   box.style.borderLeft = '4px solid var(--rna-yellow-600)';
@@ -1035,7 +1079,7 @@ async function concluirAmostraUI(n) {
 
 function medicoesFaltantes(n) {
   let f = 0;
-  R.caracteristicas.forEach(c => {
+  caracteristicasMedicao().forEach(c => {
     if (!INSP.caracteristicaObrigatoriaMedicao(c)) return;
     const v = LOCAL[c.id]?.vals[n];
     if (INSP.celulaPendente(c, v)) f++;
@@ -1053,16 +1097,17 @@ function medicoesFaltantes(n) {
     (LOCAL); fora dela usa o persistido (R.caracteristicas). */
 function valorAmostra(c, a) {
   const L = LOCAL?.[c.id];
-  if (STEP === 3 && L && Object.prototype.hasOwnProperty.call(L.vals, a)) return L.vals[a];
+  if (STEP === ET.MEDICOES && L && Object.prototype.hasOwnProperty.call(L.vals, a)) return L.vals[a];
   const m = (c.medicoes || []).find(x => x.amostra === a);
   return m ? m.valor : undefined;
 }
 
-/** Características obrigatórias ainda sem preenchimento completo. */
+/** Características DIMENSIONAIS obrigatórias ainda sem preenchimento completo.
+    Visuais são excluídas: têm o seu gate próprio (Inspeção Após Pintura). */
 function pendentesMedicao() {
   const qtd = R.rel.quantidade || 0;
   const pend = [];
-  R.caracteristicas.forEach(c => {
+  caracteristicasMedicao().forEach(c => {
     if (!INSP.caracteristicaObrigatoriaMedicao(c)) return;
     let faltam = 0;
     for (let a = 1; a <= qtd; a++) if (INSP.celulaPendente(c, valorAmostra(c, a))) faltam++;
@@ -1074,7 +1119,7 @@ function pendentesMedicao() {
 /** Progresso das medições obrigatórias (característica 100% medida = concluída). */
 function progressoMedicao() {
   const qtd = R.rel.quantidade || 0;
-  const obrig = R.caracteristicas.filter(c => INSP.caracteristicaObrigatoriaMedicao(c));
+  const obrig = caracteristicasMedicao().filter(c => INSP.caracteristicaObrigatoriaMedicao(c));
   const feitas = obrig.filter(c => {
     for (let a = 1; a <= qtd; a++) if (INSP.celulaPendente(c, valorAmostra(c, a))) return false;
     return true;
@@ -1103,7 +1148,7 @@ function progressoMedicaoHtml() {
 function progressoPorSetor() {
   const qtd = R.rel.quantidade || 0;
   const grupos = new Map();
-  R.caracteristicas.forEach(c => {
+  caracteristicasMedicao().forEach(c => {
     if (!INSP.caracteristicaObrigatoriaMedicao(c)) return;
     const setor = normalizarQuemMede(c.quem_mede) || (c.quem_mede || 'Sem responsável');
     const g = grupos.get(setor) || { setor, feitas: 0, total: 0 };
@@ -1142,7 +1187,7 @@ function atualizarProgressoMedicoes() {
 /** Destaque visual (borda/fundo vermelhos + ícone) das obrigatórias sem preencher. */
 function marcarPendentesMedicao() {
   const qtd = R.rel.quantidade || 0;
-  R.caracteristicas.forEach(c => {
+  caracteristicasMedicao().forEach(c => {
     const row = document.querySelector(`tr[data-row="${c.id}"]`);
     if (!row) return;
     const obrig = INSP.caracteristicaObrigatoriaMedicao(c);
@@ -1627,6 +1672,234 @@ function ajudaClasses() {
   });
 }
 
+/* ==================================================== ETAPA — INSPEÇÃO APÓS PINTURA
+   Características de equipamento "Visual" (separadas de Medições). Cada uma é
+   respondida como OK/NOK (resposta única na amostra AMOSTRA_VISUAL). Inclui o
+   anexo do Relatório de Pintura. Reabre preenchida (as respostas vêm do banco).
+   O gate impede avançar à Revisão/Resultado enquanto houver visual sem resposta
+   ou o Relatório de Pintura obrigatório não estiver anexado. */
+async function stepInspecaoPintura(host) {
+  const r = R.rel;
+  const visuais = caracteristicasVisuais();
+  const pintura = INSP.relatorioPintura(r);
+  const semColuna = !INSP.temColunaPintura();
+  host.innerHTML = `
+    <h3 class="insp-h"><i class="bi bi-brush"></i> Inspeção Após Pintura</h3>
+    ${!visuais.length
+      ? `<div class="insp-blocker insp-ok-blocker"><i class="bi bi-info-circle"></i> Esta peça não possui características de inspeção visual (equipamento <b>Visual</b>) na Biblioteca Técnica. Você pode avançar para a Revisão.</div>`
+      : `
+      <p class="text-muted-2">Itens cadastrados com equipamento <b>Visual</b>. Responda cada característica como <b>OK</b> ou <b>NOK</b>. O resultado visual é calculado automaticamente.</p>
+      <div id="insp-visual-result">${resultadoVisualHtml(visuais)}</div>
+      <div class="insp-table-wrap"><table class="insp-mtable"><thead><tr>
+        <th class="sticky-l">Cota</th><th>Característica</th><th>Quadrante</th><th>Ref.</th><th>Especificação visual</th><th>Resultado *</th><th>Observação</th><th>Evidência</th>
+      </tr></thead><tbody>
+        ${visuais.map(linhaVisual).join('')}
+      </tbody></table></div>
+      ${campoRelatorioPintura(pintura, semColuna)}`}`;
+
+  if (VIEWONLY) { atualizarNav(); return; }
+  $$('.insp-visual-oknok .insp-oknok__b', host).forEach(b => b.addEventListener('click', () => onVisualOkNok(b)));
+  $$('.insp-visual-obs', host).forEach(inp => inp.addEventListener('change', () => onVisualObs(inp)));
+  $$('.insp-visual-evid', host).forEach(b => b.addEventListener('click', () => abrirEvidenciaVisual(b.dataset.vevid)));
+  const fileInp = $('#insp-pintura-file'), pickBtn = $('#insp-pintura-btn');
+  pickBtn?.addEventListener('click', () => fileInp.click());
+  fileInp?.addEventListener('change', () => { if (fileInp.files && fileInp.files[0]) enviarRelatorioPintura(fileInp.files[0]); fileInp.value = ''; });
+  $('#insp-pintura-rm')?.addEventListener('click', removerRelatorioPintura);
+  atualizarNav();
+}
+
+/** Linha de uma característica visual: cota, característica, quadrante,
+    referência, especificação visual, OK/NOK, observação e evidência. */
+function linhaVisual(c) {
+  const m = (c.medicoes || []).find(x => Number(x.amostra) === INSP.AMOSTRA_VISUAL);
+  const sel = String(m?.valor ?? '').toUpperCase();       // '', 'OK' ou 'NOK'
+  const dis = VIEWONLY ? ' disabled' : '';
+  // "Especificação visual" = observação técnica cadastrada (o que inspecionar).
+  const espec = c.observacao_tec || c.referencia || '—';
+  const nEvid = (R.anexos || []).filter(a => a.caracteristica_id === c.id).length;
+  const evidCell = VIEWONLY
+    ? (nEvid ? `<span class="cell-sub"><i class="bi bi-paperclip"></i> ${nEvid} anexo(s)</span>` : '—')
+    : `<button class="rna-btn rna-btn-ghost rna-btn-sm insp-visual-evid" data-vevid="${c.id}"><i class="bi bi-paperclip"></i> ${nEvid ? nEvid + ' anexo(s)' : 'Anexar'}</button>`;
+  return `<tr data-vrow="${c.id}">
+    <td class="sticky-l cell-strong">${escTitle(String(c.cota ?? '—'))}</td>
+    <td>${escTitle(c.caracteristica || '—')}</td>
+    <td class="insp-quadrante">${c.quadrante ? escTitle(c.quadrante) : '—'}</td>
+    <td class="cell-sub">${escTitle(c.referencia || '—')}</td>
+    <td class="cell-sub">${escTitle(espec)}</td>
+    <td class="insp-samp"><div class="insp-oknok insp-visual-oknok ${sel === 'OK' ? 'is-ok' : sel === 'NOK' ? 'is-crit' : ''}" data-vcar="${c.id}" data-val="${sel}" role="group" aria-label="Resultado visual">
+      <button type="button" class="insp-oknok__b insp-oknok__ok ${sel === 'OK' ? 'is-on' : ''}" data-oknok="OK" aria-pressed="${sel === 'OK'}"${dis}><i class="bi bi-check-lg"></i> OK</button>
+      <button type="button" class="insp-oknok__b insp-oknok__nok ${sel === 'NOK' ? 'is-on' : ''}" data-oknok="NOK" aria-pressed="${sel === 'NOK'}"${dis}><i class="bi bi-x-lg"></i> NOK</button>
+    </div></td>
+    <td><input class="form-control form-control-sm insp-visual-obs" data-vobs="${c.id}" value="${escTitle(c.observacao || '')}" placeholder="Observação"${dis}></td>
+    <td>${evidCell}</td>
+  </tr>`;
+}
+
+/** Banner do resultado consolidado da inspeção visual. */
+function resultadoVisualHtml(visuais) {
+  const res = INSP.resultadoVisual(visuais);
+  const ok = visuais.filter(c => c.resultado === 'aprovado').length;
+  const nok = visuais.filter(c => c.resultado === 'reprovado').length;
+  const map = {
+    aprovado: ['insp-ok', 'bi-check-circle-fill', 'APROVADO'],
+    reprovado: ['insp-crit', 'bi-x-octagon-fill', 'REPROVADO'],
+    pendente: ['insp-pend', 'bi-hourglass-split', 'EM PREENCHIMENTO'],
+    na: ['insp-pend', 'bi-dash-circle', '—']
+  };
+  const [cls, ic, label] = map[res] || map.pendente;
+  return `<div class="insp-result-banner ${cls}"><i class="bi ${ic}"></i> RESULTADO DA INSPEÇÃO VISUAL: <b>${label}</b>
+    <span class="cell-sub" style="margin-left:8px">${ok} OK · ${nok} NOK · ${visuais.length} item(ns)</span></div>`;
+}
+
+/** Campo de anexo do Relatório de Pintura (PDF/JPG/JPEG/PNG). */
+function campoRelatorioPintura(pintura, semColuna) {
+  return `<div class="insp-card-lite mt-3" id="insp-pintura-box">
+    <b><i class="bi bi-file-earmark-arrow-up"></i> Relatório de Pintura *</b>
+    <div class="cell-sub">Anexe o Relatório de Pintura — PDF, JPG, JPEG ou PNG (máx. ${PINTURA_MAX_MB} MB).</div>
+    ${semColuna ? `<div class="insp-blocker mt-2" style="border-left:4px solid var(--rna-yellow-600)"><i class="bi bi-exclamation-triangle"></i>
+      <div>O anexo do Relatório de Pintura ainda não pode ser salvo neste banco. Rode <b>database/inspecao_apos_pintura.sql</b> no Supabase para habilitar (a validação de anexo obrigatório fica suspensa até lá).</div></div>` : ''}
+    <div id="insp-pintura-atual" class="mt-2">${pinturaAtualHtml(pintura)}</div>
+    ${VIEWONLY ? '' : `<div class="mt-2">
+      <input type="file" id="insp-pintura-file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" hidden>
+      <button class="rna-btn rna-btn-dark rna-btn-sm" id="insp-pintura-btn"><i class="bi bi-upload"></i> ${pintura ? 'Substituir arquivo' : 'Anexar arquivo'}</button>
+    </div>`}
+  </div>`;
+}
+function pinturaAtualHtml(p) {
+  if (!p) return `<span class="cell-sub"><i class="bi bi-dash-circle"></i> Nenhum arquivo anexado.</span>`;
+  const nome = p.url ? `<a href="${escTitle(p.url)}" target="_blank" rel="noopener">${escTitle(p.nome)}</a>` : escTitle(p.nome);
+  return `<div class="d-flex align-items-center gap-2"><i class="bi bi-file-earmark-check" style="color:var(--rna-green,#2e7d32)"></i>
+    <span>${nome}</span>${VIEWONLY ? '' : `<button class="rna-btn rna-btn-ghost rna-btn-sm" id="insp-pintura-rm" title="Remover"><i class="bi bi-x-lg"></i></button>`}</div>`;
+}
+
+/* ------------------------------------------------------- gate da inspeção visual */
+function visualPendentes() { return INSP.visuaisPendentes(caracteristicasVisuais()); }
+function faltaRelatorioPintura() {
+  return caracteristicasVisuais().length > 0 && INSP.temColunaPintura() && !INSP.relatorioPintura(R.rel);
+}
+function visualCompleto() { return visualPendentes().length === 0 && !faltaRelatorioPintura(); }
+function bloqueioVisual() {
+  const p = visualPendentes();
+  if (p.length) return `Responda OK/NOK em ${p.length} característica(s) visual(is) para avançar.`;
+  if (faltaRelatorioPintura()) return 'Anexe o Relatório de Pintura para avançar.';
+  return '';
+}
+function alertaVisualPendente() {
+  const p = visualPendentes();
+  // realça as linhas sem resposta
+  document.querySelectorAll('.insp-visual-oknok').forEach(g => {
+    const pend = p.some(x => x.id === g.dataset.vcar);
+    g.closest('tr')?.classList.toggle('insp-row-pend', pend && !g.dataset.val);
+  });
+  const itens = [
+    ...p.map(x => `<li><span class="rna-badge badge-pend">Cota ${escTitle(x.cota ?? '—')}</span> ${escTitle(x.caracteristica || '')} — sem OK/NOK</li>`),
+    ...(faltaRelatorioPintura() ? ['<li><span class="rna-badge badge-pend">Relatório de Pintura</span> anexo obrigatório não enviado</li>'] : [])
+  ].join('');
+  modal({
+    title: 'Inspeção Após Pintura pendente',
+    content: `<p style="margin:0 0 10px;font-size:14px">Conclua a Inspeção Após Pintura antes de avançar para a Revisão.</p>
+      <div class="insp-card-lite"><b class="text-crit"><i class="bi bi-exclamation-triangle"></i> Pendências</b>
+      <ul class="insp-ul mt-2">${itens}</ul></div>`,
+    footer: `<button class="rna-btn rna-btn-primary" data-bs-dismiss="modal">OK</button>`
+  });
+}
+
+/* ------------------------------------------------------- ações da inspeção visual */
+async function onVisualOkNok(btn) {
+  const grupo = btn.closest('.insp-visual-oknok'); if (!grupo) return;
+  const carId = grupo.dataset.vcar, val = btn.dataset.oknok;   // 'OK' | 'NOK'
+  // marca visualmente na hora (feedback imediato antes do autosave)
+  grupo.dataset.val = val;
+  grupo.classList.remove('is-ok', 'is-crit');
+  grupo.classList.add(val === 'OK' ? 'is-ok' : 'is-crit');
+  grupo.querySelectorAll('.insp-oknok__b').forEach(b => {
+    const on = b.dataset.oknok === val;
+    b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  });
+  const ok = await autosave(async () => {
+    await INSP.salvarResultadoVisual(R.rel.id, carId, val, USER);
+    await reload();
+  }, { contexto: 'Falha ao salvar o resultado visual' });
+  if (!ok) return;
+  refreshBanner();
+  const box = $('#insp-visual-result'); if (box) box.innerHTML = resultadoVisualHtml(caracteristicasVisuais());
+  grupo.closest('tr')?.classList.remove('insp-row-pend');
+  atualizarNav();
+}
+async function onVisualObs(inp) {
+  const carId = inp.dataset.vobs;
+  await autosave(async () => {
+    await INSP.salvarObservacao(carId, inp.value);
+    const c = R.caracteristicas.find(x => x.id === carId); if (c) c.observacao = inp.value;
+  }, { contexto: 'Falha ao salvar a observação' });
+}
+
+/** Modal de evidências (fotos) de uma característica visual — reusa insp_anexos. */
+function abrirEvidenciaVisual(carId) {
+  const c = R.caracteristicas.find(x => x.id === carId); if (!c) return;
+  const existentes = (R.anexos || []).filter(a => a.caracteristica_id === carId);
+  const m = modal({
+    title: `Evidência — ${c.caracteristica || 'característica visual'}`,
+    content: `${existentes.length ? `<div class="mb-2"><b>Anexos atuais</b>
+        <ul class="insp-ul mt-1">${existentes.map(a => `<li>${a.url ? `<a href="${escTitle(a.url)}" target="_blank" rel="noopener">${escTitle(a.nome)}</a>` : escTitle(a.nome)}</li>`).join('')}</ul></div>` : ''}
+      <div id="ev-visual"></div>`,
+    footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Fechar</button>
+             <button class="rna-btn rna-btn-primary" id="ev-save"><i class="bi bi-save"></i> Salvar evidência</button>`
+  });
+  const ev = initEvidenceUpload($('#ev-visual', m.host), { multiple: true, label: 'Anexar evidência (foto)' });
+  $('#ev-save', m.host).addEventListener('click', async () => {
+    if (!ev.hasFiles()) { m.close(); return; }
+    const ok = await autosave(async () => {
+      const saved = await ev.commit({ usuario: USER, registro_tipo: 'insp_visual', registro_id: R.rel.id });
+      for (const s of saved) await db.insert('insp_anexos', { relatorio_id: R.rel.id, caracteristica_id: carId, medicao_id: null, nome: s.nome, tipo: s.tipo, url: s.url, tamanho: '', uploaded_by: USER.id, created_at: INSP.nowISO() });
+      await reload();
+    }, { contexto: 'Falha ao salvar a evidência' });
+    if (!ok) return;
+    m.close(); renderStep(); toast('Evidência salva.', { type: 'ok' });
+  });
+}
+
+/* ------------------------------------------------- upload do Relatório de Pintura */
+const PINTURA_EXT = ['pdf', 'jpg', 'jpeg', 'png'];
+const PINTURA_MAX_MB = 15;
+async function enviarRelatorioPintura(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (!PINTURA_EXT.includes(ext)) return toast('Formato inválido. Use PDF, JPG, JPEG ou PNG.', { type: 'warn', title: 'Relatório de Pintura' });
+  if (file.size > PINTURA_MAX_MB * 1024 * 1024) return toast(`Arquivo muito grande (máx. ${PINTURA_MAX_MB} MB).`, { type: 'warn', title: 'Relatório de Pintura' });
+  const ok = await autosave(async () => {
+    const url = await uploadArquivoPintura(file);
+    const anexo = { nome: file.name, tipo: file.type || ext, url, tamanho: String(file.size) };
+    await INSP.salvarRelatorioPintura(R.rel.id, anexo, USER);
+    if (!INSP.temColunaPintura()) throw new Error('O banco ainda não tem a coluna do Relatório de Pintura. Rode database/inspecao_apos_pintura.sql no Supabase.');
+    await reload();
+  }, { contexto: 'Falha ao anexar o Relatório de Pintura' });
+  if (!ok) return;
+  renderStep();
+  toast('Relatório de Pintura anexado.', { type: 'ok' });
+}
+async function removerRelatorioPintura() {
+  const ok = await autosave(async () => { await INSP.salvarRelatorioPintura(R.rel.id, null, USER); await reload(); },
+    { contexto: 'Falha ao remover o Relatório de Pintura' });
+  if (!ok) return;
+  renderStep();
+}
+/* Envia ao Supabase Storage (bucket 'evidencias') OU devolve Base64 (demo). */
+async function uploadArquivoPintura(file) {
+  if (SUPABASE.enabled) {
+    const sb = await getSupabase();
+    const safe = (file.name || 'relatorio-pintura').replace(/[^\w.\-]+/g, '_');
+    const path = `insp_pintura/${R.rel.id}/${Date.now()}_${safe}`;
+    const { error } = await sb.storage.from('evidencias').upload(path, file, { contentType: file.type || undefined, upsert: false });
+    if (error) throw error;
+    const { data } = sb.storage.from('evidencias').getPublicUrl(path);
+    return data.publicUrl;
+  }
+  return await lerArquivoDataURL(file);   // fallback demo: Base64
+}
+function lerArquivoDataURL(file) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+}
+
 /* ============================================================ ETAPA 4 (§22) */
 async function stepRevisao(host) {
   const s = await INSP.resumoRelatorio(R.rel.id);
@@ -1655,9 +1928,10 @@ async function stepRevisao(host) {
         </div>
       </div>
     </div>
-    ${s.caracteristicasReprovadas ? `<div class="insp-card-lite mt-3"><b class="text-crit"><i class="bi bi-exclamation-octagon"></i> Reprovações a tratar</b>
+    ${revisaoInspecaoVisualHtml(s)}
+    ${(s.caracteristicasReprovadas || s.inspecaoVisual?.reprovadas) ? `<div class="insp-card-lite mt-3"><b class="text-crit"><i class="bi bi-exclamation-octagon"></i> Reprovações a tratar</b>
       <div class="mt-2">${R.caracteristicas.filter(c => c.resultado === 'reprovado').map(c => `<div class="insp-reprov-row">
-        <div><b>${c.caracteristica}</b> <span class="cell-sub">cota ${c.cota}</span></div>
+        <div><b>${c.caracteristica}</b> <span class="cell-sub">cota ${c.cota}</span>${c.visual ? ' <span class="rna-badge badge-info"><i class="bi bi-brush"></i> Visual</span>' : ''}</div>
         <div>${c.classe_defeito
           ? `<span class="rna-badge ${c.classe_defeito === 'A' ? 'badge-crit' : c.classe_defeito === 'B' ? 'badge-warn' : 'badge-pend'}"><i class="bi bi-lock-fill"></i> Classe ${c.classe_defeito}</span>`
           : INSP.classeCadastrada(c) === 'NA'
@@ -1670,6 +1944,25 @@ async function stepRevisao(host) {
   $$('.insp-tratar', host).forEach(b => b.addEventListener('click', () => abrirTratamento(b.dataset.car)));
 }
 const sum = (l, v, tone = '') => `<div class="insp-sum ${tone ? 'insp-sum-' + tone : ''}"><div class="insp-sum__v">${v}</div><div class="insp-sum__l">${l}</div></div>`;
+
+/* Bloco-resumo da Inspeção Após Pintura na Revisão. Só aparece quando a peça tem
+   características visuais — reforça o resultado visual e o Relatório de Pintura. */
+function revisaoInspecaoVisualHtml(s) {
+  const v = s.inspecaoVisual;
+  if (!v || !v.total) return '';
+  const res = v.resultado;
+  const cls = res === 'aprovado' ? 'insp-ok' : res === 'reprovado' ? 'insp-crit' : 'insp-pend';
+  const label = res === 'aprovado' ? 'APROVADO' : res === 'reprovado' ? 'REPROVADO' : 'EM PREENCHIMENTO';
+  const pint = v.relatorioPintura;
+  return `<div class="insp-card-lite mt-3"><b><i class="bi bi-brush"></i> Inspeção Após Pintura</b>
+    <div class="insp-summary-grid mt-2">
+      ${sum('Itens visuais', v.total)} ${sum('OK', v.aprovadas, 'ok')} ${sum('NOK', v.reprovadas, 'crit')}
+    </div>
+    <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+      <span class="insp-pill ${cls}"><i class="bi ${res === 'reprovado' ? 'bi-x-circle-fill' : res === 'aprovado' ? 'bi-check-circle-fill' : 'bi-hourglass-split'}"></i> Resultado visual: ${label}</span>
+      <span class="cell-sub"><i class="bi bi-file-earmark${pint ? '-check' : ''}"></i> Relatório de Pintura: ${pint ? escTitle(pint.nome) : 'não anexado'}</span>
+    </div></div>`;
+}
 
 /* §M04 — quadro por peça: auditor, horários, tempo, resultado e observação.
    É a prestação de contas do trabalho dividido — mostra quem fez o quê. */
@@ -1725,8 +2018,8 @@ async function stepResultado(host) {
       <ul class="insp-ul mt-2">${val.faltas.map(f => `<li><span class="rna-badge badge-pend">${f.etapa}</span> ${f.msg}</li>`).join('')}</ul>
       <button class="rna-btn rna-btn-dark rna-btn-sm mt-2" id="btn-goto"><i class="bi bi-arrow-right-circle"></i> Ir à primeira pendência</button></div>`}`;
 
-  $('#btn-rev')?.addEventListener('click', () => { STEP = 4; renderStep(); });
-  $('#btn-goto')?.addEventListener('click', () => { const et = val.faltas[0].etapa; STEP = ETAPAS.indexOf(et) >= 0 ? ETAPAS.indexOf(et) : 3; renderStep(); });
+  $('#btn-rev')?.addEventListener('click', () => { STEP = ET.REVISAO; renderStep(); });
+  $('#btn-goto')?.addEventListener('click', () => { const et = val.faltas[0].etapa; STEP = ETAPAS.indexOf(et) >= 0 ? ETAPAS.indexOf(et) : ET.MEDICOES; renderStep(); });
   $('#btn-fin')?.addEventListener('click', () => finalizarInspecao(r));
 }
 
@@ -1799,7 +2092,7 @@ function finalizarInspecao(r) {
       } else {
         toast('Inspeção finalizada com sucesso.', { type: 'ok', title: 'Concluído' });
       }
-      VIEWONLY = true; STEP = 5; paintWizard();            // PASSO 6 — vai para a visualização (leitura)
+      VIEWONLY = true; STEP = ET.RESULTADO; paintWizard();  // PASSO 6 — vai para a visualização (leitura)
     } catch (err) {
       // Qualquer erro do PASSO 1 (atualizar auditoria) chega aqui — nunca silencioso.
       mostrarErro('❌ Erro ao finalizar a inspeção', err);
