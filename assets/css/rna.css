@@ -1047,3 +1047,81 @@ tr.insp-row-cargo-block .sticky-l{ box-shadow:inset 3px 0 0 var(--rna-gray-300);
 .insp-classe-ro{ display:flex; align-items:center; min-height:38px; }
 .insp-classe-pend{ cursor:help; }
 .bib-classe-nc{ min-width:140px; }
+
+/* ==========================================================================
+   REL. DIMENSIONAIS SIMULADOS
+   Bloco 100% ADITIVO: todos os seletores começam em `.sim-` (ou dependem de
+   `.insp-report--simulado`), portanto nenhuma tela existente muda de aparência.
+   A cor é ROXA de propósito — não existe em nenhum outro estado do sistema, o
+   que torna impossível confundir uma tela simulada com a oficial (que é
+   amarela/grafite) ou com um resultado real (verde/vermelho).
+   ========================================================================== */
+:root{
+  --sim-roxo:      #6d4bd8;
+  --sim-roxo-600:  #5836c4;
+  --sim-roxo-soft: rgba(109,75,216,.10);
+  --sim-roxo-line: rgba(109,75,216,.28);
+}
+
+/* --- banner permanente do topo --- */
+.sim-banner{ display:flex; align-items:flex-start; gap:12px; margin-bottom:16px;
+  padding:13px 16px; border-radius:12px; background:var(--sim-roxo-soft);
+  border:1px solid var(--sim-roxo-line); border-left:4px solid var(--sim-roxo); color:var(--sim-roxo-600); }
+.sim-banner i{ font-size:19px; line-height:1.2; flex:0 0 auto; }
+.sim-banner b{ display:block; font-size:13.5px; letter-spacing:.04em; }
+.sim-banner div div{ font-size:12.5px; color:var(--rna-steel); margin-top:2px; }
+
+/* --- selo "SIMULADO" --- */
+.sim-selo{ display:inline-block; vertical-align:middle; font-size:10px; font-weight:800; letter-spacing:.07em;
+  padding:2px 7px; border-radius:6px; background:var(--sim-roxo); color:#fff; white-space:nowrap; }
+
+/* --- notas contextuais (informativa e de simulação parcial) --- */
+.sim-nota{ display:flex; align-items:flex-start; gap:10px; margin-bottom:16px; padding:11px 14px;
+  border-radius:11px; background:var(--rna-bg); border-left:4px solid var(--sim-roxo); font-size:13px; }
+.sim-nota i{ font-size:16px; color:var(--sim-roxo); flex:0 0 auto; margin-top:1px; }
+.sim-nota--warn{ background:rgba(244,169,17,.10); border-left-color:var(--rna-warn); }
+.sim-nota--warn i{ color:var(--rna-warn); }
+/* Especificidade elevada de propósito: `.rna-table .cell-sub` (0,2,0) pinta o
+   texto de cinza e venceria um `.sim-parcial` solto — o aviso ficaria invisível. */
+.rna-table .sim-parcial, .cdim-card .sim-parcial, .sim-parcial{ color:#8a6100; font-weight:700; cursor:help; }
+
+/* --- marca de "ajustado automaticamente" --- */
+.sim-ajustado{ display:inline-block; font-size:10.5px; font-weight:700; white-space:nowrap;
+  padding:1px 6px; border-radius:6px; background:var(--sim-roxo-soft); color:var(--sim-roxo-600); }
+.sim-ajustado--warn{ background:rgba(244,169,17,.16); color:#8a6100; }
+
+/* --- células e linhas com valor simulado --- */
+.insp-report--simulado{ border-color:var(--sim-roxo-line); position:relative; }
+.sim-linha > td{ background:rgba(109,75,216,.04); }
+/* `.insp-rep-table td.rep-ok` (0,2,1) já define o peso da célula aprovada;
+   o seletor precisa empatar em especificidade para o valor simulado destacar. */
+.insp-rep-table td.sim-cel, td.sim-cel{ position:relative; font-weight:800; }
+.sim-cel__ic{ font-size:9px; margin-left:3px; color:var(--sim-roxo); vertical-align:top; }
+
+/* --- identificação impressa (só sai no PDF/impressão) --- */
+.sim-aviso-print{ display:none; }
+.sim-watermark{ display:none; }
+
+@media print{
+  /* Cabeçalho textual do PDF, logo abaixo do topo do relatório. */
+  .sim-aviso-print{ display:block; text-align:center; font-size:10pt; font-weight:800; letter-spacing:.06em;
+    color:var(--sim-roxo-600) !important; border:1px solid var(--sim-roxo-line); border-radius:6px;
+    padding:4px 8px; margin:0 0 10px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+  /* Marca d'água discreta. `position:fixed` é o que faz o navegador repetir o
+     elemento em TODAS as páginas impressas — sem isso ela sairia só na primeira.
+     `pointer-events:none` + opacidade baixa mantêm o relatório legível. */
+  .sim-watermark{ display:flex; flex-wrap:wrap; align-content:center; justify-content:center; gap:22mm 14mm;
+    position:fixed; inset:0; z-index:9; pointer-events:none; overflow:hidden;
+    transform:rotate(-32deg) scale(1.35); transform-origin:center; }
+  .sim-watermark span{ font-size:30pt; font-weight:800; letter-spacing:.22em; white-space:nowrap;
+    color:rgba(109,75,216,.13) !important; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+
+  /* O conteúdo fica acima da marca d'água (ela é fundo, não sobreposição). */
+  .insp-report--simulado > *:not(.sim-watermark){ position:relative; z-index:10; }
+
+  /* Legível em P&B, junto das marcas (A)/(R) já existentes do relatório. */
+  .insp-report--simulado td.sim-cel::before{ content:'~'; }
+  .sim-ajustado{ border:1px solid var(--sim-roxo-line); }
+  .sim-banner, .sim-nota{ display:none; }
+}
