@@ -17,6 +17,7 @@ import { PLANTA_SIGLAS, INSP_STATUS } from './inspecao-data.js';
 import * as MED from './medicao.js';
 import { agoraISO, hojeBR, formatarDataBrasil, formatarHoraBrasil, formatarDataHoraBrasil, duracaoSegundos } from './datahora.js';
 import { normalizarIdentificadorMaiusculo, normalizarOP, opValida, MSG_OP_INVALIDA } from './identificadores.js';
+import { usuarioPodeMedirCaracteristica, motivoBloqueioMedicao, obterCargoResponsavel } from './quem-mede.js';
 
 /* Gravação sempre em UTC (timestamptz); exibição sempre via services/datahora.js
    no fuso America/Sao_Paulo (§Erro 06). `hoje()` usa o dia civil de São Paulo —
@@ -450,7 +451,7 @@ async function lerCaracteristicas(relatorioId) {
    avisa uma vez e regrava sem os campos opcionais (o tipo sobrevive em tipo_campo). */
 let _semColunasSnapshot = false;
 async function inserirCaracteristica(row) {
-  const semOpcionais = () => { const r = { ...row }; delete r.tipo_especificacao; delete r.informativo; delete r.obrigatorio; delete r.classe_nc; return r; };
+  const semOpcionais = () => { const r = { ...row }; delete r.tipo_especificacao; delete r.informativo; delete r.obrigatorio; delete r.classe_nc; delete r.quem_mede; return r; };
   if (_semColunasSnapshot) return db.insert('insp_caracteristicas', semOpcionais());
   try {
     return await db.insert('insp_caracteristicas', row);
@@ -553,8 +554,13 @@ export async function carregarEspecs(relatorioId, pecaId) {
       nominal: (informativo || atributo) ? null : (m.nominal ?? null),
       minimo: (informativo || atributo) ? null : (m.tol_min ?? null),
       maximo: (informativo || atributo) ? null : (m.tol_max ?? null),
-      equipamento: cat.eqMap[m.equipamento_id] || m.equipamento || '',
+      equipamento: equipamentoNome,
       observacao_tec: m.observacao || '',
+      /* [CONTROLE DE MEDIÇÃO POR CARGO] congela QUEM MEDE (rótulo da Biblioteca)
+         no snapshot — é o que define, por característica, qual cargo pode
+         preencher. Guarda o rótulo original (ex.: "G. Qualidade"); o vínculo com
+         o cargo é feito pela regra (services/quem-mede.js), não pela string. */
+      quem_mede: cat.qmMap[m.quem_mede_id] || m.quem_mede || '',
       tipo_especificacao: tipo,
       // guarda o tipo também aqui: é o que permite reconstruir informativo/ATRIBUTO
       // em bases sem as colunas novas (ver normalizarCaracteristica).
@@ -618,6 +624,19 @@ export async function trocarTipoInspecao(relatorioId, tipo, { limparPeca = false
 export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valor, user = null) {
   const car = await lerCaracteristica(caracteristicaId);
   if (!car) return null;
+  /* [CONTROLE DE MEDIÇÃO POR CARGO] GUARDA DE BACKEND (§11/§24). O cargo do
+     usuário precisa corresponder ao "Quem Mede" da característica (admin sempre;
+     supervisor só se SUPERVISOR_PODE_MEDIR). NÃO confia no front — a regra é
+     reavaliada aqui e (em produção) na RLS/RPC. Tentativa negada vira log. */
+  if (user && !usuarioPodeMedirCaracteristica(user, car)) {
+    const motivo = motivoBloqueioMedicao(user, car);
+    await db.log({ usuario: user.nome || user.email || user.id, acao: 'MEDICAO_NEGADA',
+      entidade: 'insp_medicoes',
+      antes: `Cota ${car.cota ?? '—'} · ${car.caracteristica || ''} · Quem mede: ${car.quem_mede || '—'}`,
+      depois: `Cargo ${user.role || '—'} sem permissão (responsável: ${obterCargoResponsavel(car.quem_mede) || 'não definido'})`
+    }).catch(() => {});
+    throw new InspError('ACESSO_NEGADO_CARGO', motivo?.msg || 'Você não possui permissão para preencher esta medição.');
+  }
   // REFERENCIA também é medida e registrada (§Referência): avaliarMedicao devolve
   // 'registrado' — sem tolerância, sem reprovação. Antes esta linha era descartada.
   const resultado = avaliarDaCaracteristica(car, valor).status;
@@ -625,9 +644,9 @@ export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valo
   const ex = existentes.find(m => m.amostra === amostra);
   /* §M04 — AUTORIA POR MEDIÇÃO. Com vários auditores no mesmo relatório, saber
      "quem mediu o quê" deixa de ser detalhe e vira rastreabilidade: cada valor
-     carrega o auditor, a data e a hora. Campos best-effort (ver migration). */
+     carrega o auditor, o CARGO, a data e a hora. Campos best-effort (ver migration). */
   const payload = { relatorio_id: relatorioId, caracteristica_id: caracteristicaId, amostra, valor: (valor ?? ''), resultado, medido_iso: nowISO() };
-  if (user) { payload.medido_por = user.id; payload.medido_por_nome = user.nome || ''; }
+  if (user) { payload.medido_por = user.id; payload.medido_por_nome = user.nome || ''; payload.medido_por_cargo = user.role || ''; }
   let novo;
   if (ex) { novo = await gravarMedicao('update', ex.id, payload); }
   else { novo = await gravarMedicao('insert', null, payload); }
@@ -652,7 +671,7 @@ export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valo
    de qualquer forma — a medição é o dado crítico; a autoria é o complemento. */
 let _semColunasAutoria = false;
 async function gravarMedicao(op, id, payload) {
-  const semAutoria = () => { const p = { ...payload }; delete p.medido_por; delete p.medido_por_nome; return p; };
+  const semAutoria = () => { const p = { ...payload }; delete p.medido_por; delete p.medido_por_nome; delete p.medido_por_cargo; return p; };
   const exec = p => op === 'update' ? db.update('insp_medicoes', id, p) : db.insert('insp_medicoes', p);
   if (_semColunasAutoria) return exec(semAutoria());
   try {

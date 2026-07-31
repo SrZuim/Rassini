@@ -1078,6 +1078,12 @@ async function salvar(isNew, p, f, upImg) {
       if (vazia) continue;
       const erro = validarSpecDraft({ ...m });
       if (erro) throw new Error(`Especificação (cota ${m.cota || '?'}): ${erro}`);
+      /* [CONTROLE DE MEDIÇÃO POR CARGO] §3 — "Quem Mede" é OBRIGATÓRIO: é o campo
+         que define qual cargo pode medir a característica na inspeção. Sem ele, a
+         característica ficaria bloqueada para todos (exceto admin). Não apaga o
+         valor existente — apenas exige que exista. */
+      if (!(m.quem_mede_nome || '').trim())
+        throw new Error(`Especificação (cota ${m.cota || '?'}): informe o campo "Quem Mede" (responsável pela medição).`);
       const lim = BIB.calcularLimites(m);
       const info = BIB.ehInformativo(m.tipo_especificacao), attr = BIB.ehAtributo(m.tipo_especificacao);
       specsRows.push({

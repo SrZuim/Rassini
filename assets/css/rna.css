@@ -890,6 +890,25 @@ body.kiosk .rna-content { padding: 26px; }
 .insp-attr.is-ok{ border-color:var(--rna-ok); color:var(--rna-ok); font-weight:700; }
 .insp-attr.is-crit{ border-color:var(--rna-crit); color:var(--rna-crit); font-weight:700; }
 
+/* [CONTROLE DE MEDIÇÃO POR CARGO] setor (Quem Mede) e célula bloqueada por cargo */
+.insp-setor-line{ margin-top:3px; }
+.insp-setor-tag{ display:inline-flex; align-items:center; gap:3px; font-size:10px; font-weight:700; padding:1px 7px; border-radius:12px;
+  background:rgba(43,108,176,.10); color:var(--rna-info); vertical-align:middle; }
+.insp-setor-tag--block{ background:rgba(120,120,120,.14); color:var(--rna-gray); }
+.insp-setor-tag--sem{ background:rgba(226,59,59,.12); color:var(--rna-crit); }
+.insp-minput.is-cargo-block, .insp-oknok.is-cargo-block{ opacity:.5; background:repeating-linear-gradient(45deg,rgba(120,120,120,.06),rgba(120,120,120,.06) 6px,transparent 6px,transparent 12px); cursor:not-allowed; }
+.insp-oknok.is-cargo-block .insp-oknok__b{ cursor:not-allowed; }
+tr.insp-row-cargo-block .sticky-l{ box-shadow:inset 3px 0 0 var(--rna-gray-300); }
+.insp-setor-grid{ border:1px solid var(--rna-border); border-radius:12px; padding:10px 12px; margin:8px 0; background:var(--rna-surface); }
+.insp-setor-grid__t{ font-size:12.5px; font-weight:700; color:var(--rna-graphite); margin-bottom:8px; display:flex; align-items:center; gap:6px; }
+.insp-setor-chips{ display:flex; flex-wrap:wrap; gap:8px; }
+.insp-setor-chip{ display:flex; flex-direction:column; gap:1px; border:1px solid var(--rna-border); border-left-width:3px; border-radius:8px; padding:6px 10px; min-width:150px; }
+.insp-setor-chip__t{ font-size:12px; font-weight:700; color:var(--rna-graphite); display:flex; align-items:center; gap:4px; }
+.insp-setor-chip__n{ font-size:11.5px; color:var(--rna-gray); }
+.insp-setor-chip.is-done{ border-left-color:var(--rna-ok); }
+.insp-setor-chip.is-doing{ border-left-color:var(--rna-yellow); }
+.insp-setor-chip.is-idle{ border-left-color:var(--rna-gray-300); }
+
 /* Verificação (OK/NOK) — dois botões segmentados. NÃO é campo digitável: o
    auditor apenas marca. Verde quando OK ativo, vermelho quando NOK ativo. */
 .insp-oknok{ display:inline-flex; gap:0; border:1px solid var(--rna-border); border-radius:8px; overflow:hidden; background:var(--rna-surface); }

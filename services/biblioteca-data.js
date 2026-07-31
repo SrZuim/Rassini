@@ -152,8 +152,13 @@ export const BIB_EQUIPAMENTOS_MEDICAO = [
 ].map((nome, i) => ({ id:'eq' + String(i + 1).padStart(2, '0'), nome, ativo:true }));
 
 /* QUEM MEDE — lista fixa (6 opções). Sem texto livre. */
+/* [CONTROLE DE MEDIÇÃO POR CARGO] Lista OFICIAL de "Quem Mede" (§3) — exatamente
+   os 4 responsáveis que mapeiam para um cargo (services/quem-mede.js). Valores
+   legados em métricas antigas (ex.: "Metrologia", "Eng. Produto") continuam
+   aparecendo como opção "legado" no editor até serem corrigidos, mas não são
+   ofertados em novos cadastros. */
 export const BIB_QUEM_MEDE = [
-  'G. Qualidade','Eng. Processos','Eng. Produto','Laboratório','Recebimento de Materiais','Metrologia'
+  'G. Qualidade','Recebimento de Materiais','Eng. Processos','Laboratório'
 ].map((nome, i) => ({ id:'qm' + (i + 1), nome, ativo:true }));
 
 /* TIPO DA ESPECIFICAÇÃO — cadastro inteligente. Cada tipo define quais campos

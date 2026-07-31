@@ -34,6 +34,13 @@ export const ROLES = {
   admin:      { id: 'admin',      label: 'Administrador', icon: 'bi-shield-lock',  color: 'red' },
   supervisor: { id: 'supervisor', label: 'Supervisor',    icon: 'bi-person-gear',  color: 'orange' },
   auditor:    { id: 'auditor',    label: 'Auditor',       icon: 'bi-clipboard-check', color: 'blue' },
+  /* [CONTROLE DE MEDIÇÃO POR CARGO] Cargos operacionais de medição — cada um
+     mede as características cujo "Quem Mede" mapeia para ele (ver services/quem-mede.js).
+     Operam o mesmo fluxo de Operações do Auditor; a diferença é APENAS quais
+     características podem preencher (regra por característica, não por módulo). */
+  auditor_recebimento: { id: 'auditor_recebimento', label: 'Auditor de Recebimento', icon: 'bi-box-seam',   color: 'blue' },
+  eng_processos:       { id: 'eng_processos',       label: 'Eng. Processos',         icon: 'bi-gear-wide-connected', color: 'blue' },
+  laboratorio:         { id: 'laboratorio',         label: 'Laboratório',            icon: 'bi-eyedropper', color: 'blue' },
   visitante:  { id: 'visitante',  label: 'Visitante',     icon: 'bi-person',       color: 'gray' }
 };
 
@@ -84,6 +91,22 @@ export const MODULES = [
    '*' = todas as ações; [] = sem acesso. Ações: view, create, edit, delete, approve, export */
 const ALL = ['view','create','edit','delete','approve','export','execute'];
 const RO  = ['view','export'];   // somente consulta (supervisor)
+
+/* [CONTROLE DE MEDIÇÃO POR CARGO] Perfis operacionais de medição (Auditor de
+   Recebimento, Eng. Processos, Laboratório) têm o MESMO acesso de módulo do
+   Auditor — participam do fluxo de Operações e da inspeção dimensional. O que
+   cada um pode PREENCHER é decidido por característica (services/quem-mede.js),
+   não pelo RBAC de módulo. Fonte única para os três, sem duplicar. */
+const CARGO_MEDICAO_RBAC = {
+  dashboard:[], monitoramento:[],
+  diario:['view','create','edit'], auditorias:[],
+  biblioteca:['view','export'],
+  gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view','create','edit','execute','export'], op_pendencias:['view','create'], op_historico:['view'],
+  consulta_dim:['view','export'], admin_monitor:[],
+  ocorrencias:[], planos:[],
+  powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
+};
+
 export const RBAC = {
   /* Administrador: acesso completo a todos os módulos */
   admin: Object.fromEntries(MODULES.map(m => [m.id, ALL])),
@@ -110,6 +133,11 @@ export const RBAC = {
     ocorrencias:[], planos:[],
     powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },
+
+  /* [CONTROLE DE MEDIÇÃO POR CARGO] Cargos de medição — mesmo acesso do Auditor. */
+  auditor_recebimento: CARGO_MEDICAO_RBAC,
+  eng_processos:       CARGO_MEDICAO_RBAC,
+  laboratorio:         CARGO_MEDICAO_RBAC,
 
   /* Visitante: somente a tela institucional (home.html). Sem acesso à plataforma. */
   visitante: {

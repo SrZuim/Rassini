@@ -21,7 +21,11 @@ const dbg = (...a) => { if (AUTH_DEBUG) console.log('%c[RNA-AUTH]', 'color:#e0a5
 /* Mapeia o "perfil" do users.json para o papel interno usado no RBAC */
 const PERFIL_PARA_ROLE = {
   administrador: 'admin', admin: 'admin',
-  supervisor: 'supervisor', auditor: 'auditor', visitante: 'visitante'
+  supervisor: 'supervisor', auditor: 'auditor', visitante: 'visitante',
+  /* [CONTROLE DE MEDIÇÃO POR CARGO] novos cargos aceitos no carregamento da sessão */
+  auditor_recebimento: 'auditor_recebimento', 'auditor de recebimento': 'auditor_recebimento',
+  eng_processos: 'eng_processos', 'engenharia de processos': 'eng_processos',
+  laboratorio: 'laboratorio'
 };
 
 /* [MÓDULO USUÁRIOS] Domínio corporativo obrigatório em cadastros novos.

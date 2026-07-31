@@ -44,8 +44,7 @@ async function boot() {
           <select id="f-planta" class="form-select" style="width:auto"><option value="">Todas as plantas</option>${PLANTAS.map(p => `<option>${p}</option>`).join('')}</select>
           <select id="f-cargo" class="form-select" style="width:auto">
             <option value="">Todos os cargos</option>
-            <option value="admin">Administrador</option><option value="supervisor">Supervisor</option>
-            <option value="auditor">Auditor</option><option value="visitante">Visitante</option>
+            ${Object.values(ROLES).map(r => `<option value="${r.id}">${r.label}</option>`).join('')}
           </select>
           <select id="f-sort" class="form-select" style="width:auto">
             <option value="data">Ordenar: Data</option><option value="nome">Ordenar: Nome</option><option value="login">Ordenar: Último acesso</option>
@@ -279,7 +278,10 @@ function recusarModal(u, close) {
 }
 
 function cargoModal(u, close) {
-  const opts = [['visitante','Visitante'],['auditor','Auditor'],['supervisor','Supervisor'],['admin','Administrador']];
+  /* Ordem hierárquica/operacional; fonte única em ROLES (inclui os cargos de
+     medição: Auditor de Recebimento, Eng. Processos, Laboratório). */
+  const ORDEM = ['visitante','auditor','auditor_recebimento','eng_processos','laboratorio','supervisor','admin'];
+  const opts = ORDEM.filter(id => ROLES[id]).map(id => [id, ROLES[id].label]);
   const m = modal({
     title: 'Alterar cargo',
     content: `<p style="font-size:13.5px">Cargo atual de <b>${u.nome}</b>: <b>${ROLES[u.role]?.label || u.role}</b></p>

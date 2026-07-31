@@ -21,6 +21,8 @@ import { buscarParaInspecao, porId as pecaPorId, contarPecasDoTipo,
          checarColunaTipos, MSG_MIGRACAO_TIPOS } from '../../../services/biblioteca.js';
 import { BIB_IMG_PLACEHOLDER } from '../../../services/biblioteca-data.js';
 import { INSP_QUANTIDADES, INSP_STATUS, INSP_MOTIVOS_PAUSA } from '../../../services/inspecao-data.js';
+import { usuarioPodeMedirCaracteristica, motivoBloqueioMedicao, obterCargoResponsavel,
+         rotuloCargoResponsavel, rotuloCargo, normalizarQuemMede } from '../../../services/quem-mede.js';
 import { $, $$, el, toast, modal, confirmDialog, initials } from '../ui.js';
 import { initEvidenceUpload } from '../evidence.js';
 
@@ -771,6 +773,7 @@ async function stepMedicoes(host) {
       <span class="text-muted-2" style="font-size:12.5px"><i class="bi bi-lock"></i> Nominal/limites vêm da Biblioteca (somente leitura)</span>
     </div>
     ${progressoMedicaoHtml()}
+    ${progressoSetorHtml()}
     <div id="insp-colab"></div>
     <div id="insp-classe-alerta"></div>
     <div class="insp-table-wrap"><table class="insp-mtable"><thead><tr>
@@ -828,6 +831,10 @@ const amostraDe = n => AMOST.find(a => Number(a.amostra) === Number(n));
 /* Só edita quem detém a trava. Sem trava ativa, a coluna fica somente-leitura —
    é o que impede dois auditores de sobrescreverem a mesma peça. */
 const euEdito = n => AMOSTRAS.podeEditar(amostraDe(n), USER.id);
+/* [CONTROLE DE MEDIÇÃO POR CARGO] O usuário pode ASSUMIR a peça? Só se houver ao
+   menos uma característica que o cargo dele responda (§6). Caso contrário, a peça
+   é de outro setor e ele apenas acompanha — o botão Assumir some (§21). */
+const euPossoAssumir = () => (R?.caracteristicas || []).some(c => podeMedirCarac(c));
 
 /** Cabeçalho da coluna da peça: dono, status e o botão de assumir/concluir. */
 function cabecalhoAmostra(n) {
@@ -842,6 +849,7 @@ function cabecalhoAmostra(n) {
     else if (meu) acao = `<button class="rna-btn rna-btn-primary rna-btn-sm insp-amostra-btn" data-concluir="${n}"><i class="bi bi-check2"></i> Concluir</button>
                           <button class="rna-btn rna-btn-ghost rna-btn-sm insp-amostra-btn" data-liberar="${n}" title="Liberar sem concluir"><i class="bi bi-unlock"></i></button>`;
     else if (deOutro) acao = `<span class="rna-badge badge-warn" title="Em edição por ${escTitle(a.bloqueado_nome)}"><i class="bi bi-lock-fill"></i> ${escTitle(a.bloqueado_nome || 'ocupada')}</span>`;
+    else if (!euPossoAssumir()) acao = `<span class="rna-badge badge-na" title="Nenhuma característica desta peça é do seu cargo (${escTitle(rotuloCargo(USER.role))}). Você acompanha, mas não mede."><i class="bi bi-lock"></i> Bloqueado p/ seu cargo</span>`;
     else acao = `<button class="rna-btn rna-btn-dark rna-btn-sm insp-amostra-btn" data-assumir="${n}"><i class="bi bi-hand-index"></i> Assumir</button>`;
   }
   const dono = a?.auditor_nome ? `<div class="cell-sub" title="Auditor responsável">${escTitle(a.auditor_nome)}</div>` : '';
@@ -901,12 +909,20 @@ function aplicarBloqueios() {
     ? `Peça ${n} concluída — use Reabrir para corrigir.`
     : a?._travaAtiva ? `Peça ${n} em edição por ${a.bloqueado_nome}.`
     : `Clique em "Assumir" no topo da coluna da Peça ${n} para medir.`; };
+  /* [CONTROLE DE MEDIÇÃO POR CARGO] uma célula só é editável se (a) o cargo do
+     usuário responde por aquela característica E (b) ele detém a trava da peça.
+     O bloqueio por cargo vence o de trava e mostra o motivo do cargo. */
+  const carDe = el => R.caracteristicas.find(x => x.id === el.dataset.car);
+  const cargoBloqueado = c => c && !VIEWONLY && !podeMedirCarac(c);
   $$('.insp-minput').forEach(el => {
-    const n = +el.dataset.a;
-    const livre = euEdito(n);
+    const n = +el.dataset.a, c = carDe(el);
+    const bloqCargo = cargoBloqueado(c);
+    const livre = !bloqCargo && euEdito(n);
     el.disabled = !livre;
-    el.classList.toggle('is-bloqueada', !livre);
-    if (!livre) el.title = tituloTrava(n);
+    el.classList.toggle('is-cargo-block', !!bloqCargo);
+    el.classList.toggle('is-bloqueada', !livre && !bloqCargo);
+    if (bloqCargo) el.title = motivoBloqueioMedicao(USER, c)?.msg || 'Bloqueado para o seu cargo.';
+    else if (!livre) el.title = tituloTrava(n);
     else {
       /* Campo liberado: o tooltip volta a explicar o STATUS da medição
          (aprovado / aprovado com atenção / reprovado), não a trava. */
@@ -916,11 +932,14 @@ function aplicarBloqueios() {
   });
   /* Grupos OK/NOK: bloqueio = desabilitar os DOIS botões + marca visual na célula. */
   $$('.insp-oknok').forEach(grupo => {
-    const n = +grupo.dataset.a;
-    const livre = euEdito(n);
-    grupo.classList.toggle('is-bloqueada', !livre);
+    const n = +grupo.dataset.a, c = carDe(grupo);
+    const bloqCargo = cargoBloqueado(c);
+    const livre = !bloqCargo && euEdito(n);
+    grupo.classList.toggle('is-cargo-block', !!bloqCargo);
+    grupo.classList.toggle('is-bloqueada', !livre && !bloqCargo);
     grupo.querySelectorAll('.insp-oknok__b').forEach(b => { b.disabled = !livre; });
-    if (!livre) grupo.title = tituloTrava(n);
+    if (bloqCargo) grupo.title = motivoBloqueioMedicao(USER, c)?.msg || 'Bloqueado para o seu cargo.';
+    else if (!livre) grupo.title = tituloTrava(n);
     else { const d = LOCAL[grupo.dataset.car] ? avaliarLocal(grupo.dataset.car, grupo.dataset.val) : null;
       grupo.title = d ? `${d.label}${d.motivo ? ' · ' + d.motivo : ''}` : ''; }
   });
@@ -1077,9 +1096,45 @@ function progressoMedicaoHtml() {
   </div>`;
 }
 
+/* [CONTROLE DE MEDIÇÃO POR CARGO] §15 — progresso por SETOR (Quem Mede). Agrupa
+   as características obrigatórias por responsável e conta quantas estão 100%
+   preenchidas em todas as peças. Ajuda a entender por que o relatório não avança
+   (§16) — "faltam 4 do Laboratório", em vez de uma mensagem genérica. */
+function progressoPorSetor() {
+  const qtd = R.rel.quantidade || 0;
+  const grupos = new Map();
+  R.caracteristicas.forEach(c => {
+    if (!INSP.caracteristicaObrigatoriaMedicao(c)) return;
+    const setor = normalizarQuemMede(c.quem_mede) || (c.quem_mede || 'Sem responsável');
+    const g = grupos.get(setor) || { setor, feitas: 0, total: 0 };
+    g.total++;
+    let completa = true;
+    for (let a = 1; a <= qtd; a++) if (INSP.celulaPendente(c, valorAmostra(c, a))) { completa = false; break; }
+    if (completa) g.feitas++;
+    grupos.set(setor, g);
+  });
+  return [...grupos.values()].sort((a, b) => a.setor.localeCompare(b.setor));
+}
+function progressoSetorHtml() {
+  const setores = progressoPorSetor();
+  if (setores.length <= 1) return '';   // peça de um setor só: o progresso geral já basta
+  const chip = g => {
+    const done = g.total > 0 && g.feitas >= g.total;
+    const st = done ? 'Concluído' : g.feitas === 0 ? 'Não iniciado' : 'Em andamento';
+    const cls = done ? 'is-done' : g.feitas === 0 ? 'is-idle' : 'is-doing';
+    return `<div class="insp-setor-chip ${cls}"><span class="insp-setor-chip__t"><i class="bi bi-person-badge"></i> ${escTitle(g.setor)}</span>
+      <span class="insp-setor-chip__n">${g.feitas} de ${g.total} · ${st}</span></div>`;
+  };
+  return `<div class="insp-setor-grid" id="insp-setor-grid"><div class="insp-setor-grid__t"><i class="bi bi-diagram-3"></i> Progresso por setor</div>
+    <div class="insp-setor-chips">${setores.map(chip).join('')}</div></div>`;
+}
+
 /** Recalcula barra de progresso, destaque das pendências e o botão Próximo. */
 function atualizarProgressoMedicoes() {
   $('#insp-med-progress')?.replaceWith(el(progressoMedicaoHtml()));
+  const setorHtml = progressoSetorHtml();
+  const grid = $('#insp-setor-grid');
+  if (grid && setorHtml) grid.replaceWith(el(setorHtml));   // só existe quando há +de 1 setor
   marcarPendentesMedicao();
   atualizarNav();
 }
@@ -1146,6 +1201,19 @@ window.addEventListener('beforeunload', () => {
 const fmtHora = iso => formatarHoraBrasil(iso);
 const fmtDataHora = iso => formatarDataHoraBrasil(iso);
 
+/* [CONTROLE DE MEDIÇÃO POR CARGO] Este usuário pode medir ESTA característica?
+   Regra única em services/quem-mede.js (admin sempre; supervisor conforme const;
+   demais: cargo === responsável do "Quem Mede"). */
+const podeMedirCarac = c => usuarioPodeMedirCaracteristica(USER, c);
+
+/* Badge discreto do "Quem Mede" (setor) sob o nome da característica (§20). */
+function quemMedeBadge(c) {
+  const qm = normalizarQuemMede(c?.quem_mede) || (c?.quem_mede || '');
+  if (!qm) return ' <span class="insp-setor-tag insp-setor-tag--sem" title="Sem responsável definido em Quem Mede — corrija na Biblioteca Técnica."><i class="bi bi-exclamation-triangle"></i> Sem responsável</span>';
+  const bloq = !VIEWONLY && !podeMedirCarac(c);
+  return ` <span class="insp-setor-tag ${bloq ? 'insp-setor-tag--block' : ''}" title="Quem mede: ${escTitle(qm)}${bloq ? ` · Bloqueado para o seu cargo (${escTitle(rotuloCargo(USER.role))})` : ''}"><i class="bi bi-person-badge"></i> ${escTitle(qm)}</span>`;
+}
+
 function linhaMedicao(c, qtd) {
   /* O tipo cadastrado na Biblioteca decide o COMPONENTE de entrada: Verificação
      (ATRIBUTO) → <select> OK/NOK; demais tipos → campo numérico. Comparação
@@ -1153,6 +1221,11 @@ function linhaMedicao(c, qtd) {
      para o campo numérico (as leituras já normalizam via normalizarCaracteristica;
      isto é a rede de segurança final na própria renderização). */
   const attr = String(c.tipo_especificacao ?? '').trim().toUpperCase() === 'ATRIBUTO';
+  /* [CONTROLE DE MEDIÇÃO POR CARGO] célula bloqueada quando o cargo do usuário
+     não responde por este "Quem Mede". A linha permanece VISÍVEL (acompanhamento);
+     só o preenchimento é travado (§5/§7). aplicarBloqueios reforça no runtime. */
+  const bloqCargo = !VIEWONLY && !podeMedirCarac(c);
+  const tituloCargo = bloqCargo ? (motivoBloqueioMedicao(USER, c)?.msg || 'Bloqueado para o seu cargo.') : '';
   const informativo = !!c.informativo;
   /* Célula por amostra: OK/NOK (atributo) ou campo numérico — inclusive para
      REFERÊNCIA, que também é medida e registrada. A referência só não possui
@@ -1167,14 +1240,15 @@ function linhaMedicao(c, qtd) {
          o auditor só MARCA. Valor legado inválido ('85', 'okkkk') não seleciona
          nada: a característica aparece pendente e exige nova escolha. */
       const sel = INSP.valorOkNokValido(val) ? String(val).trim().toUpperCase() : '';
-      return `<td class="insp-samp"><div class="insp-oknok ${visCls(d.visual)}" data-car="${c.id}" data-a="${a}" data-val="${sel}" role="group" aria-label="Resultado da Peça ${a}" title="${escTitle(d.label)}">
-        <button type="button" class="insp-oknok__b insp-oknok__ok ${sel === 'OK' ? 'is-on' : ''}" data-oknok="OK" data-car="${c.id}" data-a="${a}" aria-pressed="${sel === 'OK'}" title="Peça ${a} — Conforme (OK)"><i class="bi bi-check-lg"></i> OK</button>
-        <button type="button" class="insp-oknok__b insp-oknok__nok ${sel === 'NOK' ? 'is-on' : ''}" data-oknok="NOK" data-car="${c.id}" data-a="${a}" aria-pressed="${sel === 'NOK'}" title="Peça ${a} — Não conforme (NOK)"><i class="bi bi-x-lg"></i> NOK</button>
+      const cargoTitle = bloqCargo ? ` title="${escTitle(tituloCargo)}"` : '';
+      return `<td class="insp-samp"><div class="insp-oknok ${visCls(d.visual)} ${bloqCargo ? 'is-cargo-block' : ''}" data-car="${c.id}" data-a="${a}" data-val="${sel}" role="group" aria-label="Resultado da Peça ${a}" title="${escTitle(bloqCargo ? tituloCargo : d.label)}">
+        <button type="button" class="insp-oknok__b insp-oknok__ok ${sel === 'OK' ? 'is-on' : ''}" data-oknok="OK" data-car="${c.id}" data-a="${a}" aria-pressed="${sel === 'OK'}"${bloqCargo ? ' disabled' : ''}${cargoTitle || ` title="Peça ${a} — Conforme (OK)"`}><i class="bi bi-check-lg"></i> OK</button>
+        <button type="button" class="insp-oknok__b insp-oknok__nok ${sel === 'NOK' ? 'is-on' : ''}" data-oknok="NOK" data-car="${c.id}" data-a="${a}" aria-pressed="${sel === 'NOK'}"${bloqCargo ? ' disabled' : ''}${cargoTitle || ` title="Peça ${a} — Não conforme (NOK)"`}><i class="bi bi-x-lg"></i> NOK</button>
       </div></td>`;
     }
-    return `<td class="insp-samp"><input class="insp-minput ${informativo ? 'is-ref' : ''} ${visCls(d.visual)}"
-      data-car="${c.id}" data-a="${a}" data-ref="${informativo ? '1' : ''}" value="${escTitle(val ?? '')}"
-      inputmode="decimal" placeholder="—" title="Peça ${a} — ${escTitle(d.label)}${d.motivo ? ' · ' + escTitle(d.motivo) : ''}${informativo ? ' (referência, sem limites)' : ''}"></td>`;
+    return `<td class="insp-samp"><input class="insp-minput ${informativo ? 'is-ref' : ''} ${visCls(d.visual)} ${bloqCargo ? 'is-cargo-block' : ''}"
+      data-car="${c.id}" data-a="${a}" data-ref="${informativo ? '1' : ''}" value="${escTitle(val ?? '')}" ${bloqCargo ? 'disabled' : ''}
+      inputmode="decimal" placeholder="${bloqCargo ? '🔒' : '—'}" title="${escTitle(bloqCargo ? tituloCargo : `Peça ${a} — ${d.label}${d.motivo ? ' · ' + d.motivo : ''}${informativo ? ' (referência, sem limites)' : ''}`)}"></td>`;
   }).join('');
   const tipoTag = informativo ? ' <span class="insp-tipo-tag">Referência</span>' : (attr ? ' <span class="insp-tipo-tag">OK/NOK</span>' : '');
   const obrigTag = informativo && c.obrigatorio ? ' <span class="insp-tipo-tag insp-tipo-obrig">Obrigatória</span>' : '';
@@ -1189,9 +1263,9 @@ function linhaMedicao(c, qtd) {
   // c.referencia = bib_metricas.referencia · c.observacao_tec = bib_metricas.observacao.
   // c.quadrante = bib_metricas.quadrante — localização no desenho, somente leitura.
   const obs = c.observacao_tec || '';
-  return `<tr data-row="${c.id}">
+  return `<tr data-row="${c.id}" class="${bloqCargo ? 'insp-row-cargo-block' : ''}">
     <td class="sticky-l cell-strong">${c.cota ?? '—'}</td>
-    <td>${c.caracteristica}${tipoTag}${obrigTag}</td>
+    <td>${c.caracteristica}${tipoTag}${obrigTag}<div class="insp-setor-line">${quemMedeBadge(c)}</div></td>
     <td class="insp-quadrante">${c.quadrante ? escTitle(c.quadrante) : '—'}</td>
     <td class="cell-sub">${c.referencia || '—'}</td>
     <td>${c.unidade || ''}</td>${dimCols}
