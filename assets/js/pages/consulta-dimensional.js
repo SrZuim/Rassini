@@ -533,7 +533,12 @@ function inspecaoAposPinturaHtml(caracteristicas, resumo) {
         <td>${resultadoTag(c.resultado, c._visual)}</td><td class="cell-sub">${esc(c.observacao || '—')}</td></tr>`).join('')}
     </tbody></table></div>
     <div class="insp-rep-grid mt-2">
-      ${cell('Relatório de Pintura anexado', pint ? esc(pint.nome) : '—')}
+      ${/* Na consulta o anexo precisa ser ABRÍVEL, não só nomeado: é aqui que os
+            outros usuários (qualidade, cliente interno) buscam o documento. No
+            PDF impresso o link vira apenas o texto do nome. */''}
+      ${cell('Relatório de Pintura anexado', pint
+        ? (pint.url ? `<a href="${esc(pint.url)}" target="_blank" rel="noopener">${esc(pint.nome)}</a>` : esc(pint.nome))
+        : '—')}
       ${cell('Resultado da inspeção visual', resLabel)}
     </div></div>`;
 }

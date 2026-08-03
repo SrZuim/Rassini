@@ -66,6 +66,14 @@ export function mensagemErro(e) {
   const txt = `${e?.message || ''} ${e?.details || ''} ${e?.hint || ''}`.toLowerCase();
   if (ehErroDeRede(e))
     return 'Não foi possível acessar o banco de dados. Verifique sua conexão e tente novamente.';
+  /* Falhas do Supabase Storage (anexos/evidências) não são erro de banco: têm
+     causa e correção próprias — bucket ausente, MIME barrado, tamanho, policy. */
+  if (/bucket not found|nosuchbucket/.test(txt))
+    return 'O repositório de arquivos (bucket "evidencias") não existe no Supabase. Rode database/fix_anexos_pintura.sql — nenhum anexo pode ser salvo até lá.';
+  if (/mime type|invalid_mime/.test(txt))
+    return 'O tipo deste arquivo não é aceito pelo repositório de arquivos. Use JPG, PNG, WEBP ou PDF.';
+  if (/payload too large|exceeded the maximum/.test(txt))
+    return 'Arquivo maior que o limite do repositório de arquivos. Reduza o tamanho e tente novamente.';
   if (ehErroDeSchema(e))
     return 'Erro de configuração do banco de dados. Consulte o administrador — há migration pendente (database/fix_integracao_auditoria_biblioteca.sql).';
   if (code === '42501' || /row-level security|permission denied|violates row-level/.test(txt))
@@ -842,23 +850,30 @@ export async function salvarResultadoVisual(relatorioId, caracteristicaId, valor
 }
 
 /* ================================ RELATÓRIO DE PINTURA (anexo único do relatório)
-   Guardado no próprio relatório (coluna jsonb `relatorio_pintura`), tolerando
-   bases que ainda não rodaram a migration: se a coluna não existir, avisa uma
-   vez e devolve null (sem derrubar o fluxo) — a validação de anexo obrigatório
-   fica suspensa até rodar database/inspecao_apos_pintura.sql. */
+   Guardado no próprio relatório (coluna jsonb `relatorio_pintura`).
+
+   ANTES esta função ENGOLIA o erro de schema e devolvia null — o chamador subia
+   o arquivo, via "salvo" e, ao recarregar, o anexo tinha sumido: exatamente o
+   bug relatado. Gravação que não gravou é ERRO, nunca sucesso silencioso. Agora
+   a coluna ausente vira um InspError com a instrução da migration; a flag
+   `_semColunaPintura` continua existindo apenas para a TELA exibir o aviso de
+   migration pendente antes mesmo de o usuário tentar anexar. */
 let _semColunaPintura = false;
 export function temColunaPintura() { return !_semColunaPintura; }
+export const MSG_MIGRACAO_PINTURA =
+  'O banco ainda não tem a coluna do Relatório de Pintura. Rode database/fix_anexos_pintura.sql no Supabase.';
 export function relatorioPintura(rel) { return rel?.relatorio_pintura || null; }
 
 export async function salvarRelatorioPintura(relatorioId, anexo, user = null) {
   const doc = anexo ? {
     nome: anexo.nome || 'relatorio-pintura', tipo: anexo.tipo || '', url: anexo.url || '',
-    tamanho: anexo.tamanho || '', uploaded_by: user?.id || null, uploaded_nome: user?.nome || '',
+    path: anexo.path || null, tamanho: anexo.tamanho || '',
+    uploaded_by: user?.id || null, uploaded_nome: user?.nome || '',
     created_at: nowISO()
   } : null;
-  if (_semColunaPintura) return null;
   try {
     const r = await patchRelatorio(relatorioId, { relatorio_pintura: doc });
+    _semColunaPintura = false;                       // gravou: a coluna existe
     try {
       await registrarHistorico(relatorioId, user, doc ? 'Anexou relatório de pintura' : 'Removeu relatório de pintura',
         'relatorio_pintura', '—', doc?.nome || '—');
@@ -867,11 +882,57 @@ export async function salvarRelatorioPintura(relatorioId, anexo, user = null) {
   } catch (e) {
     if (!ehErroDeSchema(e)) throw e;
     _semColunaPintura = true;
-    console.warn('[INSP] insp_relatorios não tem relatorio_pintura — anexo de pintura não persistido. ' +
-      'Rode database/inspecao_apos_pintura.sql no Supabase. Detalhe:', e?.message || e);
-    return null;
+    console.warn('[INSP] insp_relatorios não tem relatorio_pintura — anexo de pintura NÃO persistido. ' +
+      'Rode database/fix_anexos_pintura.sql no Supabase. Detalhe:', e?.message || e);
+    throw new InspError('MIGRACAO_PINTURA', MSG_MIGRACAO_PINTURA, e);
   }
 }
+
+/* Descobre uma vez, ao abrir a etapa, se a coluna existe — assim a tela avisa
+   ANTES de o usuário escolher um arquivo, em vez de falhar depois do upload.
+   Best-effort: qualquer outra falha (rede, permissão) não muda a flag. */
+export async function checarColunaPintura(relatorioId) {
+  if (db.mode !== 'supabase' || !relatorioId) return true;
+  try {
+    const { getSupabase } = await import('./supabaseClient.js');
+    const sb = await getSupabase();
+    const { error } = await sb.from('insp_relatorios').select('relatorio_pintura').eq('id', relatorioId).limit(1);
+    if (error && ehErroDeSchema(error)) { _semColunaPintura = true; return false; }
+    if (!error) _semColunaPintura = false;
+  } catch { /* rede/sessão: não conclui nada */ }
+  return !_semColunaPintura;
+}
+
+/* ============================== EVIDÊNCIAS DO RELATÓRIO (tabela insp_anexos)
+   Fonte ÚNICA das evidências fotográficas da inspeção (incluindo as da etapa
+   Inspeção Após Pintura, vinculadas por caracteristica_id). A tabela legada
+   `evidencias` é só um espelho histórico e nunca decide o que a tela mostra.
+
+   `path` e `uploaded_nome` chegaram com database/fix_anexos_pintura.sql: em
+   bases que ainda não rodaram a migration, gravamos sem elas e DENUNCIAMOS a
+   degradação (o anexo persiste; o que se perde é poder apagar o arquivo do
+   Storage junto com o registro) — nunca um "salvo" que escondeu perda de dado. */
+const COLUNAS_ANEXO_OPCIONAIS = ['path', 'uploaded_nome'];
+let _semColunasAnexo = false;
+export function temColunasAnexo() { return !_semColunasAnexo; }
+export const MSG_MIGRACAO_ANEXO =
+  'A evidência foi salva, mas sem o caminho do arquivo no Storage (colunas novas ausentes). ' +
+  'Rode database/fix_anexos_pintura.sql no Supabase.';
+
+export async function inserirAnexo(anexo) {
+  const semOpcionais = () => { const p = { ...anexo }; COLUNAS_ANEXO_OPCIONAIS.forEach(k => delete p[k]); return p; };
+  if (_semColunasAnexo) return db.insert('insp_anexos', semOpcionais());
+  try {
+    return await db.insert('insp_anexos', anexo);
+  } catch (e) {
+    if (!ehErroDeSchema(e)) throw e;
+    _semColunasAnexo = true;
+    console.warn('[INSP] insp_anexos não tem path/uploaded_nome — gravando sem elas. ' +
+      'Rode database/fix_anexos_pintura.sql no Supabase. Detalhe:', e?.message || e);
+    return db.insert('insp_anexos', semOpcionais());
+  }
+}
+export async function removerAnexo(anexoId) { return db.remove('insp_anexos', anexoId); }
 
 /* ============================================ QUANTIDADE DE AMOSTRAS (§6)
    Ao reduzir a quantidade, retorna as medições que SERÃO removidas para o

@@ -26,7 +26,7 @@ import { usuarioPodeMedirCaracteristica, motivoBloqueioMedicao, obterCargoRespon
 import { SUPABASE } from '../../../services/config.js';
 import { getSupabase } from '../../../services/supabaseClient.js';
 import { $, $$, el, toast, modal, confirmDialog, initials } from '../ui.js';
-import { initEvidenceUpload } from '../evidence.js';
+import { initEvidenceUpload, removeEvidenceFromStorage, mensagemStorage } from '../evidence.js';
 
 /* Fluxo por etapas. "Inspeção Após Pintura" (características de equipamento
    "Visual", respondidas OK/NOK) entra ENTRE Medições e Revisão. Ao inserir aqui,
@@ -1641,8 +1641,18 @@ async function abrirTratamento(carId) {
   $('#tr-save', m.host).addEventListener('click', async () => {
     const ok = await autosave(async () => {
       await INSP.salvarObservacao(carId, $('#tr-obs', m.host).value);
-      const saved = await ev.commit({ usuario: USER, registro_tipo: 'insp_acao', registro_id: R.rel.id });
-      for (const s of saved) await db.insert('insp_anexos', { relatorio_id: R.rel.id, caracteristica_id: carId, medicao_id: null, nome: s.nome, tipo: s.tipo, url: s.url, tamanho: '', uploaded_by: USER.id, created_at: INSP.nowISO() });
+      // Mesmo contrato da evidência visual: insp_anexos é a fonte única e o
+      // upload é desfeito se o vínculo falhar (ver abrirEvidenciaVisual).
+      const saved = await ev.commit({ usuario: USER, registro_tipo: 'insp_acao', registro_id: R.rel.id, mirror: false });
+      for (const s of saved) {
+        try {
+          await INSP.inserirAnexo({
+            relatorio_id: R.rel.id, caracteristica_id: carId, medicao_id: null,
+            nome: s.nome, tipo: s.tipo, url: s.url, path: s.path, tamanho: s.tamanho || '',
+            uploaded_by: USER.id, uploaded_nome: USER.nome || '', created_at: INSP.nowISO()
+          });
+        } catch (e) { await removeEvidenceFromStorage(s.path); throw e; }
+      }
       await INSP.salvarAcao(R.rel.id, carId, {
         defect_class: classe, observacao: $('#tr-obs', m.host).value, acao_imediata: $('#tr-ai', m.host).value,
         acao_permanente: $('#tr-ap', m.host).value, responsavel_id: $('#tr-resp', m.host).value || null,
@@ -1682,6 +1692,9 @@ async function stepInspecaoPintura(host) {
   const r = R.rel;
   const visuais = caracteristicasVisuais();
   const pintura = INSP.relatorioPintura(r);
+  /* Descobre a migration pendente ANTES de o usuário escolher um arquivo: o
+     aviso aparece no campo, em vez de o upload falhar depois de já ter subido. */
+  await INSP.checarColunaPintura(r.id);
   const semColuna = !INSP.temColunaPintura();
   host.innerHTML = `
     <h3 class="insp-h"><i class="bi bi-brush"></i> Inspeção Após Pintura</h3>
@@ -1694,8 +1707,11 @@ async function stepInspecaoPintura(host) {
         <th class="sticky-l">Cota</th><th>Característica</th><th>Quadrante</th><th>Ref.</th><th>Especificação visual</th><th>Resultado *</th><th>Observação</th><th>Evidência</th>
       </tr></thead><tbody>
         ${visuais.map(linhaVisual).join('')}
-      </tbody></table></div>
-      ${campoRelatorioPintura(pintura, semColuna)}`}`;
+      </tbody></table></div>`}
+    ${/* O Relatório de Pintura é um documento DO RELATÓRIO, não da característica:
+          aparece mesmo quando a peça não tem item visual (antes ficava escondido
+          junto com a tabela, e não havia como anexá-lo nessas peças). */''}
+    ${campoRelatorioPintura(pintura, semColuna)}`;
 
   if (VIEWONLY) { atualizarNav(); return; }
   $$('.insp-visual-oknok .insp-oknok__b', host).forEach(b => b.addEventListener('click', () => onVisualOkNok(b)));
@@ -1716,10 +1732,14 @@ function linhaVisual(c) {
   const dis = VIEWONLY ? ' disabled' : '';
   // "Especificação visual" = observação técnica cadastrada (o que inspecionar).
   const espec = c.observacao_tec || c.referencia || '—';
+  /* Indicador de anexo salvo: o ícone só fica verde quando a evidência já está
+     PERSISTIDA (veio de insp_anexos no reload), nunca por ter escolhido arquivo. */
   const nEvid = (R.anexos || []).filter(a => a.caracteristica_id === c.id).length;
   const evidCell = VIEWONLY
     ? (nEvid ? `<span class="cell-sub"><i class="bi bi-paperclip"></i> ${nEvid} anexo(s)</span>` : '—')
-    : `<button class="rna-btn rna-btn-ghost rna-btn-sm insp-visual-evid" data-vevid="${c.id}"><i class="bi bi-paperclip"></i> ${nEvid ? nEvid + ' anexo(s)' : 'Anexar'}</button>`;
+    : `<button class="rna-btn rna-btn-ghost rna-btn-sm insp-visual-evid" data-vevid="${c.id}">${nEvid
+        ? `<i class="bi bi-check-circle-fill" style="color:var(--rna-green,#2e7d32)"></i> ${nEvid} anexo(s)`
+        : '<i class="bi bi-paperclip"></i> Anexar'}</button>`;
   return `<tr data-vrow="${c.id}">
     <td class="sticky-l cell-strong">${escTitle(String(c.cota ?? '—'))}</td>
     <td>${escTitle(c.caracteristica || '—')}</td>
@@ -1757,19 +1777,36 @@ function campoRelatorioPintura(pintura, semColuna) {
     <b><i class="bi bi-file-earmark-arrow-up"></i> Relatório de Pintura</b>
     <div class="cell-sub">Documento complementar (opcional) — PDF, JPG, JPEG ou PNG (máx. ${PINTURA_MAX_MB} MB).</div>
     ${semColuna ? `<div class="insp-blocker mt-2" style="border-left:4px solid var(--rna-yellow-600)"><i class="bi bi-exclamation-triangle"></i>
-      <div>O anexo (opcional) do Relatório de Pintura ainda não pode ser salvo neste banco. Rode <b>database/inspecao_apos_pintura.sql</b> no Supabase para habilitar. A inspeção pode ser salva e finalizada normalmente sem ele.</div></div>` : ''}
+      <div>O anexo (opcional) do Relatório de Pintura ainda não pode ser salvo neste banco. Rode <b>database/fix_anexos_pintura.sql</b> no Supabase para habilitar. A inspeção pode ser salva e finalizada normalmente sem ele.</div></div>` : ''}
     <div id="insp-pintura-atual" class="mt-2">${pinturaAtualHtml(pintura)}</div>
     ${VIEWONLY ? '' : `<div class="mt-2">
       <input type="file" id="insp-pintura-file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" hidden>
-      <button class="rna-btn rna-btn-dark rna-btn-sm" id="insp-pintura-btn"><i class="bi bi-upload"></i> ${pintura ? 'Substituir arquivo' : 'Anexar arquivo'}</button>
+      <button class="rna-btn rna-btn-dark rna-btn-sm" id="insp-pintura-btn"${semColuna ? ' disabled title="Rode database/fix_anexos_pintura.sql para habilitar"' : ''}><i class="bi bi-upload"></i> ${pintura ? 'Substituir arquivo' : 'Anexar arquivo'}</button>
     </div>`}
   </div>`;
 }
+/* Estado do anexo: nome, tamanho, quem enviou e quando, com abrir/baixar. Sem
+   isso o auditor não tinha como confirmar que o arquivo ficou mesmo salvo. */
 function pinturaAtualHtml(p) {
   if (!p) return `<span class="cell-sub"><i class="bi bi-dash-circle"></i> Nenhum arquivo anexado.</span>`;
-  const nome = p.url ? `<a href="${escTitle(p.url)}" target="_blank" rel="noopener">${escTitle(p.nome)}</a>` : escTitle(p.nome);
-  return `<div class="d-flex align-items-center gap-2"><i class="bi bi-file-earmark-check" style="color:var(--rna-green,#2e7d32)"></i>
-    <span>${nome}</span>${VIEWONLY ? '' : `<button class="rna-btn rna-btn-ghost rna-btn-sm" id="insp-pintura-rm" title="Remover"><i class="bi bi-x-lg"></i></button>`}</div>`;
+  const meta = [tamanhoLegivel(p.tamanho), p.uploaded_nome ? `por ${escTitle(p.uploaded_nome)}` : '',
+                formatarDataHoraBrasil(p.created_at, { vazio: '' })].filter(Boolean).join(' · ');
+  return `<div class="d-flex align-items-center flex-wrap gap-2">
+    <i class="bi bi-file-earmark-check" style="color:var(--rna-green,#2e7d32)"></i>
+    <b>${escTitle(p.nome)}</b>
+    ${meta ? `<span class="cell-sub">${meta}</span>` : ''}
+    ${p.url ? `<a class="rna-btn rna-btn-ghost rna-btn-sm" href="${escTitle(p.url)}" target="_blank" rel="noopener"><i class="bi bi-eye"></i> Visualizar</a>
+               <a class="rna-btn rna-btn-ghost rna-btn-sm" href="${escTitle(p.url)}" download="${escTitle(p.nome)}"><i class="bi bi-download"></i> Baixar</a>` : ''}
+    ${VIEWONLY ? '' : `<button class="rna-btn rna-btn-ghost rna-btn-sm" id="insp-pintura-rm" title="Remover anexo"><i class="bi bi-trash"></i> Remover</button>`}
+  </div>`;
+}
+/** Bytes → texto curto ('' quando desconhecido). */
+function tamanhoLegivel(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /* ------------------------------------------------------- gate da inspeção visual
@@ -1829,43 +1866,114 @@ async function onVisualObs(inp) {
   }, { contexto: 'Falha ao salvar a observação' });
 }
 
-/** Modal de evidências (fotos) de uma característica visual — reusa insp_anexos. */
+/** Modal de evidências (fotos) de uma característica visual — reusa insp_anexos.
+    insp_anexos é a FONTE ÚNICA do que a tela mostra; o espelho na tabela legada
+    `evidencias` é best-effort (mirror:false) para que uma policy antiga daquela
+    tabela não derrube a evidência que já subiu e já foi vinculada. */
 function abrirEvidenciaVisual(carId) {
   const c = R.caracteristicas.find(x => x.id === carId); if (!c) return;
-  const existentes = (R.anexos || []).filter(a => a.caracteristica_id === carId);
   const m = modal({
     title: `Evidência — ${c.caracteristica || 'característica visual'}`,
-    content: `${existentes.length ? `<div class="mb-2"><b>Anexos atuais</b>
-        <ul class="insp-ul mt-1">${existentes.map(a => `<li>${a.url ? `<a href="${escTitle(a.url)}" target="_blank" rel="noopener">${escTitle(a.nome)}</a>` : escTitle(a.nome)}</li>`).join('')}</ul></div>` : ''}
-      <div id="ev-visual"></div>`,
+    content: `<div id="ev-lista">${listaAnexosHtml(carId)}</div><div id="ev-visual" class="mt-2"></div>`,
     footer: `<button class="rna-btn rna-btn-ghost" data-bs-dismiss="modal">Fechar</button>
              <button class="rna-btn rna-btn-primary" id="ev-save"><i class="bi bi-save"></i> Salvar evidência</button>`
   });
   const ev = initEvidenceUpload($('#ev-visual', m.host), { multiple: true, label: 'Anexar evidência (foto)' });
+  const ligarRemocao = () => $$('.ev-rm', m.host).forEach(b => b.addEventListener('click', () => removerAnexoVisual(b.dataset.anexo, carId, m)));
+  ligarRemocao();
   $('#ev-save', m.host).addEventListener('click', async () => {
-    if (!ev.hasFiles()) { m.close(); return; }
+    /* Fechar em silêncio quando nada foi anexado ensinava o usuário a achar que
+       tinha salvo. Se não há arquivo, diga isso. */
+    if (!ev.hasFiles()) return toast('Selecione uma imagem antes de salvar.', { type: 'warn', title: 'Evidência' });
+    let salvos = [];
     const ok = await autosave(async () => {
-      const saved = await ev.commit({ usuario: USER, registro_tipo: 'insp_visual', registro_id: R.rel.id });
-      for (const s of saved) await db.insert('insp_anexos', { relatorio_id: R.rel.id, caracteristica_id: carId, medicao_id: null, nome: s.nome, tipo: s.tipo, url: s.url, tamanho: '', uploaded_by: USER.id, created_at: INSP.nowISO() });
+      salvos = await ev.commit({ usuario: USER, registro_tipo: 'insp_visual', registro_id: R.rel.id, mirror: false });
+      for (const s of salvos) {
+        try {
+          await INSP.inserirAnexo({
+            relatorio_id: R.rel.id, caracteristica_id: carId, medicao_id: null,
+            nome: s.nome, tipo: s.tipo, url: s.url, path: s.path, tamanho: s.tamanho || '',
+            uploaded_by: USER.id, uploaded_nome: USER.nome || '', created_at: INSP.nowISO()
+          });
+        } catch (e) {
+          await removeEvidenceFromStorage(s.path);   // vínculo falhou: sem órfão no Storage
+          throw e;
+        }
+      }
       await reload();
     }, { contexto: 'Falha ao salvar a evidência' });
     if (!ok) return;
-    m.close(); renderStep(); toast('Evidência salva.', { type: 'ok' });
+    ev.clear();
+    $('#ev-lista', m.host).innerHTML = listaAnexosHtml(carId);
+    ligarRemocao();
+    renderStep();
+    if (!INSP.temColunasAnexo()) toast(INSP.MSG_MIGRACAO_ANEXO, { type: 'warn', title: 'Salvo com limitação', timeout: 9000 });
+    toast(`${salvos.length} evidência(s) salva(s).`, { type: 'ok' });
   });
+}
+
+/** Lista dos anexos já persistidos da característica (nome, tamanho, autor, ações). */
+function listaAnexosHtml(carId) {
+  const existentes = (R.anexos || []).filter(a => a.caracteristica_id === carId);
+  if (!existentes.length) return `<div class="cell-sub"><i class="bi bi-dash-circle"></i> Nenhuma evidência anexada ainda.</div>`;
+  return `<div class="insp-card-lite"><b><i class="bi bi-paperclip"></i> Evidências salvas (${existentes.length})</b>
+    ${existentes.map(a => {
+      const meta = [tamanhoLegivel(a.tamanho), a.uploaded_nome ? `por ${escTitle(a.uploaded_nome)}` : '',
+                    formatarDataHoraBrasil(a.created_at, { vazio: '' })].filter(Boolean).join(' · ');
+      return `<div class="d-flex align-items-center flex-wrap gap-2 mt-2">
+        <i class="bi bi-image" style="color:var(--rna-green,#2e7d32)"></i>
+        <span>${escTitle(a.nome || 'evidência')}</span>
+        ${meta ? `<span class="cell-sub">${meta}</span>` : ''}
+        ${a.url ? `<a class="rna-btn rna-btn-ghost rna-btn-sm" href="${escTitle(a.url)}" target="_blank" rel="noopener"><i class="bi bi-eye"></i> Ver</a>
+                   <a class="rna-btn rna-btn-ghost rna-btn-sm" href="${escTitle(a.url)}" download="${escTitle(a.nome || 'evidencia')}"><i class="bi bi-download"></i> Baixar</a>` : ''}
+        ${VIEWONLY ? '' : `<button class="rna-btn rna-btn-ghost rna-btn-sm ev-rm" data-anexo="${a.id}" title="Remover"><i class="bi bi-trash"></i></button>`}
+      </div>`;
+    }).join('')}</div>`;
+}
+
+/** Remove o anexo: primeiro o registro, depois o arquivo do Storage. */
+function removerAnexoVisual(anexoId, carId, m) {
+  const a = (R.anexos || []).find(x => x.id === anexoId); if (!a) return;
+  confirmDialog(`Remover a evidência <b>${escTitle(a.nome || 'imagem')}</b>?`, async () => {
+    const ok = await autosave(async () => {
+      await INSP.removerAnexo(anexoId);
+      await removeEvidenceFromStorage(a.path);
+      await reload();
+    }, { contexto: 'Falha ao remover a evidência' });
+    if (!ok) return;
+    if (m?.host && document.body.contains(m.host)) {
+      $('#ev-lista', m.host).innerHTML = listaAnexosHtml(carId);
+      $$('.ev-rm', m.host).forEach(b => b.addEventListener('click', () => removerAnexoVisual(b.dataset.anexo, carId, m)));
+    }
+    renderStep();
+    toast('Evidência removida.', { type: 'ok' });
+  }, { title: 'Remover evidência', okLabel: 'Remover', danger: true });
 }
 
 /* ------------------------------------------------- upload do Relatório de Pintura */
 const PINTURA_EXT = ['pdf', 'jpg', 'jpeg', 'png'];
 const PINTURA_MAX_MB = 15;
+/* Ordem obrigatória: (1) sobe o arquivo, (2) grava a URL no relatório. Se (2)
+   falhar, o objeto recém-enviado é APAGADO do Storage — o Storage nunca fica com
+   arquivo que o banco desconhece, e o banco nunca aponta para arquivo que não
+   subiu. O anexo anterior só é apagado DEPOIS de o novo estar gravado. */
 async function enviarRelatorioPintura(file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   if (!PINTURA_EXT.includes(ext)) return toast('Formato inválido. Use PDF, JPG, JPEG ou PNG.', { type: 'warn', title: 'Relatório de Pintura' });
+  if (!file.size) return toast('O arquivo selecionado está vazio.', { type: 'warn', title: 'Relatório de Pintura' });
   if (file.size > PINTURA_MAX_MB * 1024 * 1024) return toast(`Arquivo muito grande (máx. ${PINTURA_MAX_MB} MB).`, { type: 'warn', title: 'Relatório de Pintura' });
+  const anterior = INSP.relatorioPintura(R.rel);
+  let enviado = null;
   const ok = await autosave(async () => {
-    const url = await uploadArquivoPintura(file);
-    const anexo = { nome: file.name, tipo: file.type || ext, url, tamanho: String(file.size) };
-    await INSP.salvarRelatorioPintura(R.rel.id, anexo, USER);
-    if (!INSP.temColunaPintura()) throw new Error('O banco ainda não tem a coluna do Relatório de Pintura. Rode database/inspecao_apos_pintura.sql no Supabase.');
+    enviado = await uploadArquivoPintura(file);
+    const anexo = { nome: file.name, tipo: file.type || ext, url: enviado.url, path: enviado.path, tamanho: String(file.size) };
+    try {
+      await INSP.salvarRelatorioPintura(R.rel.id, anexo, USER);
+    } catch (e) {
+      await removeEvidenceFromStorage(enviado.path);   // desfaz o upload órfão
+      throw e;
+    }
+    if (anterior?.path && anterior.path !== enviado.path) await removeEvidenceFromStorage(anterior.path);
     await reload();
   }, { contexto: 'Falha ao anexar o Relatório de Pintura' });
   if (!ok) return;
@@ -1873,23 +1981,30 @@ async function enviarRelatorioPintura(file) {
   toast('Relatório de Pintura anexado.', { type: 'ok' });
 }
 async function removerRelatorioPintura() {
-  const ok = await autosave(async () => { await INSP.salvarRelatorioPintura(R.rel.id, null, USER); await reload(); },
-    { contexto: 'Falha ao remover o Relatório de Pintura' });
-  if (!ok) return;
-  renderStep();
+  const p = INSP.relatorioPintura(R.rel);
+  confirmDialog(`Remover o anexo <b>${escTitle(p?.nome || 'Relatório de Pintura')}</b>? O arquivo será apagado do repositório.`, async () => {
+    const ok = await autosave(async () => {
+      await INSP.salvarRelatorioPintura(R.rel.id, null, USER);   // primeiro o registro
+      await removeEvidenceFromStorage(p?.path);                  // depois o arquivo
+      await reload();
+    }, { contexto: 'Falha ao remover o Relatório de Pintura' });
+    if (!ok) return;
+    renderStep();
+    toast('Relatório de Pintura removido.', { type: 'ok' });
+  }, { title: 'Remover anexo', okLabel: 'Remover', danger: true });
 }
-/* Envia ao Supabase Storage (bucket 'evidencias') OU devolve Base64 (demo). */
+/* Envia ao Supabase Storage (bucket 'evidencias') OU devolve Base64 (demo).
+   Retorna { url, path } — `path` permite apagar o objeto depois. */
 async function uploadArquivoPintura(file) {
-  if (SUPABASE.enabled) {
-    const sb = await getSupabase();
-    const safe = (file.name || 'relatorio-pintura').replace(/[^\w.\-]+/g, '_');
-    const path = `insp_pintura/${R.rel.id}/${Date.now()}_${safe}`;
-    const { error } = await sb.storage.from('evidencias').upload(path, file, { contentType: file.type || undefined, upsert: false });
-    if (error) throw error;
-    const { data } = sb.storage.from('evidencias').getPublicUrl(path);
-    return data.publicUrl;
-  }
-  return await lerArquivoDataURL(file);   // fallback demo: Base64
+  if (!SUPABASE.enabled) return { url: await lerArquivoDataURL(file), path: null };   // fallback demo: Base64
+  const sb = await getSupabase();
+  const safe = (file.name || 'relatorio-pintura').replace(/[^\w.\-]+/g, '_');
+  const path = `insp_pintura/${R.rel.id}/${Date.now()}_${safe}`;
+  const { error } = await sb.storage.from('evidencias').upload(path, file, { contentType: file.type || undefined, upsert: false });
+  if (error) { INSP.logErro('Upload do Relatório de Pintura recusado pelo Storage', error); throw new Error(mensagemStorage(error)); }
+  const { data } = sb.storage.from('evidencias').getPublicUrl(path);
+  if (!data?.publicUrl) throw new Error('O Storage não devolveu a URL pública do Relatório de Pintura.');
+  return { url: data.publicUrl, path };
 }
 function lerArquivoDataURL(file) {
   return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
