@@ -59,36 +59,43 @@ function ehErroDeRede(e) {
     .test(String(e?.message || '').toLowerCase());
 }
 
-/** Traduz o erro real numa mensagem específica para o auditor (§tratamento de erros). */
+/** Traduz o erro real numa mensagem específica para o auditor (§tratamento de erros).
+
+    Esta função é o tradutor GERAL do módulo (todo autosave passa por aqui), mas
+    nasceu no contexto de "vincular peça à auditoria" e carregava esse texto em
+    mensagens genéricas — por isso um upload recusado aparecia como
+    "O vínculo entre a auditoria e a peça não pôde ser salvo: ...". As mensagens
+    agora descrevem só o que o código do erro realmente prova; o contexto
+    específico é responsabilidade de quem chama (via InspError/AnexoError).
+
+    `e.amigavel` (AnexoError) = mensagem já pronta para o usuário: devolvida
+    intacta, nunca reembrulhada. */
 export function mensagemErro(e) {
-  if (e instanceof InspError) return e.message;
+  if (e instanceof InspError || e?.amigavel) return e.message;
   const code = String(e?.code || e?.status || '');
   const txt = `${e?.message || ''} ${e?.details || ''} ${e?.hint || ''}`.toLowerCase();
+  const tec = [e?.code ? `code ${e.code}` : '', e?.details || '', e?.hint || ''].filter(Boolean).join(' · ');
+  const com = m => (tec ? `${m} [detalhe: ${tec}]` : m);
+
   if (ehErroDeRede(e))
     return 'Não foi possível acessar o banco de dados. Verifique sua conexão e tente novamente.';
-  /* Falhas do Supabase Storage (anexos/evidências) não são erro de banco: têm
-     causa e correção próprias — bucket ausente, MIME barrado, tamanho, policy. */
-  if (/bucket not found|nosuchbucket/.test(txt))
-    return 'O repositório de arquivos (bucket "evidencias") não existe no Supabase. Rode database/fix_anexos_pintura.sql — nenhum anexo pode ser salvo até lá.';
-  if (/mime type|invalid_mime/.test(txt))
-    return 'O tipo deste arquivo não é aceito pelo repositório de arquivos. Use JPG, PNG, WEBP ou PDF.';
-  if (/payload too large|exceeded the maximum/.test(txt))
-    return 'Arquivo maior que o limite do repositório de arquivos. Reduza o tamanho e tente novamente.';
   if (ehErroDeSchema(e))
-    return 'Erro de configuração do banco de dados. Consulte o administrador — há migration pendente (database/fix_integracao_auditoria_biblioteca.sql).';
+    return com('Erro de configuração do banco de dados: há migration pendente. Consulte o administrador.');
   if (code === '42501' || /row-level security|permission denied|violates row-level/.test(txt))
-    return 'Você não possui permissão para vincular esta peça a esta auditoria.';
+    return com('Seu usuário não possui permissão para gravar este registro nesta auditoria.');
   if (code === 'PGRST116' || /multiple \(or no\) rows|contains 0 rows/.test(txt))
-    return 'A auditoria não foi encontrada ou não está mais disponível para edição.';
+    return com('O registro não foi encontrado ou não está mais disponível para edição.');
   if (code === '23503' || /foreign key/.test(txt))
-    return 'A peça selecionada não existe mais na Biblioteca Técnica. Selecione outra peça.';
+    return com('Um registro referenciado não existe mais (chave estrangeira inválida).');
+  if (code === '23505' || /duplicate key/.test(txt))
+    return com('Este registro já existe.');
+  if (code === '23502' || /not-null|null value in column/.test(txt))
+    return com('Um campo obrigatório chegou vazio. Veja o payload no console.');
   if (code === '23514' || /tipos_inspecao/.test(txt))
     return 'A peça precisa ter ao menos um tipo de inspeção aplicável cadastrado na Biblioteca Técnica.';
   if (['401', '403'].includes(code) || /jwt|not authenticated|invalid token/.test(txt))
     return 'A sessão do usuário expirou. Entre novamente.';
-  return e?.message
-    ? `O vínculo entre a auditoria e a peça não pôde ser salvo: ${e.message}`
-    : 'O vínculo entre a auditoria e a peça não pôde ser salvo.';
+  return e?.message ? com(`Não foi possível salvar: ${e.message}`) : 'Não foi possível salvar o registro.';
 }
 
 /** Valida a sessão antes de gravar. Em modo demo não há Supabase Auth. */
@@ -908,11 +915,11 @@ export async function checarColunaPintura(relatorioId) {
    Inspeção Após Pintura, vinculadas por caracteristica_id). A tabela legada
    `evidencias` é só um espelho histórico e nunca decide o que a tela mostra.
 
-   `path` e `uploaded_nome` chegaram com database/fix_anexos_pintura.sql: em
+   `path`, `uploaded_nome` e `peca_id` chegaram com fix_anexos_pintura*.sql: em
    bases que ainda não rodaram a migration, gravamos sem elas e DENUNCIAMOS a
    degradação (o anexo persiste; o que se perde é poder apagar o arquivo do
    Storage junto com o registro) — nunca um "salvo" que escondeu perda de dado. */
-const COLUNAS_ANEXO_OPCIONAIS = ['path', 'uploaded_nome'];
+const COLUNAS_ANEXO_OPCIONAIS = ['path', 'uploaded_nome', 'peca_id'];
 let _semColunasAnexo = false;
 export function temColunasAnexo() { return !_semColunasAnexo; }
 export const MSG_MIGRACAO_ANEXO =

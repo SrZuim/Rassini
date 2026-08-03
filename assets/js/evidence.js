@@ -121,14 +121,11 @@ export function initEvidenceUpload(alvo, opts = {}) {
       const mirror = meta.mirror !== false;    // ver cabeçalho: espelho em `evidencias`
       const saved = [];
       for (const it of items) {
-        let up;
-        try {
-          up = await uploadEvidenceToStorage(it, meta);
-        } catch (err) {
-          console.error('[evidence] falha no upload ao Storage', err);
-          toast(mensagemStorage(err), { type: 'crit', title: 'Erro no upload', timeout: 9000 });
-          throw err;
-        }
+        /* uploadEvidenceToStorage já loga o erro cru e devolve AnexoError com a
+           mensagem pronta — quem chama só propaga (o toast sai uma vez só, na
+           camada de autosave da tela). */
+        const caminho = typeof meta.path === 'function' ? meta.path(it) : meta.path;
+        const up = await uploadEvidenceToStorage(it, { ...meta, path: caminho });
         const rec = {
           entidade: meta.registro_tipo || 'registro',
           entidade_id: meta.registro_id || null,
@@ -144,9 +141,8 @@ export function initEvidenceUpload(alvo, opts = {}) {
              Se a tela tem tabela própria, apenas avisamos no console. */
           if (mirror) {
             await removeEvidenceFromStorage(up.path);
-            console.error('[evidence] falha ao gravar em `evidencias`', err);
-            toast(mensagemStorage(err), { type: 'crit', title: 'Erro ao salvar evidência', timeout: 9000 });
-            throw err;
+            logAnexo('falha ao gravar em `evidencias` (espelho obrigatório)', err, { payload: rec, tabela: 'evidencias' });
+            throw new AnexoError(mensagemRegistro(err), err);
           }
           console.warn('[evidence] espelho em `evidencias` não gravado (não bloqueante):', err?.message || err);
         }
@@ -179,19 +175,90 @@ export async function handleEvidenceFile(file) {
   }
 }
 
+/* ======================================================= ERRO DE ANEXO
+   Erro já traduzido para o usuário, carregando o erro CRU para o console.
+   `amigavel` avisa as camadas de cima que a mensagem já está pronta e NÃO deve
+   ser reembrulhada — era daí que saía "O vínculo entre a auditoria e a peça não
+   pôde ser salvo: ..." colado num erro de upload. */
+export class AnexoError extends Error {
+  constructor(mensagem, causa, tecnico) {
+    super(mensagem);
+    this.name = 'AnexoError';
+    this.amigavel = true;
+    this.causa = causa;
+    this.tecnico = tecnico || detalheTecnico(causa);
+  }
+}
+
+/** Assinatura técnica do erro cru: status, code, message, details, hint. */
+export function detalheTecnico(e) {
+  if (!e) return '';
+  const partes = [
+    e.status || e.statusCode ? `HTTP ${e.status || e.statusCode}` : '',
+    e.code ? `code ${e.code}` : '',
+    e.name && e.name !== 'Error' ? e.name : '',
+    e.message || '',
+    e.details || '', e.hint || ''
+  ].filter(Boolean);
+  return [...new Set(partes)].join(' · ');
+}
+
+/** Log completo e não-destrutivo do erro (ETAPA 4). Nunca JSON.stringify(erro). */
+export function logAnexo(contexto, e, extra = {}) {
+  console.error(`[anexo] ${contexto}`, {
+    message: e?.message, name: e?.name, code: e?.code,
+    status: e?.status ?? e?.statusCode, details: e?.details, hint: e?.hint,
+    causa: e?.causa, ...extra
+  });
+}
+
+/* Nome de arquivo seguro para o Storage: sem acento, espaço, barra, símbolo —
+   e com a extensão preservada. "Relatório de Pintura (lote 9).pdf" vira
+   "Relatorio-de-Pintura-lote-9.pdf". */
+export function sanitizarNomeArquivo(nome, { max = 80 } = {}) {
+  const bruto = String(nome || 'arquivo');
+  const ponto = bruto.lastIndexOf('.');
+  const ext = ponto > 0 ? bruto.slice(ponto + 1) : '';
+  const base = (ponto > 0 ? bruto.slice(0, ponto) : bruto)
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')   // remove acentos
+    .replace(/[^a-zA-Z0-9]+/g, '-')                     // espaço, barra, símbolo → '-'
+    .replace(/^-+|-+$/g, '')
+    .slice(0, max);
+  const extSafe = ext.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  return `${base || 'arquivo'}${extSafe ? '.' + extSafe : ''}`;
+}
+
+/* O Storage está alcançável? Um POST cross-origin que o servidor recusa SEM
+   devolver cabeçalho CORS chega ao navegador como "Failed to fetch" — idêntico
+   a estar sem internet. Antes de acusar a rede do usuário (que costuma estar
+   boa), perguntamos ao próprio endpoint: se ele responde, o problema é a
+   requisição, não a conexão. */
+export async function storageAlcancavel() {
+  if (!SUPABASE.enabled) return false;
+  try {
+    await fetch(`${SUPABASE.url}/storage/v1/object/public/${BUCKET}/__diag__`, { method: 'GET', cache: 'no-store' });
+    return true;    // qualquer resposta HTTP (inclusive 400/404) prova alcance
+  } catch { return false; }
+}
+
+export const BUCKET = 'evidencias';
+
 /* Envia ao Supabase Storage (se configurado) ou retorna Base64 (fallback local).
-   Devolve { url, path } — `path` é o caminho no bucket, necessário para apagar
-   o objeto caso a gravação no banco falhe depois do upload (sem órfãos). */
+   `meta.path` permite ao chamador definir o caminho (ETAPA 8); sem ele usamos o
+   layout genérico <tipo>/<id>/<timestamp>-<nome>. Devolve { url, path }. */
 export async function uploadEvidenceToStorage(item, meta = {}) {
   if (!SUPABASE.enabled) return { url: item.dataUrl, path: null };   // fallback Base64 (demo)
   const sb = await getSupabase();
-  const safe = (item.nome || 'foto').replace(/[^\w.\-]+/g, '_');
-  const path = `${meta.registro_tipo || 'geral'}/${meta.registro_id || 'tmp'}/${Date.now()}_${safe}`;
+  const safe = sanitizarNomeArquivo(item.nome || 'foto');
+  const path = meta.path || `${meta.registro_tipo || 'geral'}/${meta.registro_id || 'tmp'}/${Date.now()}-${safe}`;
   const blob = dataURLtoBlob(item.dataUrl);
-  const { error } = await sb.storage.from('evidencias').upload(path, blob, { contentType: blob.type, upsert: false });
-  if (error) throw error;
-  const { data } = sb.storage.from('evidencias').getPublicUrl(path);
-  if (!data?.publicUrl) throw new Error('O Storage não devolveu a URL pública do arquivo enviado.');
+  const { error } = await sb.storage.from(BUCKET).upload(path, blob, { contentType: blob.type, upsert: false });
+  if (error) {
+    logAnexo('upload recusado pelo Storage', error, { bucket: BUCKET, path, contentType: blob.type, bytes: blob.size });
+    throw new AnexoError(await mensagemStorage(error), error);
+  }
+  const { data } = sb.storage.from(BUCKET).getPublicUrl(path);
+  if (!data?.publicUrl) throw new AnexoError('O arquivo subiu, mas o Storage não devolveu a URL pública.', null, `path ${path}`);
   return { url: data.publicUrl, path };
 }
 
@@ -210,25 +277,65 @@ export async function removeEvidenceFromStorage(path) {
   }
 }
 
-/* Erro de upload traduzido para a causa REAL. "Tente novamente" para tudo faz o
-   administrador perder horas: bucket inexistente, MIME barrado e RLS têm cada um
-   a sua correção — e todas passam por database/fix_anexos_pintura.sql. */
-export function mensagemStorage(e) {
-  const txt = `${e?.message || ''} ${e?.error || ''} ${e?.details || ''}`.toLowerCase();
-  const code = String(e?.code || e?.statusCode || '');
+/* Erro de upload traduzido para a causa REAL, sempre com o detalhe técnico
+   anexado ao fim — o usuário lê a instrução, o administrador lê a assinatura do
+   erro sem precisar do console.
+
+   REGRA: "falha de conexão" só é dita quando o Storage está PROVADAMENTE
+   inalcançável. Um POST recusado sem cabeçalho CORS produz "Failed to fetch" no
+   navegador, e culpar a rede do usuário nesse caso manda todo mundo investigar
+   o lado errado — foi exatamente o que aconteceu neste bug. */
+export async function mensagemStorage(e) {
+  const txt = `${e?.message || ''} ${typeof e?.error === 'string' ? e.error : ''} ${e?.details || ''}`.toLowerCase();
+  const code = String(e?.code || '');
+  const status = String(e?.status ?? e?.statusCode ?? '');
+  const tec = detalheTecnico(e);
+  const com = m => (tec ? `${m} [detalhe: ${tec}]` : m);
+
   if (/bucket not found|nosuchbucket/.test(txt) || code === 'NoSuchBucket')
-    return 'O repositório de arquivos (bucket "evidencias") não existe no Supabase. Rode database/fix_anexos_pintura.sql — nenhum anexo pode ser salvo até lá.';
-  if (/mime type|invalid_mime|not supported/.test(txt))
-    return 'O tipo deste arquivo não é aceito pelo repositório de arquivos. Use JPG, PNG, WEBP ou PDF.';
-  if (/payload too large|exceeded the maximum|file size/.test(txt) || code === '413')
-    return 'Arquivo maior que o limite do repositório de arquivos. Reduza o tamanho e tente novamente.';
-  if (code === '42501' || /row-level security|violates row-level|permission denied|unauthorized|new row violates/.test(txt))
-    return 'Você não tem permissão para enviar arquivos neste relatório. Fale com o administrador (policies do bucket "evidencias").';
-  if (/failed to fetch|networkerror|load failed|timeout/.test(txt))
-    return 'Não foi possível enviar o arquivo: falha de conexão. Verifique a rede e tente novamente.';
-  if (/duplicate|already exists/.test(txt))
-    return 'Já existe um arquivo com este nome. Tente novamente.';
-  return `Erro ao enviar arquivo${e?.message ? ': ' + e.message : '.'}`;
+    return com('O repositório de arquivos (bucket "evidencias") não existe no Supabase. Rode database/fix_anexos_pintura.sql.');
+  if (/mime type|invalid_mime/.test(txt))
+    return com('Formato de arquivo não permitido pelo repositório. Use JPG, PNG, WEBP ou PDF.');
+  if (/payload too large|exceeded the maximum|maximum allowed size/.test(txt) || status === '413')
+    return com(`O arquivo excede o limite de ${MAX_MB} MB.`);
+  if (code === '42501' || status === '403' || /row-level security|violates row-level|permission denied|new row violates/.test(txt))
+    return com('Seu usuário não possui permissão para enviar anexos nesta auditoria. Faltam as policies de INSERT do bucket "evidencias" (Storage → evidencias → Policies).');
+  if (status === '401' || /jwt|invalid token|not authenticated/.test(txt))
+    return com('A sessão do usuário expirou. Entre novamente e repita o envio.');
+  if (/duplicate|already exists/.test(txt) || status === '409')
+    return com('Já existe um arquivo com este nome no repositório. Tente novamente.');
+
+  /* Falha em nível de fetch: só agora perguntamos se é rede de verdade. */
+  if (/failed to fetch|networkerror|load failed|network request failed|timeout/.test(txt)) {
+    const online = await storageAlcancavel();
+    return online
+      ? com('O servidor de arquivos recusou o envio sem detalhar o motivo (resposta sem cabeçalho CORS). A causa mais comum são as policies do bucket "evidencias" ausentes — verifique Storage → evidencias → Policies.')
+      : com('Não foi possível alcançar o servidor de arquivos. Verifique a conexão e tente novamente.');
+  }
+  return com('Não foi possível enviar o arquivo para o armazenamento.');
+}
+
+/* Erro ao GRAVAR O REGISTRO do anexo (o arquivo já subiu). Códigos do Postgres
+   têm causa distinta e correção distinta — ETAPA 4/11. */
+export function mensagemRegistro(e) {
+  const code = String(e?.code || '');
+  const txt = `${e?.message || ''} ${e?.details || ''} ${e?.hint || ''}`.toLowerCase();
+  const tec = detalheTecnico(e);
+  const com = m => (tec ? `${m} [detalhe: ${tec}]` : m);
+
+  if (code === '23503' || /foreign key/.test(txt))
+    return com('Não foi possível identificar a peça/característica vinculada a esta auditoria (chave estrangeira inválida). O arquivo foi enviado, mas o anexo não foi registrado.');
+  if (code === '23505' || /duplicate key/.test(txt))
+    return com('Este anexo já estava registrado.');
+  if (code === '23502' || /not-null|null value in column/.test(txt))
+    return com('O anexo não pôde ser registrado: um campo obrigatório chegou vazio. Veja o payload no console.');
+  if (code === '42501' || /row-level security|violates row-level|permission denied/.test(txt))
+    return com('Seu usuário não possui permissão para salvar anexos nesta auditoria (RLS).');
+  if (code === 'PGRST116' || /contains 0 rows|multiple \(or no\) rows/.test(txt))
+    return com('O registro do anexo não foi encontrado após a gravação — provável bloqueio de leitura por RLS.');
+  if (['PGRST204', 'PGRST205', '42703', '42P01'].includes(code) || /could not find the .*column|does not exist|schema cache/.test(txt))
+    return com('A tabela de anexos está desatualizada neste banco. Rode database/fix_anexos_pintura.sql no Supabase.');
+  return com('O arquivo foi enviado, mas não foi possível registrar o anexo.');
 }
 
 /** Troca a extensão do nome do arquivo (mantendo o nome original legível). */
