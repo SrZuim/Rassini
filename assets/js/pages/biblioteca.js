@@ -5,7 +5,7 @@
    ========================================================================== */
 import { mountShell } from '../app.js';
 import { db } from '../../../services/db.js';
-import { can, SUPABASE } from '../../../services/config.js';
+import { can } from '../../../services/config.js';
 import * as BIB from '../../../services/biblioteca.js';
 import * as DATA from '../../../services/biblioteca-data.js';
 import { fmtMedida } from '../../../services/formato.js';
@@ -13,7 +13,10 @@ const TIPO_ESPEC = DATA.BIB_TIPO_ESPEC;
 const TIPO_ESPEC_MAP = DATA.BIB_TIPO_ESPEC_MAP;
 import { charts, PALETTE } from '../charts.js';
 import { $, $$, el, toast, modal, confirmDialog, fmtDate } from '../ui.js';
-import { initEvidenceUpload } from '../evidence.js';
+/* Mídia da Biblioteca (imagens e documentos): fonte única de upload, leitura,
+   substituição e remoção. Substituiu o componente genérico de evidência, que
+   gravava no bucket `evidencias` e não distinguia "manter" de "remover". */
+import * as MIDIA from '../../../services/biblioteca-midia.js';
 
 let USER, CAN_EDIT, CAN_DELETE;
 const state = { view: 'dashboard', q: '', filtros: {}, incluirArquivadas: false, pecaId: null, tab: 'geral' };
@@ -136,7 +139,7 @@ async function renderDashboard() {
 function listaPecas(pecas) {
   if (!pecas.length) return emptyState('Nenhuma peça ainda.');
   return `<div class="bib-list">${pecas.map(p => `<div class="bib-list__item" data-open="${p.id}">
-    <img src="${p.imagem || IMG}" alt=""><div class="flex-fill">
+    <img src="${MIDIA.getLibraryImageUrl(p.imagem) || IMG}" alt=""><div class="flex-fill">
       <b>${p.nome}</b><div class="cell-sub">${p.codigo} · ${p.cliente || '—'}</div></div>
     ${statusBadge(p.status)}</div>`).join('')}</div>`;
 }
@@ -291,7 +294,7 @@ async function refreshSuggest() {
   const s = await BIB.sugestoes(state.q, 8);
   if (!state.q || !s.length) { suggest.hidden = true; suggest.innerHTML = ''; return; }
   suggest.innerHTML = s.map(p => `<button class="bib-suggest__item" data-open="${p.id}">
-    <img src="${p.imagem || IMG}" alt=""><span><b>${destacar(p.codigo)}</b><small>${p.nome} · ${p.cliente || '—'}</small></span>
+    <img src="${MIDIA.getLibraryImageUrl(p.imagem) || IMG}" alt=""><span><b>${destacar(p.codigo)}</b><small>${p.nome} · ${p.cliente || '—'}</small></span>
     <i class="bi bi-arrow-return-left"></i></button>`).join('');
   suggest.hidden = false;
   wireCards(suggest);
@@ -319,7 +322,7 @@ async function refreshResults() {
 function cardPeca(p, fav) {
   return `<div class="bib-card" data-open="${p.id}">
     <button class="bib-card__fav ${fav ? 'is-fav' : ''}" data-fav="${p.id}" title="Favoritar"><i class="bi ${fav ? 'bi-star-fill' : 'bi-star'}"></i></button>
-    <div class="bib-card__img"><img src="${p.imagem || IMG}" alt="${p.nome}"></div>
+    <div class="bib-card__img"><img src="${MIDIA.getLibraryImageUrl(p.imagem) || IMG}" alt="${p.nome}"></div>
     <div class="bib-card__body">
       <div class="bib-card__code">${p.codigo}</div>
       <b class="bib-card__name">${p.nome}</b>
@@ -379,7 +382,10 @@ async function renderFicha() {
     ['historico', 'bi-activity', 'Histórico'],
     ['revisoes', 'bi-clock-history', 'Revisões']
   ];
-  const galeria = [p.imagem, ...(Array.isArray(p.galeria) ? p.galeria : [])].filter(Boolean);
+  /* getLibraryImageUrl descarta referência temporária (blob:, C:akepath) que
+     tenha vazado para o banco em versões antigas — melhor o placeholder do que
+     uma imagem quebrada na ficha. */
+  const galeria = [p.imagem, ...(Array.isArray(p.galeria) ? p.galeria : [])].map(g => MIDIA.getLibraryImageUrl(g)).filter(Boolean);
 
   mount(`
     <div class="bib-ficha">
@@ -618,9 +624,7 @@ async function renderEditor() {
       </div></div></div>
 
     <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-image"></i> Imagem principal</h3></div>
-      <div class="rna-card__body"><div id="ed-img"></div>
-        ${p.imagem ? `<div class="mt-2 d-flex align-items-center gap-2"><img src="${p.imagem}" style="height:54px;border-radius:8px"><small class="text-muted-2">Imagem atual — envie uma nova para substituir.</small></div>` : ''}
-      </div></div>
+      <div class="rna-card__body" id="ed-img-box"></div></div>
 
     <div class="rna-card mb-3"><div class="rna-card__head"><h3><i class="bi bi-rulers"></i> Especificações</h3>
       <div class="d-flex align-items-center gap-2"><small class="text-muted-2 d-none d-lg-block">Clique no <b>tipo</b> para o cadastro inteligente · Enter: nova linha · cole do Excel</small>
@@ -632,7 +636,7 @@ async function renderEditor() {
       <button class="rna-btn rna-btn-primary rna-btn-lg" id="ed-save"><i class="bi bi-check2"></i> ${isNew ? 'Cadastrar peça' : 'Salvar revisão'}</button>
     </div>`);
 
-  const upImg = initEvidenceUpload($('#ed-img'), { label: 'Imagem principal da peça', multiple: false });
+  const upImg = campoImagemPeca($('#ed-img-box'), p.imagem);
   renderEspecRows();
   wireTiposInspecao(tiposCat);
 
@@ -644,6 +648,80 @@ async function renderEditor() {
 
   $('#ed-cancel').addEventListener('click', () => { if (isNew) { state.view = 'catalogo'; } else { state.view = 'ficha'; } render(); });
   $('#ed-save').addEventListener('click', () => salvar(isNew, p, f, upImg));
+}
+
+/* ==================================== CAMPO "IMAGEM PRINCIPAL" DA PEÇA
+   Substitui o componente genérico de evidência (que gravava no bucket errado e
+   não sabia distinguir "não mexi na imagem" de "quero remover a imagem").
+
+   Três estados possíveis ao salvar, devolvidos por `intencao()`:
+     'manter'    → nada foi tocado; a coluna `imagem` NÃO é escrita;
+     'substituir'→ há arquivo novo; sobe, grava a URL, e só então apaga a antiga;
+     'remover'   → o usuário pediu remoção explícita; coluna vai a null e o
+                   arquivo antigo é apagado depois do UPDATE.
+   Nunca existe um quarto caso "apagou sem querer": a coluna só muda quando o
+   usuário mandou. */
+function campoImagemPeca(host, imagemAtual) {
+  let novoArquivo = null;      // File escolhido nesta edição
+  let previewUrl = null;       // ObjectURL do preview (revogado ao trocar/sair)
+  let removerPedido = false;
+  const atualUrl = MIDIA.getLibraryImageUrl(imagemAtual);
+
+  const pintar = () => {
+    const mostrando = previewUrl || (removerPedido ? null : atualUrl);
+    host.innerHTML = `
+      <div class="d-flex align-items-start flex-wrap gap-3">
+        <div style="width:120px;height:90px;border-radius:10px;overflow:hidden;background:var(--rna-bg-soft,#f3f4f6);display:grid;place-items:center">
+          ${mostrando
+            ? `<img src="${escAttr(mostrando)}" alt="Imagem da peça" style="width:100%;height:100%;object-fit:cover">`
+            : `<i class="bi bi-image" style="font-size:26px;opacity:.35"></i>`}
+        </div>
+        <div class="flex-fill">
+          <div id="ed-img-nome">${
+            novoArquivo ? `<b>${esc(novoArquivo.name)}</b> <span class="cell-sub">${fmtBytes(novoArquivo.size)} · será enviada ao salvar</span>`
+            : removerPedido ? `<b class="text-crit">A imagem será removida ao salvar.</b>`
+            : atualUrl ? `<b>Imagem atual</b> <span class="cell-sub">já salva no repositório</span>`
+            : `<span class="cell-sub">Nenhuma imagem cadastrada.</span>`}</div>
+          <div class="cell-sub mt-1">JPG, JPEG, PNG ou WEBP — até ${MIDIA.IMG_MAX_MB} MB.</div>
+          <div id="ed-img-status" class="cell-sub mt-1"></div>
+          <div class="d-flex flex-wrap gap-2 mt-2">
+            <input type="file" id="ed-img-file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" hidden>
+            <button type="button" class="rna-btn rna-btn-dark rna-btn-sm" id="ed-img-pick"><i class="bi bi-upload"></i> ${(atualUrl && !removerPedido) || novoArquivo ? 'Substituir imagem' : 'Selecionar imagem'}</button>
+            ${novoArquivo ? `<button type="button" class="rna-btn rna-btn-ghost rna-btn-sm" id="ed-img-desfazer"><i class="bi bi-arrow-counterclockwise"></i> Cancelar troca</button>` : ''}
+            ${atualUrl && !novoArquivo ? (removerPedido
+                ? `<button type="button" class="rna-btn rna-btn-ghost rna-btn-sm" id="ed-img-desfazer"><i class="bi bi-arrow-counterclockwise"></i> Manter imagem</button>`
+                : `<button type="button" class="rna-btn rna-btn-ghost rna-btn-sm" id="ed-img-remover"><i class="bi bi-trash"></i> Remover imagem</button>`) : ''}
+            ${atualUrl && !removerPedido ? `<a class="rna-btn rna-btn-ghost rna-btn-sm" href="${escAttr(atualUrl)}" target="_blank" rel="noopener"><i class="bi bi-eye"></i> Ver</a>` : ''}
+          </div>
+        </div>
+      </div>`;
+
+    const inp = $('#ed-img-file', host);
+    $('#ed-img-pick', host).addEventListener('click', () => inp.click());
+    inp.addEventListener('change', () => {
+      const f = inp.files?.[0]; inp.value = '';
+      if (!f) return;
+      const erro = MIDIA.validarImagem(f);
+      if (erro) return toast(erro, { type: 'warn', title: 'Imagem principal' });
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      novoArquivo = f; removerPedido = false;
+      previewUrl = URL.createObjectURL(f);   // preview local — NUNCA vai para o banco
+      pintar();
+    });
+    $('#ed-img-remover', host)?.addEventListener('click', () => { removerPedido = true; pintar(); });
+    $('#ed-img-desfazer', host)?.addEventListener('click', () => {
+      if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+      novoArquivo = null; removerPedido = false; pintar();
+    });
+  };
+  pintar();
+
+  return {
+    intencao: () => novoArquivo ? 'substituir' : (removerPedido ? 'remover' : 'manter'),
+    arquivo: () => novoArquivo,
+    status(msg) { const alvo = $('#ed-img-status', host); if (alvo) alvo.innerHTML = msg ? `<i class="bi bi-arrow-repeat"></i> ${esc(msg)}` : ''; },
+    liberar() { if (previewUrl) URL.revokeObjectURL(previewUrl); }
+  };
 }
 
 /* =============================== TIPOS DE INSPEÇÃO APLICÁVEIS (§2, §3, §13)
@@ -1050,23 +1128,54 @@ async function salvar(isNew, p, f, upImg) {
     }
     patch.tipos_inspecao = tiposNormalizados;
 
-    // imagem principal (opcional)
-    let imagemUrl = p.imagem || null;
-    if (upImg.hasFiles()) {
-      const evs = await upImg.commit({ registro_tipo: 'biblioteca', registro_id: p.id || patch.codigo, usuario: USER });
-      if (evs[0]) imagemUrl = evs[0].url;
-    }
+    /* ---------------------------------------------- IMAGEM PRINCIPAL (§C02)
+       ORDEM OBRIGATÓRIA: grava o registro (para existir um id de verdade) →
+       envia o arquivo para `biblioteca/pecas/{id}/` → grava a URL → e SÓ ENTÃO
+       descarta o arquivo antigo. Se o upload ou o UPDATE falhar, a imagem
+       anterior continua no lugar e o arquivo novo é apagado (sem órfão).
+
+       O caso mais importante é o mais silencioso: quando o usuário edita outro
+       campo e NÃO toca na imagem, a coluna `imagem` sequer entra no patch —
+       antes ela era reescrita a cada revisão, e bastava uma leitura incompleta
+       de `p` para zerar a imagem da peça. */
+    const intencaoImg = upImg.intencao();
+    const imagemAnterior = p.imagem || null;
+    // 'manter' → a coluna nem é enviada. 'remover' → null explícito.
+    const patchImagem = intencaoImg === 'remover' ? { imagem: null } : {};
 
     let peca;
     if (isNew) {
       // via serviço: revalida o vínculo e tolera banco sem a coluna nova.
       peca = await BIB.inserirPeca({
         ...patch, revisao: 1, revisao_cadastro: 1, ativo: patch.status !== 'Arquivado',
-        imagem: imagemUrl, galeria: [], created_at: BIB.hoje(), updated_at: BIB.hoje(), created_by: USER.id
+        imagem: null, galeria: [], created_at: BIB.hoje(), updated_at: BIB.hoje(), created_by: USER.id
       });
       await BIB.registrarCriacao(peca.id, USER);
     } else {
-      peca = await BIB.salvarRevisao(p.id, { ...patch, imagem: imagemUrl, ativo: patch.status !== 'Arquivado' }, USER);
+      peca = await BIB.salvarRevisao(p.id, { ...patch, ...patchImagem, ativo: patch.status !== 'Arquivado' }, USER);
+    }
+
+    if (intencaoImg === 'substituir') {
+      // Estado visível enquanto o arquivo sobe (o botão já está travado).
+      if (btn.isConnected) btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Enviando imagem…';
+      upImg.status('Enviando imagem...');
+      const troca = await MIDIA.replaceLibraryImage(upImg.arquivo(), imagemAnterior, {
+        pasta: 'pecas', registroId: peca.id,
+        onProgress: fase => upImg.status(fase === 'enviando' ? 'Enviando imagem...' : fase === 'lendo' ? 'Lendo arquivo...' : '')
+      });
+      try {
+        await db.update('bib_pecas', peca.id, { imagem: troca.novo.url });
+        peca.imagem = troca.novo.url;
+      } catch (e) {
+        await troca.desfazer();                       // upload sem vínculo: apaga
+        console.error('[biblioteca] imagem enviada mas não vinculada', { message: e?.message, code: e?.code, details: e?.details, hint: e?.hint, tabela: 'bib_pecas', coluna: 'imagem', path: troca.novo.path });
+        throw new Error('A imagem foi enviada, mas não foi possível gravá-la no cadastro. Nenhuma alteração de imagem foi aplicada.');
+      }
+      await troca.descartarAnterior();                // só agora a antiga sai
+      upImg.status('');
+    } else if (intencaoImg === 'remover' && imagemAnterior) {
+      await MIDIA.removeLibraryImage(imagemAnterior); // a coluna já foi a null acima
+      peca.imagem = null;
     }
 
     /* Especificações: calcula limites pelo tipo e resolve catálogos. A ordem e a
@@ -1112,9 +1221,17 @@ async function salvar(isNew, p, f, upImg) {
        inconsistente sem ninguém saber. Se qualquer um falhar, o catch reporta. */
     await Promise.all([
       sincronizarMetricas(peca.id, specsRows),
+      /* Documento: sobe primeiro, vincula depois — e se o vínculo falhar, o
+         arquivo recém-enviado é apagado para não virar órfão no Storage. */
       ...edDocsNovos.map(async file => {
-        const url = await uploadArquivo(file, peca.id);
-        return db.insert('bib_documentos', { peca_id: peca.id, nome: file.name, categoria: 'Outro', versao: '—', data: BIB.hoje(), responsavel: USER.nome, descricao: '', url, tipo: (file.name.split('.').pop() || '').toLowerCase(), tamanho: fmtBytes(file.size) });
+        const doc = await uploadArquivo(file, peca.id);
+        try {
+          return await db.insert('bib_documentos', { peca_id: peca.id, nome: file.name, categoria: 'Outro', versao: '—', data: BIB.hoje(), responsavel: USER.nome, descricao: '', url: doc.url, tipo: (file.name.split('.').pop() || '').toLowerCase(), tamanho: fmtBytes(file.size) });
+        } catch (e) {
+          await MIDIA.removeLibraryImage(doc.path);
+          console.error('[biblioteca] documento enviado mas não vinculado', { message: e?.message, code: e?.code, details: e?.details, hint: e?.hint, tabela: 'bib_documentos', path: doc.path });
+          throw new Error(`O arquivo "${file.name}" foi enviado, mas não foi possível registrá-lo na ficha.`);
+        }
       })
     ]);
 
@@ -1131,8 +1248,12 @@ async function salvar(isNew, p, f, upImg) {
     }
     state.view = 'ficha'; state.pecaId = peca.id; render();
   } catch (err) {
-    console.error('[biblioteca] salvar', { message: err?.message, code: err?.code, details: err?.details, hint: err?.hint, err });
-    toast('Erro ao salvar. ' + (err?.message || ''), { type: 'crit' });
+    console.error('[biblioteca] salvar', { message: err?.message, code: err?.code, details: err?.details, hint: err?.hint, tecnico: err?.tecnico, err });
+    /* Erro de mídia (MidiaError) já vem traduzido com a causa real e o detalhe
+       técnico — reembrulhar em "Erro ao salvar." esconderia a instrução. */
+    upImg?.status?.('');
+    toast(err?.amigavel ? err.message : ('Não foi possível salvar o cadastro. ' + (err?.message || '')),
+      { type: 'crit', title: 'Biblioteca', timeout: 10000 });
   } finally {
     soltarBotao();
   }
@@ -1238,17 +1359,11 @@ async function excluirPeca(pecaId) {
   state.view = 'catalogo'; state.pecaId = null; render();
 }
 
+/* Documento/desenho da peça. Delega ao serviço de mídia (validação, leitura em
+   memória, caminho sanitizado, mensagens específicas) — a lógica de upload não
+   vive mais aqui. Devolve { url, path, nome, tipo, tamanho }. */
 async function uploadArquivo(file, pecaId) {
-  if (SUPABASE.enabled) {
-    const { getSupabase } = await import('../../../services/supabaseClient.js');
-    const sb = await getSupabase();
-    const safe = (file.name || 'arquivo').replace(/[^\w.\-]+/g, '_');
-    const path = `docs/${pecaId || 'tmp'}/${Date.now()}_${safe}`;
-    const { error } = await sb.storage.from('biblioteca').upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
-    if (error) throw error;
-    return sb.storage.from('biblioteca').getPublicUrl(path).data.publicUrl;
-  }
-  return await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+  return MIDIA.uploadLibraryDoc(file, { pasta: 'desenhos', registroId: pecaId });
 }
 
 /* ------------------------------------------------------------- utilidades -- */
@@ -1306,6 +1421,8 @@ function fmtDateTime(iso) { if (!iso) return '—'; const d = new Date(iso); ret
 function fmtBytes(n) { if (!n) return ''; const kb = n / 1024; return kb < 1024 ? `${Math.round(kb)} KB` : `${(kb / 1024).toFixed(1)} MB`; }
 function escHtml(s) { return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 function escAttr(s) { return String(s ?? '').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+/* Escape de texto livre (nome de arquivo, mensagem) para interpolação em HTML. */
+function esc(s) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function destacar(txt) { const q = BIB.normaliza(state.q); const t = String(txt); const i = BIB.normaliza(t).indexOf(q); if (i < 0 || !q) return t; return `${t.slice(0, i)}<mark>${t.slice(i, i + q.length)}</mark>${t.slice(i + q.length)}`; }
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function numOrNull(v) { if (v === '' || v == null) return null; const n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? null : n; }

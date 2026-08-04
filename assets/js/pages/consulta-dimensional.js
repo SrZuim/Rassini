@@ -21,7 +21,10 @@ import * as AMOSTRAS from '../../../services/insp-amostras.js';
 import { $, $$, toast, modal } from '../ui.js';
 
 /* Escape de texto livre — módulo inteiro (conteúdo e atributos). */
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+/* esc/cell/resultadoTag e a seção Inspeção Após Pintura vivem em
+   assets/js/relatorio-dim-secoes.js — fonte única compartilhada com a tela
+   Rel. Dimensionais de Produção, para que os dois documentos não divirjam. */
+import { esc, cell, resultadoTag, inspecaoAposPinturaHtml } from '../relatorio-dim-secoes.js';
 const escAttr = esc;
 
 const ctx = await mountShell();
@@ -479,7 +482,6 @@ async function abrirRelatorio(relId, autoPrint = false) {
   $('#btn-imprimir').addEventListener('click', () => window.print());
   if (autoPrint) setTimeout(() => window.print(), 500);   // Imprimir direto (botão da lista)
 }
-const cell = (l, v) => `<div class="insp-rep-cell"><span class="insp-info-l">${l}</span><span class="insp-info-v">${(v === 0 || v) ? v : '—'}</span></div>`;
 /* §M07 — valores medidos/nominais/tolerâncias no padrão 00,00 (fonte única).
    A precisão informada é preservada: 3,350 e 3,351 não colapsam em "3,35". */
 const dash = v => fmtMedida(v);
@@ -495,14 +497,6 @@ function classeCel(c) {
 /* Classe da célula do relatório conforme o estado visual da medição (§Erro 01). */
 const repCls = v => v === 'ok' ? 'rep-ok' : v === 'atencao' ? 'rep-warn' : v === 'crit' ? 'rep-crit' : '';
 /* Etiqueta do resultado — a mesma na tela, no relatório, na impressão e no PDF. */
-function resultadoTag(resultado, visual) {
-  if (resultado === 'reprovado') return '<span class="rep-tag rep-crit">✗ Reprovado</span>';
-  if (resultado === 'aprovado') return visual === 'atencao'
-    ? '<span class="rep-tag rep-warn" title="Valor no limite ou próximo dele — aprovado, com atenção.">▲ Aprovado com atenção</span>'
-    : '<span class="rep-tag rep-ok">✓ Aprovado</span>';
-  if (resultado === 'registrado') return '<span class="rep-tag">Registrado — Referência</span>';
-  return '—';
-}
 /* §14 — vínculo peça × tipos de inspeção COMO ERA no momento da auditoria
    (snapshot em peca_tipos_inspecao). Relatório antigo não muda se a peça for
    reconfigurada depois na Biblioteca Técnica. */
@@ -511,34 +505,3 @@ function tiposVinculoTexto(rel) {
   return arr.length ? arr.map(s => nomeDoSlug(s)).join(' · ') : '—';
 }
 
-/* Seção "Inspeção Após Pintura" do relatório/PDF: características visuais (cota,
-   característica, quadrante, referência, especificação visual), resultados
-   OK/NOK, observações, nome do Relatório de Pintura anexado e resultado final da
-   inspeção visual. Não aparece quando a peça não tem características visuais
-   (relatórios antigos continuam idênticos). */
-function inspecaoAposPinturaHtml(caracteristicas, resumo) {
-  const visuais = (caracteristicas || []).filter(c => c.visual);
-  if (!visuais.length) return '';
-  const v = resumo?.inspecaoVisual || {};
-  const res = v.resultado || INSP.resultadoVisual(visuais);
-  const resLabel = res === 'aprovado' ? 'APROVADO' : res === 'reprovado' ? 'REPROVADO' : res === 'pendente' ? 'EM PREENCHIMENTO' : '—';
-  const pint = v.relatorioPintura || null;   // vem de resumo.inspecaoVisual (resumoRelatorio)
-  return `<div class="insp-rep-section"><div class="insp-rep-sec-t">Inspeção Após Pintura</div>
-    <div class="insp-table-wrap"><table class="insp-mtable insp-rep-table"><thead><tr>
-      <th>Cota</th><th>Característica</th><th>Quadrante</th><th>Ref.</th><th>Especificação visual</th><th>Resultado</th><th>Obs.</th>
-    </tr></thead><tbody>
-      ${visuais.map(c => `<tr>
-        <td>${esc(c.cota ?? '—')}</td><td>${esc(c.caracteristica || '—')}</td><td>${esc(c.quadrante || '—')}</td>
-        <td class="cell-sub">${esc(c.referencia || '—')}</td><td class="cell-sub">${esc(c.observacao_tec || '—')}</td>
-        <td>${resultadoTag(c.resultado, c._visual)}</td><td class="cell-sub">${esc(c.observacao || '—')}</td></tr>`).join('')}
-    </tbody></table></div>
-    <div class="insp-rep-grid mt-2">
-      ${/* Na consulta o anexo precisa ser ABRÍVEL, não só nomeado: é aqui que os
-            outros usuários (qualidade, cliente interno) buscam o documento. No
-            PDF impresso o link vira apenas o texto do nome. */''}
-      ${cell('Relatório de Pintura anexado', pint
-        ? (pint.url ? `<a href="${esc(pint.url)}" target="_blank" rel="noopener">${esc(pint.nome)}</a>` : esc(pint.nome))
-        : '—')}
-      ${cell('Resultado da inspeção visual', resLabel)}
-    </div></div>`;
-}

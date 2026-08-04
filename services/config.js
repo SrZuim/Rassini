@@ -70,11 +70,16 @@ export const MODULES = [
   { id:'auditorias',    label:'Auditorias de Processo',short:'Aud. Processo',      page:'auditorias.html',    icon:'bi-clipboard-data',    group:'Qualidade',   color:'blue',   desc:'Auditorias de processo, 5S e LPA.' },
   { id:'biblioteca',    label:'Biblioteca Técnica',   short:'Biblioteca',          page:'biblioteca.html',    icon:'bi-journal-richtext',  group:'Qualidade',   color:'blue',   desc:'Fichas técnicas das peças: medidas, tolerâncias, normas e documentos.' },
   { id:'consulta_dim',  label:'Relatórios Dimensionais',short:'Rel. Dimensionais',  page:'consulta-dimensional.html', icon:'bi-clipboard2-data', group:'Qualidade', color:'blue', desc:'Consulta corporativa de relatórios de inspeção dimensional — filtros, impressão e exportação.' },
-  /* [REL. DIMENSIONAIS SIMULADOS] Visão SIMULADA, gerada em memória a partir dos
-     mesmos relatórios oficiais (services/simulacao/*). Módulo estritamente de
-     leitura: não possui cadastro, não grava nada e não alimenta indicador algum —
-     a base oficial continua sendo exclusivamente `consulta_dim`. */
-  { id:'consulta_dim_sim', label:'Relatórios Dimensionais Simulados', short:'Rel. Dimensionais Simulados', page:'consulta-dimensional-simulada.html', icon:'bi-clipboard2-pulse', group:'Qualidade', color:'blue', desc:'Versão simulada dos relatórios dimensionais: as reprovações recebem valores conformes gerados automaticamente. Não substitui o relatório oficial.' },
+  /* [REL. DIMENSIONAIS DE PRODUÇÃO] Documento de APOIO OPERACIONAL derivado dos
+     mesmos relatórios oficiais (services/simulacao/*). Gerado em memória: não
+     possui cadastro próprio de medição, não altera nenhum registro oficial e não
+     alimenta indicador algum — a base oficial continua sendo `consulta_dim`.
+
+     Vive em ADMINISTRAÇÃO e é EXCLUSIVO do administrador: por apresentar valores
+     dentro dos limites, não pode circular como se fosse medição real. O bloqueio
+     é de RBAC (abaixo), então vale para o menu E para a abertura direta da URL —
+     mountShell consulta o mesmo `can()` antes de renderizar a página. */
+  { id:'rel_dim_producao', label:'Rel. Dimensionais de Produção', short:'Rel. Dim. de Produção', page:'rel-dimensionais-producao.html', icon:'bi-clipboard2-pulse', group:'Administração', color:'red', desc:'Documento de apoio operacional derivado dos relatórios dimensionais, com valores dentro dos limites aprovados. Uso em treinamento, demonstração e planejamento — não substitui o registro oficial de medição.' },
   { id:'ocorrencias',   label:'Não Conformidades',    short:'Ocorrências',         page:'ocorrencias.html',   icon:'bi-exclamation-octagon',group:'Qualidade',  color:'red',    desc:'Abertura e tratativa de não conformidades.' },
   { id:'planos',        label:'Plano de Ação',        short:'Planos',              page:'planos-acao.html',   icon:'bi-diagram-3',         group:'Qualidade',   color:'yellow', desc:'Ações corretivas 5W2H vinculadas a NCs.' },
   { id:'powerbi',       label:'Power BI',             short:'Power BI',            page:'dashboard.html#bi',  icon:'bi-bar-chart-line',    group:'Gestão',      color:'orange', desc:'Relatórios corporativos embarcados.' },
@@ -107,7 +112,7 @@ const CARGO_MEDICAO_RBAC = {
   diario:['view','create','edit'], auditorias:[],
   biblioteca:['view','export'],
   gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view','create','edit','execute','export'], op_pendencias:['view','create'], op_historico:['view'],
-  consulta_dim:['view','export'], consulta_dim_sim:['view','export'], admin_monitor:[],
+  consulta_dim:['view','export'], rel_dim_producao:[], admin_monitor:[],
   ocorrencias:[], planos:[],
   powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
 };
@@ -122,7 +127,7 @@ export const RBAC = {
     diario:['view'], auditorias:RO,
     biblioteca:['view','create','edit','export'],
     gestao_op:['view'], op_plantao:[], op_rotinas:[], op_checklists:[], op_auditorias:['view','export'], op_pendencias:['view'], op_historico:['view'],
-    consulta_dim:['view','export'], consulta_dim_sim:['view','export'], admin_monitor:[],
+    consulta_dim:['view','export'], rel_dim_producao:[], admin_monitor:[],
     ocorrencias:RO, planos:['view','export'],
     powerbi:['view'], comunicados:['view'], documentos:['view','export'],
     treinamentos:['view'], admin:[], usuarios:[], perfil:['view','edit']
@@ -134,7 +139,7 @@ export const RBAC = {
     diario:['view','create','edit'], auditorias:[],
     biblioteca:['view','export'],
     gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view','create','edit','execute','export'], op_pendencias:['view','create'], op_historico:['view'],
-    consulta_dim:['view','export'], consulta_dim_sim:['view','export'], admin_monitor:[],
+    consulta_dim:['view','export'], rel_dim_producao:[], admin_monitor:[],
     ocorrencias:[], planos:[],
     powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },

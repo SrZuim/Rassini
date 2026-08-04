@@ -1,5 +1,5 @@
 /* ==========================================================================
-   RNA One — SimulationCalculator (Rel. Dimensionais Simulados)
+   RNA One — SimulationCalculator (Rel. Dimensionais de Produção)
    ÚNICA responsabilidade: GERAR um valor numérico (ou OK/NOK) plausível dentro
    dos limites de uma característica. Não conhece relatório, não conhece banco,
    não decide o que precisa ser simulado — só calcula.

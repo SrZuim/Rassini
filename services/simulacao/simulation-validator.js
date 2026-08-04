@@ -1,5 +1,5 @@
 /* ==========================================================================
-   RNA One — SimulationValidator (Rel. Dimensionais Simulados)
+   RNA One — SimulationValidator (Rel. Dimensionais de Produção)
    ÚNICA responsabilidade: DECIDIR. O que precisa ser simulado, o que precisa
    ficar intacto e se um valor gerado é realmente conforme.
 

@@ -1,5 +1,5 @@
 /* ==========================================================================
-   RNA One — SimulationService (Rel. Dimensionais Simulados)
+   RNA One — SimulationService (Rel. Dimensionais de Produção)
    ÚNICA responsabilidade: ser a PORTA de entrada do módulo simulado. A tela
    fala só com este arquivo; ele lê o relatório oficial (services/inspecao.js),
    entrega ao SimulationEngine e devolve o objeto simulado.
@@ -26,8 +26,12 @@ import * as AMOSTRAS from '../insp-amostras.js';
 import { simularRelatorio, statusSimulado } from './simulation-engine.js';
 import * as VALID from './simulation-validator.js';
 
-export const SELO = 'SIMULADO';
-export const AVISO_TOPO = 'Dados gerados automaticamente para fins de simulação. Não substitui o relatório oficial.';
+/* Identidade do documento — fonte única para tela, PDF e exportação.
+   (Nomenclatura anterior: "SIMULADO". O módulo passou a se chamar
+   "Rel. Dimensionais de Produção" e a viver em Administração.) */
+export const SELO = 'PRODUÇÃO';
+export const TITULO = 'RELATÓRIO DIMENSIONAL DE PRODUÇÃO';
+export const AVISO_TOPO = 'Documento de apoio operacional — não substitui o registro oficial de medição.';
 
 /* ============================================================== LISTAGEM ====
    O resultado exibido é o SIMULADO, então o filtro "Resultado" precisa ser

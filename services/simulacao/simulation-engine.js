@@ -1,5 +1,5 @@
 /* ==========================================================================
-   RNA One — SimulationEngine (Rel. Dimensionais Simulados)
+   RNA One — SimulationEngine (Rel. Dimensionais de Produção)
    ÚNICA responsabilidade: TRANSFORMAR. Recebe o relatório oficial já carregado
    e devolve uma CÓPIA simulada — em memória, no formato exato que a tela de
    relatório espera.

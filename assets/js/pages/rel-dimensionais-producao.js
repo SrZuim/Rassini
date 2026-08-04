@@ -1,19 +1,30 @@
 /* ==========================================================================
-   Rel. Dimensionais SIMULADOS (Qualidade)
-   Espelho da tela oficial (pages/consulta-dimensional.js) operando sobre a
-   visão SIMULADA: as características reprovadas recebem valores conformes
-   gerados em memória por services/simulacao/*, o relatório é recalculado pelo
-   motor oficial e o resultado passa a APROVADO.
+   Rel. Dimensionais de Produção (Administração)
+   ---------------------------------------------------------------------------
+   Antes chamado "Relatórios Dimensionais Simulados", em Qualidade. Passou a
+   viver em ADMINISTRAÇÃO e a se chamar "Rel. Dimensionais de Produção"
+   (rota rel-dimensionais-producao.html; a rota antiga redireciona).
+
+   Documento de APOIO OPERACIONAL derivado do relatório oficial: as
+   características reprovadas recebem valores conformes gerados em memória por
+   services/simulacao/*, o relatório é recalculado pelo motor oficial e o
+   resultado passa a APROVADO. Serve a treinamento, demonstração, validação de
+   interface e planejamento — nunca a liberação de produto ou rastreabilidade.
+
+   ACESSO: exclusivo do administrador. O bloqueio é do RBAC (`rel_dim_producao`
+   sem permissões para os demais perfis), aplicado por mountShell tanto no menu
+   quanto na abertura direta da URL — não é ocultação de menu.
 
    POR QUE UM ARQUIVO SEPARADO, e não um parâmetro na tela oficial:
-   o requisito é explícito — nenhuma tela existente pode ser alterada e nenhum
-   relatório oficial pode sofrer modificação. Um flag dentro do arquivo oficial
-   colocaria a lógica simulada no caminho de execução da consulta corporativa,
-   que é a única base válida do sistema. A duplicação aqui é deliberada e o
-   preço de manter os dois módulos completamente isolados.
+   nenhum relatório oficial pode sofrer modificação. Um flag dentro do arquivo
+   oficial colocaria esta lógica no caminho de execução da consulta corporativa,
+   que é a única base válida do sistema. A separação é deliberada; o LAYOUT, no
+   entanto, é compartilhado (assets/js/relatorio-dim-secoes.js), então as duas
+   telas não podem divergir visualmente.
 
-   ESTE MÓDULO NÃO GRAVA NADA. Não há exclusão, não há edição, não há autosave.
-   A única escrita possível seria via INSP — e este arquivo nem a importa.
+   ESTE MÓDULO NÃO ALTERA NENHUM REGISTRO OFICIAL. Não há edição de medição, não
+   há exclusão, não há autosave sobre insp_*. A única gravação que faz é a
+   TRILHA DE AUDITORIA do próprio documento (quem gerou/exportou e quando).
    ========================================================================== */
 import { mountShell } from '../app.js';
 import { BRAND, podeVerMetricasTempo } from '../../../services/config.js';
@@ -27,10 +38,11 @@ import { formatarDataBrasil, formatarDataHoraBrasil } from '../../../services/da
 import * as SIM from '../../../services/simulacao/simulation-service.js';
 import { $, $$, toast } from '../ui.js';
 
-/* Escape de texto livre — módulo inteiro (conteúdo e atributos). */
-const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+/* Mesmos blocos do relatório oficial — fonte única, para que as duas telas
+   tenham exatamente os mesmos campos, títulos e ordem. */
+import { esc, cell, resultadoTag, inspecaoAposPinturaHtml } from '../relatorio-dim-secoes.js';
 
-const PAGINA = 'consulta-dimensional-simulada.html';
+const PAGINA = 'rel-dimensionais-producao.html';
 
 const ctx = await mountShell();
 let USER, TIPOS = [], FONTES = null;
@@ -71,13 +83,13 @@ const revLabel = v => (v === '' || v == null) ? '—' : 'Rev ' + fmtRevisao(v);
 const seloSim = () => `<span class="sim-selo">${SIM.SELO}</span>`;
 const bannerSim = () => `<div class="sim-banner">
   <i class="bi bi-magic"></i>
-  <div><b>RELATÓRIO DIMENSIONAL SIMULADO</b>
+  <div><b>RELATÓRIO DIMENSIONAL DE PRODUÇÃO</b>
   <div>${SIM.AVISO_TOPO}</div></div>
 </div>`;
 /* Marca d'água do PDF: só aparece na impressão (a tela já tem o banner).
    `position:fixed` faz o navegador repeti-la em TODAS as páginas impressas. */
 const marcaDagua = () => `<div class="sim-watermark" aria-hidden="true">${
-  Array.from({ length: 12 }, () => '<span>SIMULAÇÃO</span>').join('')}</div>`;
+  Array.from({ length: 12 }, () => '<span>PRODUÇÃO</span>').join('')}</div>`;
 
 /* ============================================================ CONSULTA ====== */
 let ULT_RESULT = [], BUSCANDO = false;
@@ -88,8 +100,8 @@ async function renderConsulta() {
   if (!FONTES) FONTES = await fontesConsultaDimensional().catch(e => { console.error('[SIM-DIM] fontes de filtro:', e); return { clientes: [], pns: [], auditores: [] }; });
   $('#rna-content').innerHTML = `
     <div class="rna-page-head">
-      <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Qualidade <i class="bi bi-chevron-right"></i> Relatórios Dimensionais Simulados</div>
-      <h1>Consulta de Relatórios Dimensionais Simulados ${seloSim()}</h1><p>Mesma consulta do módulo oficial, exibindo a versão simulada de cada relatório.</p></div>
+      <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Administração <i class="bi bi-chevron-right"></i> Rel. Dimensionais de Produção</div>
+      <h1>Consulta de Rel. Dimensionais de Produção ${seloSim()}</h1><p>Mesma consulta do módulo oficial, exibindo a versão de produção de cada relatório.</p></div>
     </div>
     ${bannerSim()}
     <div class="rna-card mb-3"><div class="rna-card__body">
@@ -102,8 +114,8 @@ async function renderConsulta() {
         ${ftxt('op', 'OP', '', 40)}
         ${fcombo('revisao', 'Revisão')}
         ${fsel('tipo', 'Tipo', `<option value="">Todos</option>${TIPOS.map(t => `<option value="${t.id}">${esc(t.nome)}</option>`).join('')}`)}
-        ${fsel('status', 'Status (simulado)', `<option value="">Todos</option>${Object.entries(st).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}`)}
-        ${fsel('resultado', 'Resultado (simulado)', `<option value="">Todos</option><option value="aprovado">Aprovado</option><option value="reprovado">Reprovado</option><option value="pendente">Em andamento</option>`)}
+        ${fsel('status', 'Status', `<option value="">Todos</option>${Object.entries(st).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('')}`)}
+        ${fsel('resultado', 'Resultado', `<option value="">Todos</option><option value="aprovado">Aprovado</option><option value="reprovado">Reprovado</option><option value="pendente">Em andamento</option>`)}
         ${fsel('classe', 'Classe no relatório oficial', `<option value="">Todas</option><option value="A">Classe A</option><option value="B">Classe B</option><option value="C">Classe C</option>`)}
         <div class="col-12 col-sm-6 col-lg-3 d-flex align-items-end"><div class="form-check cdim-check"><input class="form-check-input" type="checkbox" id="f-reprov"><label class="form-check-label" for="f-reprov">Somente com reprovação no oficial</label></div></div>
         ${fdate('de', 'Período — de')} ${fdate('ate', 'Período — até')}
@@ -113,13 +125,13 @@ async function renderConsulta() {
         </div>
       </div>
       <div class="cdim-export d-flex flex-wrap align-items-center gap-2 mt-3 pt-3">
-        <span class="cell-sub"><i class="bi bi-download"></i> Exportar os resultados simulados da pesquisa atual:</span>
+        <span class="cell-sub"><i class="bi bi-download"></i> Exportar os resultados da pesquisa atual:</span>
         <div class="flex-fill"></div>
         <button class="rna-btn rna-btn-ghost" id="btn-csv"><i class="bi bi-filetype-csv"></i> CSV</button>
         <button class="rna-btn rna-btn-ghost" id="btn-xls"><i class="bi bi-file-earmark-excel"></i> Excel</button>
       </div>
     </div></div>
-    <div class="rna-card"><div class="rna-card__head"><h3><i class="bi bi-table"></i> Resultados simulados</h3><span id="res-count" class="cell-sub"></span></div>
+    <div class="rna-card"><div class="rna-card__head"><h3><i class="bi bi-table"></i> Resultados</h3><span id="res-count" class="cell-sub"></span></div>
       <div class="rna-card__body p-0" id="res-host"><div class="empty-state" style="padding:32px"><i class="bi bi-search"></i><div>Use os filtros e clique em <b>Buscar</b>.</div></div></div></div>`;
 
   COMBO.cliente = comboFiltro($('#f-cliente'), {
@@ -196,7 +208,7 @@ async function buscar() {
     ULT_RESULT = [];
     $('#res-count').textContent = '';
     $('#res-host').innerHTML = `<div class="empty-state" style="padding:32px"><i class="bi bi-exclamation-triangle"></i><div>Não foi possível concluir a busca. Tente novamente.</div></div>`;
-    toast('Erro ao buscar relatórios simulados.', { type: 'crit' });
+    toast('Erro ao buscar os relatórios de produção.', { type: 'crit' });
   } finally {
     BUSCANDO = false;
     if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
@@ -206,7 +218,7 @@ async function buscar() {
 function renderResultados(rows) {
   const simulados = rows.filter(r => r._simulado).length;
   $('#res-count').innerHTML = (rows.length === 1 ? '1 relatório' : `${rows.length} relatórios`) +
-    (simulados ? ` · <b>${simulados}</b> com valores simulados` : '');
+    (simulados ? ` · <b>${simulados}</b> com valores de produção` : '');
   const host = $('#res-host');
   if (!rows.length) {
     host.innerHTML = `<div class="empty-state" style="padding:32px"><i class="bi bi-inbox"></i>
@@ -222,13 +234,13 @@ function renderResultados(rows) {
   $$('[data-open]', host).forEach(b => b.addEventListener('click', () => go(`${PAGINA}?rel=${b.dataset.open}`)));
 }
 
-/* Aviso honesto de simulação parcial: um relatório cuja reprovação não tem como
+/* Aviso honesto de geração parcial: um relatório cuja reprovação não tem como
    virar valor conforme (cadastro sem limites na Biblioteca) NÃO é apresentado
    como aprovado. Mostrar "Aprovado" aqui e "Reprovado" ao abrir seria um falso
    sucesso — o usuário precisa saber que a cota não pôde ser recalculada. */
 const avisoParcial = r => r._simulacaoParcial
   ? `<div class="cell-sub sim-parcial" title="Cotas sem limites utilizáveis na Biblioteca Técnica: ${esc((r._cotasNaoSimulaveis || []).join(', '))}">
-       <i class="bi bi-exclamation-triangle"></i> simulação parcial</div>`
+       <i class="bi bi-exclamation-triangle"></i> geração parcial</div>`
   : '';
 
 function clsBadge(r) {
@@ -279,13 +291,13 @@ function resPill(r) {
 const resultadoLabel = r => r === 'aprovado' ? 'Aprovado' : r === 'reprovado' ? 'Reprovado' : 'Em andamento';
 
 /* ------------------------------------------------------------- exportação ---
-   Exporta a VISÃO SIMULADA e diz isso em duas colunas próprias (Simulado /
+   Exporta a VISÃO DE PRODUÇÃO e diz isso em duas colunas próprias (De produção /
    Resultado oficial), para que a planilha jamais seja confundida com o extrato
    do módulo oficial. */
 function exportar(fmt) {
   if (!ULT_RESULT.length) return toast('Não existem relatórios para exportar.', { type: 'warn' });
   const cols = ['Nº do Relatório', 'Data', 'Cliente', 'Part Number', 'Revisão', 'Lote', 'OP', 'Qtd. de Peças', 'Auditor', 'Tipo',
-    'Status (simulado)', 'Resultado (SIMULADO)', 'Resultado oficial', 'Simulado', 'Maior Classe (oficial)'];
+    'Status', 'Resultado (PRODUÇÃO)', 'Resultado oficial', 'De produção', 'Maior Classe (oficial)'];
   const linhas = ULT_RESULT.map(r => [numeroDe(r), dataBR(r.started_iso), r.cliente, r.peca_codigo,
     (r.revisao_desenho === '' || r.revisao_desenho == null) ? '' : fmtRevisao(r.revisao_desenho),
     r.lote, r.op, (r.quantidade === 0 || r.quantidade) ? r.quantidade : '', r.auditor_nome, r.tipo_nome,
@@ -294,13 +306,14 @@ function exportar(fmt) {
     r._maiorClasseOriginal ?? r._maiorClasse ?? '']);
   const sep = fmt === 'csv' ? ';' : '\t';
   const escCel = v => { const s = String(v ?? ''); return (s.includes(sep) || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const conteudo = ['RELATÓRIOS DIMENSIONAIS SIMULADOS — ' + SIM.AVISO_TOPO, cols.join(sep), ...linhas.map(l => l.map(escCel).join(sep))].join('\r\n');
+  const conteudo = ['REL. DIMENSIONAIS DE PRODUÇÃO — ' + SIM.AVISO_TOPO, cols.join(sep), ...linhas.map(l => l.map(escCel).join(sep))].join('\r\n');
   const blob = new Blob(['﻿' + conteudo], { type: fmt === 'csv' ? 'text/csv;charset=utf-8' : 'application/vnd.ms-excel;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `relatorios-dimensionais-SIMULADOS-${new Date().toISOString().slice(0, 10)}.${fmt === 'csv' ? 'csv' : 'xls'}`;
+  a.download = `REL_DIM_PRODUCAO_${new Date().toISOString().slice(0, 10)}.${fmt === 'csv' ? 'csv' : 'xls'}`;
   a.click(); URL.revokeObjectURL(a.href);
-  toast(`Exportado (${fmt.toUpperCase()}) — visão simulada.`, { type: 'ok' });
+  registrarUso(`Exportou a lista de produção (${fmt.toUpperCase()})`, `${ULT_RESULT.length} relatório(s)`, a.download);
+  toast(`Exportado (${fmt.toUpperCase()}) — Rel. Dimensionais de Produção.`, { type: 'ok' });
 }
 
 /* ============================================================ RELATÓRIO ===== */
@@ -312,12 +325,14 @@ async function abrirRelatorio(relId, autoPrint = false) {
   const acaoBy = Object.fromEntries(acoes.map(a => [a.caracteristica_id, a]));
   const s = INSP_STATUS[rel.status] || { label: rel.status, badge: 'badge-na' };
   const numero = numeroDe(rel);
-  const codigoVerif = 'SIM-' + (numero.replace(/[^0-9]/g, '').slice(-8) || numero.replace(/[^A-Z0-9]/gi, '').slice(-8));
+  /* Identificador PRÓPRIO do documento de produção — nunca o número oficial
+     sozinho, para que uma cópia impressa não se confunda com o registro real. */
+  const codigoVerif = 'PROD-' + (numero.replace(/[^0-9]/g, '').slice(-8) || numero.replace(/[^A-Z0-9]/gi, '').slice(-8));
 
   $('#rna-content').innerHTML = `
     <div class="rna-page-head no-print">
-      <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> <a href="#" id="bc-back">Rel. Dimensionais Simulados</a><i class="bi bi-chevron-right"></i> ${numero}</div>
-      <h1>Relatório de Inspeção Dimensional — Simulado ${seloSim()}</h1></div>
+      <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> <a href="#" id="bc-back">Rel. Dimensionais de Produção</a><i class="bi bi-chevron-right"></i> ${numero}</div>
+      <h1>Relatório de Inspeção Dimensional — Produção ${seloSim()}</h1></div>
       <div class="d-flex gap-2">
         <button class="rna-btn rna-btn-ghost" id="btn-voltar"><i class="bi bi-arrow-left"></i> Voltar</button>
         <button class="rna-btn rna-btn-primary" id="btn-imprimir"><i class="bi bi-printer"></i> Imprimir / PDF</button>
@@ -329,13 +344,13 @@ async function abrirRelatorio(relId, autoPrint = false) {
       ${marcaDagua()}
       <div class="insp-rep-head">
         <div class="insp-rep-brand"><img src="${BRAND.logo}" alt="logo"><div><b>${BRAND.company}</b><div class="cell-sub">${BRAND.full}</div></div></div>
-        <div class="insp-rep-title"><h2>Relatório Dimensional Simulado</h2>
+        <div class="insp-rep-title"><h2>Relatório Dimensional de Produção</h2>
           <div class="insp-rep-meta"><span><b>${numero}</b></span><span>${esc(rel.tipo_nome)}</span>
           <span class="rna-badge ${s.badge}">${s.label}</span> ${resPill(rel.resultado)} ${seloSim()}</div>
-          <div class="cell-sub">Código de verificação da simulação: ${codigoVerif}</div></div>
+          <div class="cell-sub">Código de verificação: ${codigoVerif}</div></div>
       </div>
 
-      <div class="sim-aviso-print">RELATÓRIO DIMENSIONAL SIMULADO — ${SIM.AVISO_TOPO}</div>
+      <div class="sim-aviso-print">RELATÓRIO DIMENSIONAL DE PRODUÇÃO — ${SIM.AVISO_TOPO}</div>
 
       <div class="insp-rep-section"><div class="insp-rep-sec-t">Identificação da peça</div>
         <div class="insp-rep-grid">
@@ -367,7 +382,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
           <td>${a.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovada</span>' : a.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovada</span>' : '—'}${a._simulado ? ' ' + tagAjustado() : ''}</td>
           <td class="cell-sub">${esc(a.observacao || '—')}</td></tr>`).join('')}
         </tbody></table>
-        <div class="cell-sub mt-1">Resultado por peça recalculado sobre os valores simulados. Auditor, horários e observações são os do registro oficial.</div></div>` : ''}
+        <div class="cell-sub mt-1">Resultado por peça recalculado sobre os valores de produção. Auditor, horários e observações são os do registro oficial.</div></div>` : ''}
 
       <div class="insp-rep-section"><div class="insp-rep-sec-t">Resultados das medições</div>
         <div class="insp-table-wrap"><table class="insp-mtable insp-rep-table ${(rel.quantidade || 0) > 5 ? 'insp-rep-table--wide' : ''}"><thead><tr>
@@ -386,7 +401,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
               const m = c.medicoes.find(x => x.amostra === i + 1);
               const cls = (!info && m) ? repCls(m._visual) : '';
               const sim = m?._simulado;
-              return `<td class="${cls}${sim ? ' sim-cel' : ''}"${sim ? ` title="Valor simulado. No relatório oficial: ${esc(dash(m._valorOriginal))}"` : ''}>${
+              return `<td class="${cls}${sim ? ' sim-cel' : ''}"${sim ? ` title="Valor de produção. No relatório oficial: ${esc(dash(m._valorOriginal))}"` : ''}>${
                 m ? esc(dash(m.valor)) : '—'}${sim ? '<i class="bi bi-check2-circle sim-cel__ic"></i>' : ''}</td>`;
             }).join('');
             const temMedRef = c.medicoes.some(m => String(m.valor ?? '') !== '');
@@ -402,9 +417,14 @@ async function abrirRelatorio(relId, autoPrint = false) {
         <div class="cell-sub mt-1"><span class="rep-tag rep-ok">✓ Aprovado</span> dentro da faixa segura ·
           <span class="rep-tag rep-warn">▲ Aprovado com atenção</span> no limite ou próximo dele ·
           <span class="rep-tag rep-crit">✗ Reprovado</span> fora do limite. Limites inclusivos.
-          ${tagAjustado()} valor gerado automaticamente pela simulação — no relatório oficial esta cota estava reprovada.</div></div>
+          ${tagAjustado()} valor gerado automaticamente — no relatório oficial esta cota estava reprovada.</div></div>
 
-      ${caracteristicas.some(c => c.resultado === 'reprovado') ? `<div class="insp-rep-section"><div class="insp-rep-sec-t">Reprovações remanescentes</div>
+      ${/* Mesma seção e mesmo título do relatório oficial. Neste documento ela
+            costuma vir vazia (os valores ficam dentro dos limites); quando
+            aparece, é porque a cota não tinha desfecho conforme possível. */''}
+      ${inspecaoAposPinturaHtml(caracteristicas, resumo)}
+
+      ${caracteristicas.some(c => c.resultado === 'reprovado') ? `<div class="insp-rep-section"><div class="insp-rep-sec-t">Reprovações e tratamento</div>
         ${caracteristicas.filter(c => c.resultado === 'reprovado').map(c => { const a = acaoBy[c.id] || {}; return `<div class="insp-rep-reprov">
           <b>${esc(c.caracteristica)}</b> (cota ${esc(c.cota)}) — ${classeCel(c)}
           ${c._simulacaoImpossivel ? `<div class="cell-sub"><i class="bi bi-exclamation-triangle"></i> ${esc(c._motivoSimulacao)}</div>` : ''}
@@ -412,33 +432,64 @@ async function abrirRelatorio(relId, autoPrint = false) {
             ${cell('Limite', `${dash(c.minimo)} a ${dash(c.maximo)} ${esc(c.unidade || '')}`)} ${cell('Amostras reprovadas', esc(c.medicoes.filter(m => m.resultado === 'reprovado').map(m => `#${m.amostra}=${dash(m.valor)}`).join(', ')))}
             ${cell('Observação', esc(c.observacao || a.observacao))} ${cell('Ação imediata', esc(a.acao_imediata))} ${cell('Ação permanente', esc(a.acao_permanente))}
             ${cell('Responsável', esc(a.responsavel))} ${cell('Prazo', a.prazo ? dataBR(a.prazo) : '—')}
+            ${cell('Pendência', a.pendencia_id ? 'Gerada' : '—')}
           </div></div>`; }).join('')}</div>` : ''}
 
-      <div class="insp-rep-section"><div class="insp-rep-sec-t">Resumo da simulação</div>
+      <div class="insp-rep-section"><div class="insp-rep-sec-t">Resumo</div>
         <div class="insp-rep-grid">
           ${cell('Características', resumo.totalCaracteristicas)} ${cell('Aprovadas', resumo.caracteristicasAprovadas)} ${cell('Reprovadas', resumo.caracteristicasReprovadas)}
           ${cell('Medições', resumo.totalMedicoes)} ${cell('Conformidade', resumo.conformidade + '%')} ${cell('Classe A / B / C', `${resumo.classeA} / ${resumo.classeB} / ${resumo.classeC}`)}
-          ${cell('Características ajustadas', simulacao.caracteristicasAjustadas)} ${cell('Medições ajustadas', simulacao.medicoesAjustadas)}
+          ${resumo.classeNaoAplica ? cell('Sem classificação (Não se aplica)', resumo.classeNaoAplica) : ''}
           ${resumo.caracteristicasReferencia ? cell('Referências registradas', `${resumo.medicoesReferencia} medição(ões) · ${resumo.caracteristicasReferencia} característica(s)`) : ''}
+          ${/* Exclusivos deste documento: quantificam o que foi gerado. Não
+                existem no relatório oficial porque lá nada é gerado. */''}
+          ${cell('Características ajustadas', simulacao.caracteristicasAjustadas)} ${cell('Medições ajustadas', simulacao.medicoesAjustadas)}
         </div>
-        <div class="insp-rep-final ${INSP_STATUS[rel.status]?.badge}">RESULTADO GERAL DA SIMULAÇÃO: <b>${rel.resultado === 'aprovado' ? 'APROVADO' : rel.resultado === 'reprovado' ? 'REPROVADO' : 'EM ANDAMENTO'}</b></div>
+        <div class="insp-rep-final ${INSP_STATUS[rel.status]?.badge}">RESULTADO GERAL: <b>${rel.resultado === 'aprovado' ? 'APROVADO' : rel.resultado === 'reprovado' ? 'REPROVADO' : 'EM ANDAMENTO'}</b></div>
         <div class="cell-sub mt-1" style="text-align:center">Resultado no relatório oficial: <b>${resultadoLabel(rel._resultadoOriginal)}</b> — preservado, sem qualquer alteração.</div>
       </div>
 
-      ${hist.length ? `<div class="insp-rep-section no-print-optional"><div class="insp-rep-sec-t">Histórico do relatório oficial</div>
+      ${hist.length ? `<div class="insp-rep-section no-print-optional"><div class="insp-rep-sec-t">Histórico</div>
         <table class="rna-table"><tbody>${hist.map(h => `<tr><td class="cell-sub" style="width:150px">${dataHoraBR(h.quando)}</td><td><b>${esc(h.acao)}</b> ${h.campo && h.campo !== '—' ? `· ${esc(h.campo)}: ${esc(h.antes)} → ${esc(h.depois)}` : esc(h.depois)} ${h.justificativa ? `<div class="cell-sub">Justificativa: ${esc(h.justificativa)}</div>` : ''}</td><td class="cell-sub">${esc(h.user_nome)}</td></tr>`).join('')}</tbody></table>
-        <div class="cell-sub mt-1">O histórico pertence ao relatório oficial e não é alterado pela simulação.</div></div>` : ''}
+        <div class="cell-sub mt-1">O histórico pertence ao relatório oficial e não é alterado por este documento.</div></div>` : ''}
 
+      ${/* Rodapé do PDF: identificador próprio, origem, quem gerou e quando —
+            os quatro dados que permitem auditar uma cópia impressa. */''}
       <div class="insp-rep-footer">
-        <span>${numero} · SIMULADO</span><span>Emitido em ${dataHoraBR(new Date())}</span>
-        <span>Código de verificação da simulação: ${codigoVerif}</span><span>Documento SEM validade — simulação</span>
+        <span><b>${codigoVerif}</b> · DE PRODUÇÃO</span>
+        <span>Origem: relatório oficial ${numero}</span>
+        <span>Gerado por ${esc(USER?.nome || '—')} em ${dataHoraBR(new Date())}</span>
+        <span>Documento de apoio operacional — não substitui o registro oficial de medição</span>
       </div>
     </div>`;
 
+  /* Nome sugerido do PDF. O navegador usa document.title como nome padrão do
+     arquivo na caixa de impressão — é o único ponto onde dá para influenciar
+     isso sem gerar o PDF no cliente. Restaurado ao sair da tela. */
+  document.title = `REL_DIM_PRODUCAO_${(rel.peca_codigo || 'SEM-PN').replace(/[^\w.-]+/g, '-')}_${new Date().toISOString().slice(0, 10)}_${codigoVerif}`;
+
+  /* TRILHA DE AUDITORIA (§histórico) — geração e exportação vão para a tabela
+     `logs`, a mesma trilha do resto do sistema (legível só por admin/supervisor).
+     Reusa a estrutura existente em vez de criar um histórico paralelo. Nunca
+     derruba a tela: db.log já é não-lançante por contrato. */
+  registrarUso('Gerou relatório dimensional de produção', numero, codigoVerif);
+
   $('#bc-back').addEventListener('click', e => { e.preventDefault(); go(PAGINA); });
   $('#btn-voltar').addEventListener('click', () => go(PAGINA));
-  $('#btn-imprimir').addEventListener('click', () => window.print());
+  $('#btn-imprimir').addEventListener('click', () => {
+    registrarUso('Exportou/imprimiu relatório dimensional de produção', numero, codigoVerif);
+    window.print();
+  });
   if (autoPrint) setTimeout(() => window.print(), 500);
+}
+
+/** Registro de uso do documento de produção: quem, quando, qual documento e de
+    qual relatório oficial ele derivou. */
+function registrarUso(acao, numeroOficial, codigo) {
+  db.log({
+    usuario: USER?.nome || '—', acao, entidade: 'rel_dim_producao',
+    antes: `origem: ${numeroOficial}`, depois: codigo
+  });
 }
 
 /* Aviso de topo quando a simulação NÃO conseguiu aprovar tudo. Sem isto, o
@@ -446,7 +497,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
 function avisoSimulacao(sim, rel) {
   if (!rel._simulado) {
     return `<div class="sim-nota"><i class="bi bi-info-circle"></i>
-      <div>Este relatório já estava <b>${resultadoLabel(rel._resultadoOriginal)}</b> no módulo oficial — nenhum valor foi simulado.</div></div>`;
+      <div>Este relatório já estava <b>${resultadoLabel(rel._resultadoOriginal)}</b> no módulo oficial — nenhum valor foi gerado.</div></div>`;
   }
   if (sim.completa) return '';
   const partes = [];
@@ -454,13 +505,12 @@ function avisoSimulacao(sim, rel) {
     sim.impossiveis.map(c => esc(c.cota ?? '—')).join(', ')})`);
   if (sim.pendentes.length) partes.push(`${sim.pendentes.length} característica(s) com medição não preenchida no relatório oficial`);
   return `<div class="sim-nota sim-nota--warn"><i class="bi bi-exclamation-triangle"></i>
-    <div><b>Simulação parcial.</b> ${partes.join(' e ')}. Por isso o resultado simulado não é "Aprovado":
-    a simulação só troca valores reprovados por valores que a regra de tolerância realmente aprova.</div></div>`;
+    <div><b>Geração parcial.</b> ${partes.join(' e ')}. Por isso o resultado não é "Aprovado":
+    a geração só troca valores reprovados por valores que a regra de tolerância realmente aprova.</div></div>`;
 }
 
-const cell = (l, v) => `<div class="insp-rep-cell"><span class="insp-info-l">${l}</span><span class="insp-info-v">${(v === 0 || v) ? v : '—'}</span></div>`;
 const dash = v => fmtMedida(v);
-const tagAjustado = () => `<span class="sim-ajustado" title="Valor gerado automaticamente pela simulação."><i class="bi bi-check2-circle"></i> Ajustado automaticamente</span>`;
+const tagAjustado = () => `<span class="sim-ajustado" title="Valor gerado automaticamente dentro dos limites cadastrados."><i class="bi bi-check2-circle"></i> Ajustado automaticamente</span>`;
 const tagNaoSimulavel = c => `<span class="sim-ajustado sim-ajustado--warn" title="${esc(c._motivoSimulacao)}"><i class="bi bi-exclamation-triangle"></i> Não simulável</span>`;
 
 function classeCel(c) {
@@ -469,14 +519,6 @@ function classeCel(c) {
   return '<span class="cell-sub">—</span>';
 }
 const repCls = v => v === 'ok' ? 'rep-ok' : v === 'atencao' ? 'rep-warn' : v === 'crit' ? 'rep-crit' : '';
-function resultadoTag(resultado, visual) {
-  if (resultado === 'reprovado') return '<span class="rep-tag rep-crit">✗ Reprovado</span>';
-  if (resultado === 'aprovado') return visual === 'atencao'
-    ? '<span class="rep-tag rep-warn" title="Valor no limite ou próximo dele — aprovado, com atenção.">▲ Aprovado com atenção</span>'
-    : '<span class="rep-tag rep-ok">✓ Aprovado</span>';
-  if (resultado === 'registrado') return '<span class="rep-tag">Registrado — Referência</span>';
-  return '—';
-}
 function tiposVinculoTexto(rel) {
   const arr = Array.isArray(rel.peca_tipos_inspecao) ? rel.peca_tipos_inspecao : [];
   return arr.length ? esc(arr.map(s => nomeDoSlug(s)).join(' · ')) : '—';
