@@ -169,9 +169,17 @@ export async function handleEvidenceFile(file) {
     // (e o próprio Storage, pelo allowed_mime_types) recusam.
     return { id, nome: renomearExt(file.name || 'foto', 'jpg'), dataUrl, type: 'image/jpeg', tamanho: String(file.size) };
   } catch {
-    // fallback: lê sem comprimir
-    const dataUrl = await readAsDataURL(file);
-    return { id, nome: file.name, dataUrl, type: file.type || 'image/jpeg', tamanho: String(file.size) };
+    // fallback: lê sem comprimir. Se nem isso funcionar, o arquivo não pôde ser
+    // lido do disco — erro com nome próprio, nunca "falha de conexão" depois.
+    try {
+      const dataUrl = await readAsDataURL(file);
+      return { id, nome: file.name, dataUrl, type: file.type || 'image/jpeg', tamanho: String(file.size) };
+    } catch (e) {
+      logAnexo('não foi possível ler a imagem escolhida', e, { nome: file?.name, tamanho: file?.size });
+      toast('Não foi possível ler esta imagem do seu computador. Se ela estiver no OneDrive/Google Drive como "somente online", abra-a uma vez para baixar e tente de novo.',
+        { type: 'crit', title: 'Evidência', timeout: 10000 });
+      return null;
+    }
   }
 }
 
@@ -243,6 +251,60 @@ export async function storageAlcancavel() {
 
 export const BUCKET = 'evidencias';
 
+/* Lê o arquivo para a memória ANTES de enviar.
+
+   Motivo: passar o File direto ao fetch faz o navegador ler o disco durante a
+   requisição — e se essa leitura falhar (arquivo do OneDrive/Drive marcado como
+   "somente online", arquivo movido/renomeado/pendrive removido depois de
+   escolhido), o fetch rejeita com "Failed to fetch", indistinguível de falha de
+   rede. Lendo antes, o erro aparece onde de fato aconteceu, com nome próprio, e
+   nenhuma requisição inútil é disparada. */
+export async function materializarArquivo(file) {
+  try {
+    const buf = await file.arrayBuffer();
+    if (!buf.byteLength) throw new Error('leitura devolveu 0 bytes');
+    return new Blob([buf], { type: file.type || 'application/octet-stream' });
+  } catch (e) {
+    logAnexo('não foi possível ler o arquivo escolhido', e, { nome: file?.name, tamanho: file?.size, tipo: file?.type });
+    throw new AnexoError(
+      'Não foi possível ler o arquivo do seu computador. Se ele estiver no OneDrive/Google Drive como "somente online", ' +
+      'abra-o uma vez para baixar e tente de novo. Se tiver sido movido ou renomeado depois de escolhido, selecione-o novamente.',
+      e, `leitura local · ${file?.name || '?'} · ${file?.size ?? '?'} bytes`);
+  }
+}
+
+/* ======================================================== DIAGNÓSTICO
+   Roda o caminho inteiro e diz em qual degrau ele quebra. Exposto na tela como
+   window.__rnaDiagAnexo() para suporte — sem precisar de build ou breakpoint. */
+export async function diagnosticarAnexos(file = null) {
+  const passo = {};
+  passo['1. Storage alcançável'] = (await storageAlcancavel()) ? 'OK' : 'FALHOU';
+  try {
+    const sb = await getSupabase();
+    const { data } = await sb.auth.getUser();
+    passo['2. Sessão autenticada'] = data?.user ? `OK (${data.user.email || data.user.id})` : 'SEM SESSÃO';
+  } catch (e) { passo['2. Sessão autenticada'] = 'ERRO · ' + (e?.message || e); }
+
+  // Blob sintético: isola servidor+policies do arquivo do usuário.
+  try {
+    const sb = await getSupabase();
+    const p = `diagnostico/${Date.now()}-probe.pdf`;
+    const b = new Blob([new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])], { type: 'application/pdf' });
+    const { error } = await sb.storage.from(BUCKET).upload(p, b, { contentType: 'application/pdf' });
+    if (error) { passo['3. Upload de teste (5 bytes)'] = 'FALHOU · ' + detalheTecnico(error); }
+    else { passo['3. Upload de teste (5 bytes)'] = 'OK'; await sb.storage.from(BUCKET).remove([p]); }
+  } catch (e) { passo['3. Upload de teste (5 bytes)'] = 'EXCEÇÃO · ' + detalheTecnico(e); }
+
+  if (file) {
+    try { const b = await materializarArquivo(file); passo['4. Leitura do seu arquivo'] = `OK (${b.size} bytes)`; }
+    catch (e) { passo['4. Leitura do seu arquivo'] = 'FALHOU · ' + (e?.tecnico || e?.message); }
+  } else {
+    passo['4. Leitura do seu arquivo'] = 'não testado (chame __rnaDiagAnexo(arquivo))';
+  }
+  console.table?.(Object.entries(passo).map(([etapa, resultado]) => ({ etapa, resultado })));
+  return passo;
+}
+
 /* Envia ao Supabase Storage (se configurado) ou retorna Base64 (fallback local).
    `meta.path` permite ao chamador definir o caminho (ETAPA 8); sem ele usamos o
    layout genérico <tipo>/<id>/<timestamp>-<nome>. Devolve { url, path }. */
@@ -251,7 +313,7 @@ export async function uploadEvidenceToStorage(item, meta = {}) {
   const sb = await getSupabase();
   const safe = sanitizarNomeArquivo(item.nome || 'foto');
   const path = meta.path || `${meta.registro_tipo || 'geral'}/${meta.registro_id || 'tmp'}/${Date.now()}-${safe}`;
-  const blob = dataURLtoBlob(item.dataUrl);
+  const blob = dataURLtoBlob(item.dataUrl);   // já está em memória (foi comprimida)
   const { error } = await sb.storage.from(BUCKET).upload(path, blob, { contentType: blob.type, upsert: false });
   if (error) {
     logAnexo('upload recusado pelo Storage', error, { bucket: BUCKET, path, contentType: blob.type, bytes: blob.size });
@@ -305,11 +367,19 @@ export async function mensagemStorage(e) {
   if (/duplicate|already exists/.test(txt) || status === '409')
     return com('Já existe um arquivo com este nome no repositório. Tente novamente.');
 
-  /* Falha em nível de fetch: só agora perguntamos se é rede de verdade. */
+  /* Falha em nível de fetch (StorageUnknownError · Failed to fetch).
+     VERIFICADO neste projeto: o Storage devolve as recusas com cabeçalho CORS
+     normal (um 415 de MIME chega ao navegador como JSON legível). Ou seja,
+     "Failed to fetch" aqui NÃO é o servidor recusando — é a requisição que não
+     chega a completar. As causas reais, nesta ordem de frequência:
+       1. o arquivo não pôde ser lido do disco (OneDrive/Drive "somente online",
+          arquivo movido/renomeado depois de escolhido, pendrive removido);
+       2. extensão do navegador bloqueando a requisição;
+       3. conexão interrompida no meio do envio. */
   if (/failed to fetch|networkerror|load failed|network request failed|timeout/.test(txt)) {
     const online = await storageAlcancavel();
     return online
-      ? com('O servidor de arquivos recusou o envio sem detalhar o motivo (resposta sem cabeçalho CORS). A causa mais comum são as policies do bucket "evidencias" ausentes — verifique Storage → evidencias → Policies.')
+      ? com('O envio foi interrompido antes de chegar ao servidor (o servidor está acessível). Quase sempre é o arquivo que não pôde ser lido: se ele estiver no OneDrive/Google Drive como "somente online", abra-o uma vez para baixar e tente de novo. Outras causas: extensão do navegador bloqueando o envio, ou o arquivo movido/renomeado após ser escolhido.')
       : com('Não foi possível alcançar o servidor de arquivos. Verifique a conexão e tente novamente.');
   }
   return com('Não foi possível enviar o arquivo para o armazenamento.');

@@ -27,7 +27,12 @@ import { SUPABASE } from '../../../services/config.js';
 import { getSupabase } from '../../../services/supabaseClient.js';
 import { $, $$, el, toast, modal, confirmDialog, initials } from '../ui.js';
 import { initEvidenceUpload, removeEvidenceFromStorage, mensagemStorage, mensagemRegistro,
-         sanitizarNomeArquivo, logAnexo, AnexoError, BUCKET } from '../evidence.js';
+         sanitizarNomeArquivo, logAnexo, AnexoError, BUCKET,
+         materializarArquivo, diagnosticarAnexos } from '../evidence.js';
+
+/* Diagnóstico de anexos ao alcance do suporte, sem build nem breakpoint:
+   abra o console (F12) e rode __rnaDiagAnexo(). */
+window.__rnaDiagAnexo = diagnosticarAnexos;
 
 /* Fluxo por etapas. "Inspeção Após Pintura" (características de equipamento
    "Visual", respondidas OK/NOK) entra ENTRE Medições e Revisão. Ao inserir aqui,
@@ -2077,9 +2082,12 @@ async function uploadArquivoPintura(file, ctx) {
   if (!SUPABASE.enabled) return { url: await lerArquivoDataURL(file), path: null };   // fallback demo: Base64
   const sb = await getSupabase();
   const path = pathPintura(ctx, file.name || 'relatorio-pintura');
-  const { error } = await sb.storage.from(BUCKET).upload(path, file, { contentType: file.type || undefined, upsert: false });
+  /* Lê o arquivo para a memória ANTES do envio: falha de leitura de disco vira
+     erro nomeado aqui, em vez de "Failed to fetch" no meio da requisição. */
+  const corpo = await materializarArquivo(file);
+  const { error } = await sb.storage.from(BUCKET).upload(path, corpo, { contentType: file.type || corpo.type, upsert: false });
   if (error) {
-    logAnexo('upload do Relatório de Pintura recusado pelo Storage', error, { bucket: BUCKET, path, ctx, bytes: file.size });
+    logAnexo('upload do Relatório de Pintura recusado pelo Storage', error, { bucket: BUCKET, path, ctx, bytes: corpo.size });
     throw new AnexoError(await mensagemStorage(error), error);
   }
   const { data } = sb.storage.from(BUCKET).getPublicUrl(path);
