@@ -1737,7 +1737,8 @@ async function stepInspecaoPintura(host) {
   /* O input é limpo sempre (sem isso, reescolher o MESMO arquivo depois de uma
      falha não dispara 'change'); a seleção sobrevive em PINTURA_PENDENTE. */
   fileInp?.addEventListener('change', () => { const f = fileInp.files?.[0]; fileInp.value = ''; if (f) enviarRelatorioPintura(f); });
-  $('#insp-pintura-retry')?.addEventListener('click', () => { const f = PINTURA_PENDENTE; if (f) enviarRelatorioPintura(f); });
+  // Reenvia dos BYTES em memória — não toca o disco de novo.
+  $('#insp-pintura-retry')?.addEventListener('click', () => { const p = PINTURA_PENDENTE; if (p?.file) enviarRelatorioPintura(p.file, p.blob); });
   $('#insp-pintura-descartar')?.addEventListener('click', () => { PINTURA_PENDENTE = null; renderStep(); });
   $('#insp-pintura-rm')?.addEventListener('click', removerRelatorioPintura);
   atualizarNav();
@@ -1798,14 +1799,25 @@ function campoRelatorioPintura(pintura, semColuna) {
     ${semColuna ? `<div class="insp-blocker mt-2" style="border-left:4px solid var(--rna-yellow-600)"><i class="bi bi-exclamation-triangle"></i>
       <div>O anexo (opcional) do Relatório de Pintura ainda não pode ser salvo neste banco. Rode <b>database/fix_anexos_pintura.sql</b> no Supabase para habilitar. A inspeção pode ser salva e finalizada normalmente sem ele.</div></div>` : ''}
     <div id="insp-pintura-atual" class="mt-2">${pinturaAtualHtml(pintura)}</div>
-    ${PINTURA_PENDENTE && !VIEWONLY ? `<div class="insp-blocker mt-2" style="border-left:4px solid var(--rna-red,#c62828)">
-      <i class="bi bi-exclamation-octagon"></i><div>O arquivo <b>${escTitle(PINTURA_PENDENTE.name)}</b> não foi salvo.
-      A seleção foi mantida — corrija a causa indicada e tente de novo.</div></div>` : ''}
+    ${PINTURA_PENDENTE && !VIEWONLY ? (PINTURA_PENDENTE.ilegivel
+      /* Arquivo ilegível: repetir o envio com o MESMO handle falharia igual —
+         o caminho de saída é obter uma cópia local de verdade. */
+      ? `<div class="insp-blocker mt-2" style="border-left:4px solid var(--rna-red,#c62828)">
+          <i class="bi bi-exclamation-octagon"></i><div><b>O arquivo ${escTitle(PINTURA_PENDENTE.file.name)} não pôde ser lido pelo navegador.</b>
+          <div class="cell-sub mt-1">Isso acontece quando o arquivo não está realmente no computador. Os casos mais comuns:</div>
+          <ul class="insp-ul mt-1">
+            <li>foi anexado direto de um <b>e-mail do Outlook</b> — salve o PDF em uma pasta (ex.: Área de Trabalho) e anexe de lá;</li>
+            <li>está no <b>OneDrive/Google Drive como "somente online"</b> — abra-o uma vez para baixar, ou clique com o botão direito → "Sempre manter neste dispositivo";</li>
+            <li>foi <b>movido, renomeado ou apagado</b> depois de escolhido, ou está num pendrive removido.</li>
+          </ul></div></div>`
+      : `<div class="insp-blocker mt-2" style="border-left:4px solid var(--rna-red,#c62828)">
+          <i class="bi bi-exclamation-octagon"></i><div>O arquivo <b>${escTitle(PINTURA_PENDENTE.file.name)}</b> não foi salvo.
+          O conteúdo já está carregado — corrija a causa indicada e clique em <b>Tentar novamente</b>.</div></div>`) : ''}
     ${VIEWONLY ? '' : `<div class="mt-2 d-flex flex-wrap gap-2">
       <input type="file" id="insp-pintura-file" accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" hidden>
-      <button class="rna-btn rna-btn-dark rna-btn-sm" id="insp-pintura-btn"${semColuna ? ' disabled title="Rode database/fix_anexos_pintura.sql para habilitar"' : ''}><i class="bi bi-upload"></i> ${pintura ? 'Substituir arquivo' : 'Anexar arquivo'}</button>
-      ${PINTURA_PENDENTE ? `<button class="rna-btn rna-btn-primary rna-btn-sm" id="insp-pintura-retry"><i class="bi bi-arrow-clockwise"></i> Tentar novamente</button>
-        <button class="rna-btn rna-btn-ghost rna-btn-sm" id="insp-pintura-descartar">Descartar seleção</button>` : ''}
+      <button class="rna-btn rna-btn-dark rna-btn-sm" id="insp-pintura-btn"${semColuna ? ' disabled title="Rode database/fix_anexos_pintura.sql para habilitar"' : ''}><i class="bi bi-upload"></i> ${PINTURA_PENDENTE?.ilegivel ? 'Selecionar outro arquivo' : (pintura ? 'Substituir arquivo' : 'Anexar arquivo')}</button>
+      ${PINTURA_PENDENTE && !PINTURA_PENDENTE.ilegivel ? `<button class="rna-btn rna-btn-primary rna-btn-sm" id="insp-pintura-retry"><i class="bi bi-arrow-clockwise"></i> Tentar novamente</button>` : ''}
+      ${PINTURA_PENDENTE ? `<button class="rna-btn rna-btn-ghost rna-btn-sm" id="insp-pintura-descartar">Descartar seleção</button>` : ''}
     </div>`}
   </div>`;
 }
@@ -2029,22 +2041,38 @@ const pathPintura = (ctx, nome) =>
    falhar, o objeto recém-enviado é APAGADO do Storage — o Storage nunca fica com
    arquivo que o banco desconhece, e o banco nunca aponta para arquivo que não
    subiu. O anexo anterior só é apagado DEPOIS de o novo estar gravado. */
-async function enviarRelatorioPintura(file) {
+async function enviarRelatorioPintura(file, blobPronto = null) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   if (!PINTURA_EXT.includes(ext)) return toast('Formato de arquivo não permitido. Use PDF, JPG, JPEG ou PNG.', { type: 'warn', title: 'Relatório de Pintura' });
   if (file.size > PINTURA_MAX_MB * 1024 * 1024) return toast(`O arquivo excede o limite de ${PINTURA_MAX_MB} MB.`, { type: 'warn', title: 'Relatório de Pintura' });
   // ETAPA 1/6 — contexto validado ANTES do upload; sem IDs, nada sobe.
   const v = contextoAnexo(file);
-  if (!v.ok) { PINTURA_PENDENTE = file; renderStep(); return toast(v.msg, { type: 'crit', title: 'Anexo não enviado', timeout: 9000 }); }
+  if (!v.ok) { PINTURA_PENDENTE = { file, blob: blobPronto, ilegivel: false }; renderStep(); return toast(v.msg, { type: 'crit', title: 'Anexo não enviado', timeout: 9000 }); }
+
+  /* Lê o arquivo AGORA, na escolha, e guarda os bytes em memória. Duas razões:
+     (a) arquivo ilegível (anexo aberto direto do Outlook, OneDrive "somente
+         online", arquivo movido) é denunciado no ato, antes de qualquer envio;
+     (b) uma nova tentativa reusa os bytes já lidos — reler o mesmo handle de um
+         arquivo que sumiu falharia de novo, para sempre. */
+  let corpo = blobPronto;
+  if (!corpo) {
+    try {
+      corpo = await materializarArquivo(file);
+    } catch (e) {
+      PINTURA_PENDENTE = { file, blob: null, ilegivel: true };
+      renderStep();
+      return toast(e.message, { type: 'crit', title: 'Arquivo não pôde ser lido', timeout: 12000 });
+    }
+  }
 
   const anterior = INSP.relatorioPintura(R.rel);
   const ok = await autosave(async () => {
-    const enviado = await uploadArquivoPintura(file, v.ctx);           // 5/6 upload
+    const enviado = await uploadArquivoPintura(file, v.ctx, corpo);     // 5/6 upload
     const anexo = { nome: file.name, tipo: file.type || ext, url: enviado.url, path: enviado.path, tamanho: String(file.size) };
     try {
-      await INSP.salvarRelatorioPintura(R.rel.id, anexo, USER);        // 7 registro
+      await INSP.salvarRelatorioPintura(R.rel.id, anexo, USER);         // 7 registro
     } catch (e) {
-      await removeEvidenceFromStorage(enviado.path);                   // ETAPA 7 — rollback
+      await removeEvidenceFromStorage(enviado.path);                    // ETAPA 7 — rollback
       logAnexo('registro do Relatório de Pintura falhou; upload desfeito', e, { payload: anexo, tabela: 'insp_relatorios' });
       throw (e?.amigavel || e instanceof INSP.InspError) ? e : new AnexoError(mensagemRegistro(e), e);
     }
@@ -2052,14 +2080,16 @@ async function enviarRelatorioPintura(file) {
     if (anterior?.path && anterior.path !== enviado.path) await removeEvidenceFromStorage(anterior.path);
     await reload();
   }, { contexto: 'Falha ao anexar o Relatório de Pintura' });
-  if (!ok) { PINTURA_PENDENTE = file; renderStep(); return; }           // mantém o arquivo p/ nova tentativa
+  if (!ok) { PINTURA_PENDENTE = { file, blob: corpo, ilegivel: false }; renderStep(); return; }
   PINTURA_PENDENTE = null;
   renderStep();
   toast('Relatório de Pintura anexado.', { type: 'ok' });
 }
-/* Arquivo escolhido cuja gravação falhou. O <input type=file> é limpo (senão
-   reescolher o MESMO arquivo não dispara 'change'), mas o File fica aqui para o
-   botão "Tentar novamente" — o usuário não perde a seleção. */
+/* Seleção cuja gravação falhou: { file, blob, ilegivel }. O <input type=file> é
+   sempre limpo (senão reescolher o MESMO arquivo não dispara 'change'), mas os
+   bytes já lidos ficam aqui — "Tentar novamente" reenvia da memória. Quando o
+   arquivo sequer pôde ser lido (`ilegivel`), repetir é inútil: a tela oferece
+   "Selecionar novamente" no lugar. */
 let PINTURA_PENDENTE = null;
 async function removerRelatorioPintura() {
   const p = INSP.relatorioPintura(R.rel);
@@ -2078,13 +2108,13 @@ async function removerRelatorioPintura() {
    Retorna { url, path } — `path` permite apagar o objeto depois.
    O erro do Storage é traduzido UMA vez, aqui, e viaja como AnexoError: as
    camadas de cima devolvem a mensagem intacta em vez de reembrulhá-la. */
-async function uploadArquivoPintura(file, ctx) {
+async function uploadArquivoPintura(file, ctx, corpoPronto = null) {
   if (!SUPABASE.enabled) return { url: await lerArquivoDataURL(file), path: null };   // fallback demo: Base64
   const sb = await getSupabase();
   const path = pathPintura(ctx, file.name || 'relatorio-pintura');
-  /* Lê o arquivo para a memória ANTES do envio: falha de leitura de disco vira
-     erro nomeado aqui, em vez de "Failed to fetch" no meio da requisição. */
-  const corpo = await materializarArquivo(file);
+  /* Bytes já em memória (lidos na escolha do arquivo): o envio nunca depende do
+     disco, então "Failed to fetch" por leitura interrompida deixa de existir. */
+  const corpo = corpoPronto || await materializarArquivo(file);
   const { error } = await sb.storage.from(BUCKET).upload(path, corpo, { contentType: file.type || corpo.type, upsert: false });
   if (error) {
     logAnexo('upload do Relatório de Pintura recusado pelo Storage', error, { bucket: BUCKET, path, ctx, bytes: corpo.size });
