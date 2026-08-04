@@ -79,17 +79,17 @@ const dataBR = iso => formatarDataBrasil(iso);
 const dataHoraBR = iso => formatarDataHoraBrasil(iso);
 const revLabel = v => (v === '' || v == null) ? '—' : 'Rev ' + fmtRevisao(v);
 
-/* Identificação visual da simulação (§banner, §selo). */
-const seloSim = () => `<span class="sim-selo">${SIM.SELO}</span>`;
+/* Selo roxo "PRODUÇÃO", marca d'água diagonal e faixa de aviso impressa foram
+   REMOVIDOS a pedido: poluíam a tela e o PDF. A identificação do documento
+   continua garantida, sem repetição visual, por quatro pontos que permanecem —
+   o título "Relatório Dimensional de Produção", o código próprio PROD-xxxxxxxx,
+   o rodapé (origem, quem gerou, quando, aviso de documento de apoio) e o nome do
+   arquivo REL_DIM_PRODUCAO_*. Não reintroduzir sem pedido. */
 const bannerSim = () => `<div class="sim-banner">
   <i class="bi bi-magic"></i>
   <div><b>RELATÓRIO DIMENSIONAL DE PRODUÇÃO</b>
   <div>${SIM.AVISO_TOPO}</div></div>
 </div>`;
-/* Marca d'água do PDF: só aparece na impressão (a tela já tem o banner).
-   `position:fixed` faz o navegador repeti-la em TODAS as páginas impressas. */
-const marcaDagua = () => `<div class="sim-watermark" aria-hidden="true">${
-  Array.from({ length: 12 }, () => '<span>PRODUÇÃO</span>').join('')}</div>`;
 
 /* ============================================================ CONSULTA ====== */
 let ULT_RESULT = [], BUSCANDO = false;
@@ -101,7 +101,7 @@ async function renderConsulta() {
   $('#rna-content').innerHTML = `
     <div class="rna-page-head">
       <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Administração <i class="bi bi-chevron-right"></i> Rel. Dimensionais de Produção</div>
-      <h1>Consulta de Rel. Dimensionais de Produção ${seloSim()}</h1><p>Mesma consulta do módulo oficial, exibindo a versão de produção de cada relatório.</p></div>
+      <h1>Consulta de Rel. Dimensionais de Produção</h1><p>Mesma consulta do módulo oficial, exibindo a versão de produção de cada relatório.</p></div>
     </div>
     ${bannerSim()}
     <div class="rna-card mb-3"><div class="rna-card__body">
@@ -250,7 +250,7 @@ function clsBadge(r) {
 
 function rowHtml(r) {
   return `<tr>
-    <td class="cell-strong">${numeroDe(r)} ${r._simulado ? seloSim() : ''}${avisoParcial(r)}</td>
+    <td class="cell-strong">${numeroDe(r)}${avisoParcial(r)}</td>
     <td class="cell-sub">${dataBR(r.started_iso)}</td>
     <td>${esc(r.cliente) || '—'}</td>
     <td>${esc(r.peca_codigo) || '—'}<div class="cell-sub">${revLabel(r.revisao_desenho)}</div></td>
@@ -268,7 +268,7 @@ const mini = (l, v) => `<div><span class="insp-info-l">${l}</span><span class="i
 function cardHtml(r) {
   return `<div class="cdim-card">
     <div class="cdim-card__head">
-      <div><div class="cdim-card__num">${numeroDe(r)} ${r._simulado ? seloSim() : ''}</div>
+      <div><div class="cdim-card__num">${numeroDe(r)}</div>
       <div class="cell-sub">${dataBR(r.started_iso)} · ${esc(r.tipo_nome) || '—'}</div>${avisoParcial(r)}</div>
       ${resPill(r.resultado)}
     </div>
@@ -332,7 +332,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
   $('#rna-content').innerHTML = `
     <div class="rna-page-head no-print">
       <div><div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> <a href="#" id="bc-back">Rel. Dimensionais de Produção</a><i class="bi bi-chevron-right"></i> ${numero}</div>
-      <h1>Relatório de Inspeção Dimensional — Produção ${seloSim()}</h1></div>
+      <h1>Relatório de Inspeção Dimensional — Produção</h1></div>
       <div class="d-flex gap-2">
         <button class="rna-btn rna-btn-ghost" id="btn-voltar"><i class="bi bi-arrow-left"></i> Voltar</button>
         <button class="rna-btn rna-btn-primary" id="btn-imprimir"><i class="bi bi-printer"></i> Imprimir / PDF</button>
@@ -341,16 +341,14 @@ async function abrirRelatorio(relId, autoPrint = false) {
     ${bannerSim()}
     ${avisoSimulacao(simulacao, rel)}
     <div class="insp-report insp-report--simulado" id="insp-report">
-      ${marcaDagua()}
       <div class="insp-rep-head">
         <div class="insp-rep-brand"><img src="${BRAND.logo}" alt="logo"><div><b>${BRAND.company}</b><div class="cell-sub">${BRAND.full}</div></div></div>
         <div class="insp-rep-title"><h2>Relatório Dimensional de Produção</h2>
           <div class="insp-rep-meta"><span><b>${numero}</b></span><span>${esc(rel.tipo_nome)}</span>
-          <span class="rna-badge ${s.badge}">${s.label}</span> ${resPill(rel.resultado)} ${seloSim()}</div>
+          <span class="rna-badge ${s.badge}">${s.label}</span> ${resPill(rel.resultado)}</div>
           <div class="cell-sub">Código de verificação: ${codigoVerif}</div></div>
       </div>
 
-      <div class="sim-aviso-print">RELATÓRIO DIMENSIONAL DE PRODUÇÃO — ${SIM.AVISO_TOPO}</div>
 
       <div class="insp-rep-section"><div class="insp-rep-sec-t">Identificação da peça</div>
         <div class="insp-rep-grid">
@@ -379,7 +377,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
           <td>${dataHoraBR(a.inicio_iso)}</td>
           <td>${dataHoraBR(a.fim_iso)}</td>
           ${podeVerMetricasTempo(USER.role) ? `<td>${a.duracao_seg != null ? fmtDuracao(a.duracao_seg) : '—'}</td>` : ''}
-          <td>${a.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovada</span>' : a.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovada</span>' : '—'}${a._simulado ? ' ' + tagAjustado() : ''}</td>
+          <td>${a.resultado === 'aprovado' ? '<span class="rep-tag rep-ok">✓ Aprovada</span>' : a.resultado === 'reprovado' ? '<span class="rep-tag rep-crit">✗ Reprovada</span>' : '—'}</td>
           <td class="cell-sub">${esc(a.observacao || '—')}</td></tr>`).join('')}
         </tbody></table>
         <div class="cell-sub mt-1">Resultado por peça recalculado sobre os valores de produção. Auditor, horários e observações são os do registro oficial.</div></div>` : ''}
@@ -392,7 +390,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
           ${caracteristicas.map(c => {
             const info = !!c.informativo;
             const attr = c.tipo_especificacao === 'ATRIBUTO';
-            const nomeCel = `${esc(c.caracteristica)}${c._simulado ? ' ' + tagAjustado() : ''}${c._simulacaoImpossivel ? ' ' + tagNaoSimulavel(c) : ''}${c.referencia ? `<div class="cell-sub"><i class="bi bi-info-circle"></i> ${esc(c.referencia)}</div>` : ''}`;
+            const nomeCel = `${esc(c.caracteristica)}${c._simulacaoImpossivel ? ' ' + tagNaoSimulavel(c) : ''}${c.referencia ? `<div class="cell-sub"><i class="bi bi-info-circle"></i> ${esc(c.referencia)}</div>` : ''}`;
             const dimCels = info ? `<td colspan="3" class="cell-sub" style="text-align:center">Referência</td>`
               : attr ? `<td colspan="3" class="cell-sub" style="text-align:center">OK / NOK</td>`
               : `<td>${dash(c.nominal)}</td><td>${dash(c.minimo)}</td><td>${dash(c.maximo)}</td>`;
@@ -416,8 +414,7 @@ async function abrirRelatorio(relId, autoPrint = false) {
         </tbody></table></div>
         <div class="cell-sub mt-1"><span class="rep-tag rep-ok">✓ Aprovado</span> dentro da faixa segura ·
           <span class="rep-tag rep-warn">▲ Aprovado com atenção</span> no limite ou próximo dele ·
-          <span class="rep-tag rep-crit">✗ Reprovado</span> fora do limite. Limites inclusivos.
-          ${tagAjustado()} valor gerado automaticamente — no relatório oficial esta cota estava reprovada.</div></div>
+          <span class="rep-tag rep-crit">✗ Reprovado</span> fora do limite. Limites inclusivos.</div></div>
 
       ${/* Mesma seção e mesmo título do relatório oficial. Neste documento ela
             costuma vir vazia (os valores ficam dentro dos limites); quando
@@ -510,7 +507,13 @@ function avisoSimulacao(sim, rel) {
 }
 
 const dash = v => fmtMedida(v);
-const tagAjustado = () => `<span class="sim-ajustado" title="Valor gerado automaticamente dentro dos limites cadastrados."><i class="bi bi-check2-circle"></i> Ajustado automaticamente</span>`;
+/* A etiqueta "Ajustado automaticamente" foi removida do documento a pedido —
+   poluía cada linha e a legenda. O aviso de topo, o rodapé e a identificação do
+   documento continuam dizendo que os valores são gerados, então a informação não
+   se perde; o que saiu foi a repetição por linha.
+   `tagNaoSimulavel` PERMANECE: ela sinaliza a cota que continuou reprovada por
+   não existir valor conforme possível — é exceção, não rotina, e sem ela o leitor
+   não entenderia por que aquela linha destoa. */
 const tagNaoSimulavel = c => `<span class="sim-ajustado sim-ajustado--warn" title="${esc(c._motivoSimulacao)}"><i class="bi bi-exclamation-triangle"></i> Não simulável</span>`;
 
 function classeCel(c) {
