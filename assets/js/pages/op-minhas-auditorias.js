@@ -22,7 +22,8 @@ import { buscarParaInspecao, porId as pecaPorId, contarPecasDoTipo,
 import { BIB_IMG_PLACEHOLDER } from '../../../services/biblioteca-data.js';
 import { INSP_QUANTIDADES, INSP_STATUS, INSP_MOTIVOS_PAUSA } from '../../../services/inspecao-data.js';
 import { usuarioPodeMedirCaracteristica, motivoBloqueioMedicao, obterCargoResponsavel,
-         rotuloCargoResponsavel, rotuloCargo, normalizarQuemMede } from '../../../services/quem-mede.js';
+         rotuloCargoResponsavel, rotuloCargoUsuario, normalizarQuemMede,
+         quemMedePreenchido, logDiagnosticoMedicao } from '../../../services/quem-mede.js';
 import { SUPABASE } from '../../../services/config.js';
 import { getSupabase } from '../../../services/supabaseClient.js';
 import { $, $$, el, toast, modal, confirmDialog, initials } from '../ui.js';
@@ -825,6 +826,7 @@ async function stepMedicoes(host) {
     ${progressoMedicaoHtml()}
     ${progressoSetorHtml()}
     <div id="insp-colab"></div>
+    <div id="insp-quem-mede-alerta"></div>
     <div id="insp-classe-alerta"></div>
     <div class="insp-table-wrap"><table class="insp-mtable"><thead><tr>
       <th class="sticky-l">Cota</th><th>Característica</th><th>Quadrante</th><th>Ref.</th><th>Un.</th><th>Nominal</th><th>Mín</th><th>Máx</th><th>Equip.</th><th>Obs.</th>
@@ -834,8 +836,15 @@ async function stepMedicoes(host) {
       ${medCars.map(c => linhaMedicao(c, qtd)).join('')}
     </tbody></table></div>`;
 
+  /* Diagnóstico da autorização por cargo — DESLIGADO por padrão. Para investigar
+     um bloqueio em campo, sem alterar código:
+        localStorage.setItem('rna_debug_quem_mede','1')   (ou ?debugQuemMede=1)
+     Imprime, por característica, o que entrou e o que a regra decidiu. */
+  medCars.forEach(c => logDiagnosticoMedicao(USER, c, `cota ${c.cota ?? '—'}`));
+
   $('#btn-ajuda-classe').addEventListener('click', ajudaClasses);
   pintarColaboradores();
+  pintarAlertaQuemMede();
   pintarAlertaClasse();
   /* §Erro 05 — observação completa por clique/toque (também em modo leitura). */
   $$('[data-obs]', host).forEach(b => b.addEventListener('click', () => abrirObservacao(b.dataset.obs)));
@@ -885,6 +894,10 @@ const euEdito = n => AMOSTRAS.podeEditar(amostraDe(n), USER.id);
    menos uma característica que o cargo dele responda (§6). Caso contrário, a peça
    é de outro setor e ele apenas acompanha — o botão Assumir some (§21). */
 const euPossoAssumir = () => (R?.caracteristicas || []).some(c => podeMedirCarac(c));
+/* Características cujo "Quem Mede" está vazio ou fora da lista oficial — não é
+   "de outro setor", é cadastro incompleto: bloqueia TODOS os cargos. */
+const semResponsavelDefinido = () =>
+  (R?.caracteristicas || []).filter(c => !obterCargoResponsavel(c?.quem_mede));
 
 /** Cabeçalho da coluna da peça: dono, status e o botão de assumir/concluir. */
 function cabecalhoAmostra(n) {
@@ -899,7 +912,16 @@ function cabecalhoAmostra(n) {
     else if (meu) acao = `<button class="rna-btn rna-btn-primary rna-btn-sm insp-amostra-btn" data-concluir="${n}"><i class="bi bi-check2"></i> Concluir</button>
                           <button class="rna-btn rna-btn-ghost rna-btn-sm insp-amostra-btn" data-liberar="${n}" title="Liberar sem concluir"><i class="bi bi-unlock"></i></button>`;
     else if (deOutro) acao = `<span class="rna-badge badge-warn" title="Em edição por ${escTitle(a.bloqueado_nome)}"><i class="bi bi-lock-fill"></i> ${escTitle(a.bloqueado_nome || 'ocupada')}</span>`;
-    else if (!euPossoAssumir()) acao = `<span class="rna-badge badge-na" title="Nenhuma característica desta peça é do seu cargo (${escTitle(rotuloCargo(USER.role))}). Você acompanha, mas não mede."><i class="bi bi-lock"></i> Bloqueado p/ seu cargo</span>`;
+    else if (!euPossoAssumir()) {
+      /* Distingue as duas causas: "é de outro setor" (operação normal) e
+         "o cadastro não diz quem mede" (defeito de cadastro que trava todo
+         mundo). Antes as duas apareciam como "Bloqueado p/ seu cargo", o que
+         mandava o auditor procurar o problema no lugar errado. */
+      const cadastro = semResponsavelDefinido();
+      acao = cadastro.length
+        ? `<span class="rna-badge badge-warn" title="${cadastro.length} característica(s) sem responsável reconhecido em &quot;Quem Mede&quot;. Corrija o cadastro na Biblioteca Técnica para liberar a medição."><i class="bi bi-exclamation-triangle"></i> Cadastro sem responsável</span>`
+        : `<span class="rna-badge badge-na" title="Nenhuma característica desta peça é do seu cargo (${escTitle(rotuloCargoUsuario(USER))}). Você acompanha, mas não mede."><i class="bi bi-lock"></i> Bloqueado p/ seu cargo</span>`;
+    }
     else acao = `<button class="rna-btn rna-btn-dark rna-btn-sm insp-amostra-btn" data-assumir="${n}"><i class="bi bi-hand-index"></i> Assumir</button>`;
   }
   const dono = a?.auditor_nome ? `<div class="cell-sub" title="Auditor responsável">${escTitle(a.auditor_nome)}</div>` : '';
@@ -933,6 +955,31 @@ async function pintarColaboradores() {
   box.innerHTML = `<i class="bi bi-people-fill"></i> <div>
     ${ativos.length ? `<b>Medindo agora:</b> ${chips}` : '<b>Nenhuma peça em edição no momento.</b>'}
     ${donos.size ? `<div class="cell-sub mt-1">Participaram desta inspeção: ${parts}</div>` : ''}</div>`;
+}
+
+/* [CONTROLE DE MEDIÇÃO POR CARGO] Alerta de "Quem Mede" ausente/irreconhecível.
+   Uma característica sem responsável reconhecido é bloqueada para TODOS os
+   cargos (fail-closed) — sem este aviso o auditor via só o cadeado e concluía,
+   errado, que o cargo dele é que estava sem permissão. Aqui o motivo real fica
+   escrito na tela, junto do caminho da correção. */
+function pintarAlertaQuemMede() {
+  const box = $('#insp-quem-mede-alerta'); if (!box) return;
+  const faltando = semResponsavelDefinido().filter(c => !c.informativo);
+  if (!faltando.length) { box.innerHTML = ''; box.className = ''; return; }
+  const vazios = faltando.filter(c => !quemMedePreenchido(c.quem_mede));
+  const desconhecidos = [...new Set(faltando.filter(c => quemMedePreenchido(c.quem_mede)).map(c => c.quem_mede))];
+  box.className = 'insp-blocker mb-2';
+  box.style.borderLeft = '4px solid var(--rna-yellow-600)';
+  box.innerHTML = `<i class="bi bi-person-badge"></i> <div>
+    <b>${faltando.length} característica(s) sem responsável reconhecido em "Quem Mede".</b>
+    <div class="cell-sub">${faltando.map(c => `Cota ${escTitle(String(c.cota ?? '—'))} · ${escTitle(c.caracteristica || '')}`).join(' · ')}</div>
+    <div class="cell-sub mt-1">
+      ${vazios.length ? `${vazios.length} sem preenchimento. ` : ''}
+      ${desconhecidos.length ? `Valor(es) fora da lista oficial: ${desconhecidos.map(d => `<b>${escTitle(d)}</b>`).join(', ')}. ` : ''}
+      Enquanto o campo não apontar para uma área oficial
+      (G. Qualidade, Recebimento de Materiais, Eng. Processos ou Laboratório),
+      <b>nenhum cargo</b> consegue preencher estas medições. A correção é no cadastro da peça.
+      ${can(USER.role, 'biblioteca', 'edit') ? `<a class="rna-btn rna-btn-dark rna-btn-sm ms-2" href="biblioteca.html"><i class="bi bi-box-seam"></i> Abrir Biblioteca Técnica</a>` : ''}</div></div>`;
 }
 
 /* §Erro 10 — alerta de cadastro incompleto. Item reprovado sem classe cadastrada
@@ -1257,12 +1304,20 @@ const fmtDataHora = iso => formatarDataHoraBrasil(iso);
    demais: cargo === responsável do "Quem Mede"). */
 const podeMedirCarac = c => usuarioPodeMedirCaracteristica(USER, c);
 
-/* Badge discreto do "Quem Mede" (setor) sob o nome da característica (§20). */
+/* Badge discreto do "Quem Mede" (setor) sob o nome da característica (§20).
+   "Sem responsável" é reservado ao campo REALMENTE vazio. Um "Quem Mede"
+   preenchido sempre aparece com o próprio nome — mesmo que a nomenclatura não
+   seja reconhecida, caso em que o aviso é outro (corrigir o cadastro), nunca
+   "sem responsável". */
 function quemMedeBadge(c) {
-  const qm = normalizarQuemMede(c?.quem_mede) || (c?.quem_mede || '');
-  if (!qm) return ' <span class="insp-setor-tag insp-setor-tag--sem" title="Sem responsável definido em Quem Mede — corrija na Biblioteca Técnica."><i class="bi bi-exclamation-triangle"></i> Sem responsável</span>';
+  const bruto = c?.quem_mede;
+  if (!quemMedePreenchido(bruto))
+    return ' <span class="insp-setor-tag insp-setor-tag--sem" title="Sem responsável definido em Quem Mede — corrija na Biblioteca Técnica."><i class="bi bi-exclamation-triangle"></i> Sem responsável</span>';
+  const canon = normalizarQuemMede(bruto);
+  if (!canon)
+    return ` <span class="insp-setor-tag insp-setor-tag--sem" title="&quot;${escTitle(bruto)}&quot; não é uma área responsável reconhecida — ajuste o campo Quem Mede na Biblioteca Técnica."><i class="bi bi-exclamation-triangle"></i> ${escTitle(bruto)} (não reconhecido)</span>`;
   const bloq = !VIEWONLY && !podeMedirCarac(c);
-  return ` <span class="insp-setor-tag ${bloq ? 'insp-setor-tag--block' : ''}" title="Quem mede: ${escTitle(qm)}${bloq ? ` · Bloqueado para o seu cargo (${escTitle(rotuloCargo(USER.role))})` : ''}"><i class="bi bi-person-badge"></i> ${escTitle(qm)}</span>`;
+  return ` <span class="insp-setor-tag ${bloq ? 'insp-setor-tag--block' : ''}" title="Quem mede: ${escTitle(canon)} · Cargo responsável: ${escTitle(rotuloCargoResponsavel(bruto))}${bloq ? ` · Bloqueado para o seu cargo (${escTitle(rotuloCargoUsuario(USER))})` : ''}"><i class="bi bi-person-badge"></i> ${escTitle(canon)}</span>`;
 }
 
 function linhaMedicao(c, qtd) {

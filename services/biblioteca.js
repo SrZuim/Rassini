@@ -523,14 +523,28 @@ export function qrPayload(peca) { return urlDaFicha(peca?.codigo || ''); }
 /* -------------------------------------------------- catálogos de especificação
    Característica / Equipamento de Medição / Quem Mede — com mapas id→nome. */
 export async function catalogosEspec() {
+  /* Uma falha aqui NÃO pode passar despercebida: sem o catálogo `quem_mede` o
+     snapshot da inspeção nasce sem responsável e TRAVA as medições de todos os
+     cargos. O catálogo indisponível continua não derrubando a tela (lista vazia),
+     mas o motivo vai para o console e para `falhas`, para quem lê saber que o
+     vazio é falha de leitura — e não cadastro em branco. */
+  const carregar = async tabela => {
+    try { return { tabela, linhas: await db.list(tabela) }; }
+    catch (e) {
+      console.warn(`[BIBLIOTECA] catálogo "${tabela}" não pôde ser lido:`, e?.message || e);
+      return { tabela, linhas: [], erro: e };
+    }
+  };
   const [car, eq, qm] = await Promise.all([
-    db.list('caracteristicas_ml').catch(() => []),
-    db.list('equipamentos_medicao').catch(() => []),
-    db.list('quem_mede').catch(() => [])
+    carregar('caracteristicas_ml'), carregar('equipamentos_medicao'), carregar('quem_mede')
   ]);
   const ativos = arr => arr.filter(x => x.ativo !== false).sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
   const map = arr => Object.fromEntries(arr.map(x => [x.id, x.nome]));
-  return { car: ativos(car), eq: ativos(eq), qm: ativos(qm), carMap: map(car), eqMap: map(eq), qmMap: map(qm) };
+  return {
+    car: ativos(car.linhas), eq: ativos(eq.linhas), qm: ativos(qm.linhas),
+    carMap: map(car.linhas), eqMap: map(eq.linhas), qmMap: map(qm.linhas),
+    falhas: [car, eq, qm].filter(r => r.erro).map(r => r.tabela)
+  };
 }
 
 /* ---------------------------------------------------------------- utils ---- */

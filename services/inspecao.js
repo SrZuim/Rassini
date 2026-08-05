@@ -17,7 +17,8 @@ import { PLANTA_SIGLAS, INSP_STATUS } from './inspecao-data.js';
 import * as MED from './medicao.js';
 import { agoraISO, hojeBR, formatarDataBrasil, formatarHoraBrasil, formatarDataHoraBrasil, duracaoSegundos } from './datahora.js';
 import { normalizarIdentificadorMaiusculo, normalizarOP, opValida, MSG_OP_INVALIDA } from './identificadores.js';
-import { usuarioPodeMedirCaracteristica, motivoBloqueioMedicao, obterCargoResponsavel } from './quem-mede.js';
+import { usuarioPodeMedirCaracteristica, motivoBloqueioMedicao, obterCargoResponsavel,
+         quemMedePreenchido, cargoDoUsuario, logDiagnosticoMedicao } from './quem-mede.js';
 
 /* Gravação sempre em UTC (timestamptz); exibição sempre via services/datahora.js
    no fuso America/Sao_Paulo (§Erro 06). `hoje()` usa o dia civil de São Paulo —
@@ -533,10 +534,56 @@ async function inserirCaracteristica(row) {
   } catch (e) {
     if (!ehErroDeSchema(e)) throw e;
     _semColunasSnapshot = true;
-    console.warn('[INSP] insp_caracteristicas não tem tipo_especificacao/informativo/classe_nc — gravando via tipo_campo. ' +
-      'Rode database/fix_integracao_auditoria_biblioteca.sql e database/fix_classe_automatica.sql no Supabase. Detalhe:', e?.message || e);
+    console.warn('[INSP] insp_caracteristicas não tem tipo_especificacao/informativo/classe_nc/quem_mede — gravando via tipo_campo. ' +
+      'ATENÇÃO: sem a coluna `quem_mede` nenhuma característica terá responsável, e a medição fica bloqueada para TODOS os cargos ' +
+      '(só o admin consegue preencher). Rode database/fix_integracao_auditoria_biblioteca.sql, database/fix_classe_automatica.sql e ' +
+      'database/controle_medicao_por_cargo.sql no Supabase. Detalhe:', e?.message || e);
     return db.insert('insp_caracteristicas', semOpcionais());
   }
+}
+
+/* ================================================== "QUEM MEDE" — RESOLUÇÃO
+   A área responsável mora em `bib_metricas.quem_mede_id` (FK para o catálogo
+   `quem_mede`). O snapshot da inspeção congela o RÓTULO. Se o catálogo não
+   carregar (RLS/rede) ou a métrica for antiga, o rótulo some — e uma
+   característica sem "Quem Mede" é bloqueada para TODO MUNDO (fail-closed).
+   Por isso a resolução tenta, nesta ordem: catálogo → rótulo já embutido na
+   métrica → vazio; e DENUNCIA no console quando havia um id que não resolveu,
+   em vez de gravar '' calado. */
+function resolverQuemMede(metrica, cat) {
+  const porId = metrica?.quem_mede_id ? (cat?.qmMap?.[metrica.quem_mede_id] || '') : '';
+  const rotulo = porId || metrica?.quem_mede_nome || metrica?.quem_mede || '';
+  if (!rotulo && metrica?.quem_mede_id) {
+    console.warn('[INSP] "Quem Mede" da métrica', metrica.id, 'não resolveu: o id',
+      metrica.quem_mede_id, 'não está no catálogo `quem_mede` (tabela vazia, sem permissão de leitura ou registro inativo). ' +
+      'A característica ficará sem responsável e bloqueada para medição.');
+  }
+  return rotulo;
+}
+
+/* Reidrata o "Quem Mede" de snapshots que nasceram sem ele (relatórios criados
+   antes do controle por cargo, ou com o catálogo indisponível no momento do
+   vínculo). Sem isto, um relatório antigo mostra "Sem responsável" e trava as
+   medições de todos os cargos PARA SEMPRE — nenhuma tela reescreve esse campo.
+
+   Roda na leitura do relatório: corrige o objeto em memória (a tela já abre
+   correta) e tenta persistir de volta em best-effort — quem não tem permissão
+   de escrita (consulta de terceiros, relatório finalizado) apenas enxerga o
+   valor correto, sem erro na tela. */
+export async function reidratarQuemMede(caracteristicas) {
+  const orfas = (caracteristicas || []).filter(c => !quemMedePreenchido(c?.quem_mede) && c?.metrica_id);
+  if (!orfas.length) return caracteristicas;
+  let cat;
+  try { cat = await catalogosEspec(); } catch { return caracteristicas; }
+  for (const c of orfas) {
+    let metrica = null;
+    try { metrica = await db.get('bib_metricas', c.metrica_id); } catch { /* métrica removida da Biblioteca */ }
+    const rotulo = metrica ? resolverQuemMede(metrica, cat) : '';
+    if (!rotulo) continue;
+    c.quem_mede = rotulo;                                   // corrige a tela AGORA
+    db.update('insp_caracteristicas', c.id, { quem_mede: rotulo }).catch(() => {});
+  }
+  return caracteristicas;
 }
 
 /* ============================================ ESPECIFICAÇÕES DA BIBLIOTECA (§5)
@@ -635,7 +682,7 @@ export async function carregarEspecs(relatorioId, pecaId) {
          no snapshot — é o que define, por característica, qual cargo pode
          preencher. Guarda o rótulo original (ex.: "G. Qualidade"); o vínculo com
          o cargo é feito pela regra (services/quem-mede.js), não pela string. */
-      quem_mede: cat.qmMap[m.quem_mede_id] || m.quem_mede || '',
+      quem_mede: resolverQuemMede(m, cat),
       tipo_especificacao: tipo,
       // guarda o tipo também aqui: é o que permite reconstruir informativo/ATRIBUTO
       // em bases sem as colunas novas (ver normalizarCaracteristica).
@@ -703,12 +750,13 @@ export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valo
      usuário precisa corresponder ao "Quem Mede" da característica (admin sempre;
      supervisor só se SUPERVISOR_PODE_MEDIR). NÃO confia no front — a regra é
      reavaliada aqui e (em produção) na RLS/RPC. Tentativa negada vira log. */
+  if (user) logDiagnosticoMedicao(user, car, 'salvarMedicao');
   if (user && !usuarioPodeMedirCaracteristica(user, car)) {
     const motivo = motivoBloqueioMedicao(user, car);
     await db.log({ usuario: user.nome || user.email || user.id, acao: 'MEDICAO_NEGADA',
       entidade: 'insp_medicoes',
       antes: `Cota ${car.cota ?? '—'} · ${car.caracteristica || ''} · Quem mede: ${car.quem_mede || '—'}`,
-      depois: `Cargo ${user.role || '—'} sem permissão (responsável: ${obterCargoResponsavel(car.quem_mede) || 'não definido'})`
+      depois: `Cargo ${cargoDoUsuario(user) || user.role || '—'} sem permissão (responsável: ${obterCargoResponsavel(car.quem_mede) || 'não definido'}; motivo: ${motivo?.tipo || '—'})`
     }).catch(() => {});
     throw new InspError('ACESSO_NEGADO_CARGO', motivo?.msg || 'Você não possui permissão para preencher esta medição.');
   }
@@ -721,7 +769,9 @@ export async function salvarMedicao(relatorioId, caracteristicaId, amostra, valo
      "quem mediu o quê" deixa de ser detalhe e vira rastreabilidade: cada valor
      carrega o auditor, o CARGO, a data e a hora. Campos best-effort (ver migration). */
   const payload = { relatorio_id: relatorioId, caracteristica_id: caracteristicaId, amostra, valor: (valor ?? ''), resultado, medido_iso: nowISO() };
-  if (user) { payload.medido_por = user.id; payload.medido_por_nome = user.nome || ''; payload.medido_por_cargo = user.role || ''; }
+  // Cargo CANÔNICO (não o texto cru do perfil): a rastreabilidade tem de casar
+  // com os ids usados na regra de autorização e nas policies do banco.
+  if (user) { payload.medido_por = user.id; payload.medido_por_nome = user.nome || ''; payload.medido_por_cargo = cargoDoUsuario(user) || user.role || ''; }
   let novo;
   if (ex) { novo = await gravarMedicao('update', ex.id, payload); }
   else { novo = await gravarMedicao('insert', null, payload); }
@@ -968,6 +1018,10 @@ export async function carregarRelatorio(relatorioId, { reparar = false } = {}) {
     db.list('insp_acoes',           { filter: { relatorio_id: relatorioId } }),
     db.list('insp_anexos',          { filter: { relatorio_id: relatorioId } })
   ]);
+  /* [CONTROLE DE MEDIÇÃO POR CARGO] o "Quem Mede" precisa estar resolvido ANTES
+     de a tela decidir qualquer bloqueio — a autorização é avaliada em cima dele.
+     Snapshots antigos vêm sem o campo; aqui eles são reidratados da Biblioteca. */
+  await reidratarQuemMede(cars).catch(() => {});
   const medBy = {};
   meds.forEach(m => (medBy[m.caracteristica_id] = medBy[m.caracteristica_id] || []).push(m));
   const caracteristicas = cars.sort((a, b) => (a.ordem || 0) - (b.ordem || 0))

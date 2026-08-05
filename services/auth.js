@@ -200,10 +200,16 @@ export const auth = {
         auth_id:   authUser.id,
         nome:      prof.nome || email.split('@')[0],
         email:     prof.email || email,
-        role,                                   // 'admin' | 'supervisor' | 'auditor' | 'visitante'
+        role,                                   // FONTE OFICIAL DO CARGO (usuarios.role)
         matricula: prof.matricula ?? null,
+        /* `area` é informativa e pode ser null — NUNCA use como fonte de cargo
+           nem como requisito de permissão (ver services/quem-mede.js). */
         area:      prof.area ?? null,
-        planta:    prof.planta ?? null
+        planta:    prof.planta ?? null,
+        // Situação cadastral já validada acima; viaja na sessão para as telas
+        // poderem exibir/diagnosticar sem uma segunda consulta.
+        status,
+        ativo
       };
 
       dbg('5) Role final utilizada pelo sistema:', role);
