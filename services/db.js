@@ -11,6 +11,7 @@ import { FUNCIONARIOS_DEFAULT } from './funcionarios.js';
 import { BIBLIOTECA } from './biblioteca-data.js';
 import { GESTAO_OP } from './gestao-op-data.js';
 import { INSPECAO } from './inspecao-data.js';
+import { FECHAMENTO } from './fechamento/fm-data.js';   // [FECHAMENTO MENSAL]
 
 const LS_KEY = 'rna_demo_db_v2';
 
@@ -23,6 +24,7 @@ function baseSeed() {
     ...structuredClone(BIBLIOTECA),
     ...structuredClone(GESTAO_OP),
     ...structuredClone(INSPECAO),
+    ...structuredClone(FECHAMENTO),          // [FECHAMENTO MENSAL] tabelas fm_*
     funcionarios: structuredClone(FUNCIONARIOS_DEFAULT),
     rotina_exec: [],
     checklist_exec: [],

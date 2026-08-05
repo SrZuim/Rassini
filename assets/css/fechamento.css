@@ -1,0 +1,301 @@
+/* ==========================================================================
+   RNA One — FECHAMENTO MENSAL · estilos do módulo
+   ---------------------------------------------------------------------------
+   Arquivo SEPARADO de rna.css de propósito: o design system é compartilhado
+   por 20+ telas e não deve crescer com regras de um módulo só. Aqui só entram
+   componentes novos (§48). Tudo que já existe — rna-card, rna-table, rna-btn,
+   rna-badge, rna-chip, empty-state — é reusado, não reescrito.
+
+   Variáveis: usamos as do tema Rassini (rna.css). Nenhuma cor nova é inventada.
+   ========================================================================== */
+
+/* ------------------------------------------------ cabeçalho da competência */
+.fm-header {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  background: var(--rna-graphite); color: #fff;
+  border-radius: var(--rna-radius); padding: 16px 20px; margin-bottom: 18px;
+}
+.fm-header__id { display: flex; align-items: center; gap: 14px; }
+.fm-header__mes { font-size: 26px; font-weight: 800; line-height: 1; }
+.fm-header__mes small { display: block; font-size: 11.5px; font-weight: 500; color: var(--rna-gray-300); margin-top: 3px; }
+.fm-header__planta { font-size: 13.5px; color: var(--rna-yellow); font-weight: 600; }
+.fm-header__meta { display: flex; gap: 22px; flex-wrap: wrap; font-size: 12px; color: var(--rna-gray-300); }
+.fm-header__meta b { display: block; color: #fff; font-size: 13px; font-weight: 600; }
+.fm-header__acoes { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.fm-header select {
+  background: var(--rna-graphite-600); color: #fff; border: 1px solid #3a3f45;
+  border-radius: 9px; padding: 8px 12px; font-size: 13px; font-weight: 600; min-width: 210px;
+}
+
+/* barra de progresso do fechamento */
+.fm-progresso { width: 100%; height: 6px; background: rgba(255,255,255,.14); border-radius: 4px; overflow: hidden; margin-top: 8px; }
+.fm-progresso__barra { height: 100%; background: var(--rna-yellow); border-radius: 4px; transition: width .3s; }
+
+/* ---------------------------------------------------- selo de status (§48) */
+.fm-status {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 650; padding: 4px 11px; border-radius: 30px; white-space: nowrap;
+}
+.fm-status i { font-size: 11px; }
+.fm-status--verde    { background: rgba(34,168,90,.14);  color: #178c4a; }
+.fm-status--amarelo  { background: rgba(244,194,13,.18); color: #8a6d00; }
+.fm-status--vermelho { background: rgba(226,59,59,.13);  color: #c22e2e; }
+.fm-status--azul     { background: rgba(47,116,208,.13); color: #2461b3; }
+.fm-status--cinza    { background: #eef1f4;              color: var(--rna-gray); }
+
+/* ------------------------------------------------------ cartões (§6, §48) */
+.fm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); gap: 14px; }
+.fm-card {
+  background: #fff; border: 1px solid var(--rna-border); border-radius: var(--rna-radius);
+  padding: 15px 16px; position: relative; overflow: hidden;
+  display: flex; flex-direction: column; gap: 8px; transition: box-shadow .15s, transform .15s;
+}
+.fm-card:hover { box-shadow: var(--rna-shadow); transform: translateY(-1px); }
+/* Faixa lateral colorida: reforço VISUAL, nunca o único sinal (§6) —
+   o ícone, o texto do status e o tooltip carregam a mesma informação. */
+.fm-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--rna-na); }
+.fm-card--verde::before    { background: var(--rna-ok); }
+.fm-card--amarelo::before  { background: var(--rna-yellow); }
+.fm-card--vermelho::before { background: var(--rna-crit); }
+.fm-card--azul::before     { background: var(--rna-info); }
+.fm-card--cinza::before    { background: var(--rna-gray-300); }
+
+.fm-card__topo { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.fm-card__label { font-size: 12px; color: var(--rna-gray); font-weight: 600; line-height: 1.35; }
+.fm-card__icone { color: var(--rna-gray-300); font-size: 15px; }
+.fm-card__valor { font-size: 27px; font-weight: 800; color: var(--rna-graphite); line-height: 1.1; letter-spacing: -.5px; }
+.fm-card__valor.is-texto { font-size: 15px; font-weight: 600; color: var(--rna-gray); line-height: 1.35; }
+.fm-card__unidade { font-size: 12px; font-weight: 600; color: var(--rna-gray-300); margin-left: 4px; }
+.fm-card__linha { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--rna-gray); }
+.fm-card__rodape { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 8px; border-top: 1px solid #eef1f4; font-size: 11px; color: var(--rna-gray-300); }
+
+/* tendência */
+.fm-tend { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 650; }
+.fm-tend--melhora { color: var(--rna-ok); }
+.fm-tend--piora   { color: var(--rna-crit); }
+.fm-tend--estavel { color: var(--rna-gray); }
+
+/* origem do dado (§30) */
+.fm-origem { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600;
+  padding: 2px 8px; border-radius: 20px; background: #f1f4f7; color: var(--rna-gray); }
+.fm-origem i { font-size: 9px; }
+
+/* ------------------------------------------------- Cruz da Qualidade (§16) */
+.fm-cruz { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; max-width: 460px; }
+.fm-cruz__dia {
+  aspect-ratio: 1; border-radius: 8px; border: 1px solid rgba(0,0,0,.08);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-size: 12.5px; font-weight: 700; cursor: pointer; transition: transform .12s, box-shadow .12s;
+  position: relative;
+}
+.fm-cruz__dia:hover { transform: scale(1.07); box-shadow: var(--rna-shadow); z-index: 2; }
+.fm-cruz__dia small { font-size: 8.5px; font-weight: 600; opacity: .85; }
+.fm-cruz__dia--verde    { background: #22a85a; color: #fff; }
+.fm-cruz__dia--amarelo  { background: #F4C20D; color: #1b1d21; }
+.fm-cruz__dia--vermelho { background: #e23b3b; color: #fff; }
+.fm-cruz__dia--preto    { background: #1b1d21; color: #fff; }
+.fm-cruz__dia--cinza    { background: #eef1f4; color: var(--rna-gray-300); }
+/* dia com sobreposição manual: marca no canto para não parecer automático */
+.fm-cruz__dia.is-manual::after {
+  content: ''; position: absolute; top: 3px; right: 3px; width: 5px; height: 5px;
+  border-radius: 50%; background: rgba(255,255,255,.9); box-shadow: 0 0 0 1px rgba(0,0,0,.25);
+}
+.fm-cruz-legenda { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; font-size: 12px; color: var(--rna-gray); }
+.fm-cruz-legenda span { display: inline-flex; align-items: center; gap: 6px; }
+.fm-cruz-legenda i { width: 13px; height: 13px; border-radius: 4px; display: inline-block; }
+
+/* ------------------------------------------------------- farol de quebras */
+.fm-farol { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; }
+.fm-farol__luz { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; box-shadow: 0 0 0 3px rgba(0,0,0,.05); }
+.fm-farol__luz--verde    { background: var(--rna-ok); }
+.fm-farol__luz--amarelo  { background: var(--rna-yellow); }
+.fm-farol__luz--vermelho { background: var(--rna-crit); }
+.fm-farol__luz--azul     { background: var(--rna-info); }
+.fm-farol__luz--cinza    { background: var(--rna-gray-300); }
+
+/* ----------------------------------------------------- prévia da apresentação */
+.fm-slides { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
+.fm-slide {
+  border: 1px solid var(--rna-border); border-radius: 12px; overflow: hidden; background: #fff;
+  cursor: pointer; transition: .15s; display: flex; flex-direction: column;
+}
+.fm-slide:hover { box-shadow: var(--rna-shadow); border-color: var(--rna-gray-300); }
+.fm-slide__mini {
+  aspect-ratio: 16/9; background: linear-gradient(160deg, #23262b, #14161a); color: #fff;
+  padding: 12px; display: flex; flex-direction: column; justify-content: space-between; position: relative;
+}
+.fm-slide__num { position: absolute; top: 8px; right: 10px; font-size: 10px; color: var(--rna-gray-300); font-weight: 700; }
+.fm-slide__titulo { font-size: 12px; font-weight: 700; line-height: 1.3; }
+.fm-slide__preview { font-size: 9.5px; color: var(--rna-gray-300); line-height: 1.45; }
+.fm-slide__barra { height: 3px; background: var(--rna-yellow); border-radius: 2px; width: 34px; }
+.fm-slide__rodape { padding: 9px 11px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+
+/* estado do slide (§35) */
+.fm-slide-estado { font-size: 10.5px; font-weight: 650; padding: 2px 8px; border-radius: 20px; display: inline-flex; align-items: center; gap: 4px; }
+.fm-slide-estado--atualizado { background: rgba(34,168,90,.13); color: #178c4a; }
+.fm-slide-estado--pendente   { background: rgba(244,194,13,.18); color: #8a6d00; }
+.fm-slide-estado--alerta     { background: rgba(226,59,59,.12); color: #c22e2e; }
+.fm-slide-estado--sem_dados  { background: #eef1f4; color: var(--rna-gray); }
+.fm-slide-estado--bloqueado  { background: #e4e7ea; color: var(--rna-steel); }
+
+/* --------------------------------------------------- checklist de validação */
+.fm-check { display: flex; align-items: flex-start; gap: 11px; padding: 11px 0; border-bottom: 1px solid #eef1f4; }
+.fm-check:last-child { border-bottom: 0; }
+.fm-check__icone { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; flex: 0 0 auto; margin-top: 1px; }
+.fm-check__icone--ok       { background: rgba(34,168,90,.15); color: #178c4a; }
+.fm-check__icone--alerta   { background: rgba(244,194,13,.2); color: #8a6d00; }
+.fm-check__icone--bloqueio { background: rgba(226,59,59,.14); color: #c22e2e; }
+.fm-check__nome { font-size: 13.5px; font-weight: 600; }
+.fm-check__detalhe { font-size: 12px; color: var(--rna-gray); margin-top: 2px; }
+
+/* -------------------------------------------------------- linha do tempo */
+.fm-timeline { position: relative; padding-left: 26px; }
+.fm-timeline::before { content: ''; position: absolute; left: 8px; top: 6px; bottom: 6px; width: 2px; background: var(--rna-border); }
+.fm-timeline__item { position: relative; padding: 0 0 18px; }
+.fm-timeline__item::before {
+  content: ''; position: absolute; left: -22px; top: 4px; width: 10px; height: 10px;
+  border-radius: 50%; background: #fff; border: 2px solid var(--rna-gray-300);
+}
+.fm-timeline__item.is-atual::before { border-color: var(--rna-yellow); background: var(--rna-yellow); }
+.fm-timeline__quando { font-size: 11px; color: var(--rna-gray-300); }
+.fm-timeline__acao { font-size: 13.5px; font-weight: 600; }
+.fm-timeline__detalhe { font-size: 12.5px; color: var(--rna-gray); }
+
+/* --------------------------------------------------------- formulários */
+.fm-form { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; }
+.fm-form__campo { display: flex; flex-direction: column; gap: 5px; }
+.fm-form__campo--2 { grid-column: span 2; }
+.fm-form__campo--4 { grid-column: span 4; }
+.fm-form label { font-size: 12px; font-weight: 600; color: var(--rna-steel); }
+.fm-form label .req { color: var(--rna-crit); margin-left: 2px; }
+.fm-form input, .fm-form select, .fm-form textarea {
+  border: 1px solid var(--rna-border); border-radius: 9px; padding: 9px 11px; font-size: 13.5px;
+  font-family: inherit; background: #fff; width: 100%; transition: border-color .15s, box-shadow .15s;
+}
+.fm-form input:focus, .fm-form select:focus, .fm-form textarea:focus {
+  outline: 0; border-color: var(--rna-yellow); box-shadow: 0 0 0 3px var(--rna-yellow-soft);
+}
+.fm-form input.is-erro, .fm-form select.is-erro, .fm-form textarea.is-erro { border-color: var(--rna-crit); }
+.fm-form textarea { min-height: 68px; resize: vertical; }
+.fm-form__hint { font-size: 11px; color: var(--rna-gray-300); }
+.fm-form__erro { font-size: 11.5px; color: var(--rna-crit); font-weight: 600; }
+.fm-form__check { display: flex; align-items: center; gap: 8px; padding-top: 21px; }
+.fm-form__check input { width: auto; }
+
+/* ------------------------------------------------------ importação (§26) */
+.fm-import-passos { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+.fm-import-passo {
+  display: flex; align-items: center; gap: 7px; padding: 7px 13px; border-radius: 30px;
+  background: #eef1f4; color: var(--rna-gray); font-size: 12px; font-weight: 600;
+}
+.fm-import-passo.is-atual { background: var(--rna-graphite); color: #fff; }
+.fm-import-passo.is-feito { background: rgba(34,168,90,.14); color: #178c4a; }
+.fm-import-passo__n { width: 18px; height: 18px; border-radius: 50%; background: rgba(0,0,0,.09); display: grid; place-items: center; font-size: 10.5px; }
+.fm-import-passo.is-atual .fm-import-passo__n { background: rgba(255,255,255,.22); }
+
+.fm-drop {
+  border: 2px dashed var(--rna-border); border-radius: 14px; padding: 34px 20px; text-align: center;
+  cursor: pointer; transition: .15s; background: #fafbfc;
+}
+.fm-drop:hover, .fm-drop.is-drag { border-color: var(--rna-yellow); background: var(--rna-yellow-soft); }
+.fm-drop i { font-size: 34px; color: var(--rna-gray-300); }
+
+.fm-resumo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 11px; }
+.fm-resumo-item { background: #fafbfc; border: 1px solid var(--rna-border); border-radius: 10px; padding: 11px 13px; }
+.fm-resumo-item b { display: block; font-size: 21px; font-weight: 800; line-height: 1.15; }
+.fm-resumo-item span { font-size: 11.5px; color: var(--rna-gray); }
+.fm-resumo-item.is-erro b { color: var(--rna-crit); }
+.fm-resumo-item.is-alerta b { color: #8a6d00; }
+.fm-resumo-item.is-ok b { color: var(--rna-ok); }
+
+/* linhas da validação */
+tr.fm-linha--invalido { background: rgba(226,59,59,.05); }
+tr.fm-linha--alerta   { background: rgba(244,194,13,.07); }
+tr.fm-linha--ignorada { opacity: .5; text-decoration: line-through; }
+.fm-linha-msg { font-size: 11.5px; line-height: 1.5; }
+.fm-linha-msg--erro   { color: var(--rna-crit); }
+.fm-linha-msg--alerta { color: #8a6d00; }
+
+/* ------------------------------------------------------------ diversos */
+.fm-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.fm-toolbar input[type="search"], .fm-toolbar select {
+  border: 1px solid var(--rna-border); border-radius: 9px; padding: 8px 12px; font-size: 13px; background: #fff;
+}
+.fm-toolbar__espaco { margin-left: auto; }
+
+.fm-skeleton { background: linear-gradient(90deg, #eef1f4 25%, #f6f8f9 50%, #eef1f4 75%);
+  background-size: 200% 100%; animation: fm-shimmer 1.2s infinite; border-radius: 8px; }
+@keyframes fm-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.fm-skeleton--card { height: 118px; }
+.fm-skeleton--linha { height: 15px; margin-bottom: 8px; }
+
+.fm-aviso {
+  display: flex; gap: 11px; align-items: flex-start; padding: 13px 15px; border-radius: 11px;
+  font-size: 13px; line-height: 1.5; margin-bottom: 16px;
+}
+.fm-aviso i { font-size: 17px; margin-top: 1px; flex: 0 0 auto; }
+.fm-aviso--info    { background: rgba(47,116,208,.08);  color: #1f5296; border: 1px solid rgba(47,116,208,.18); }
+.fm-aviso--alerta  { background: rgba(244,194,13,.12);  color: #7a6100; border: 1px solid rgba(244,194,13,.3); }
+.fm-aviso--erro    { background: rgba(226,59,59,.08);   color: #b52c2c; border: 1px solid rgba(226,59,59,.2); }
+.fm-aviso--ok      { background: rgba(34,168,90,.08);   color: #157a41; border: 1px solid rgba(34,168,90,.2); }
+
+.fm-memoria-tabela { width: 100%; font-size: 13px; }
+.fm-memoria-tabela td { padding: 7px 10px; border-bottom: 1px solid #eef1f4; }
+.fm-memoria-tabela td:first-child { font-weight: 600; color: var(--rna-steel); width: 46%; }
+.fm-formula {
+  background: var(--rna-graphite); color: var(--rna-yellow); padding: 11px 14px; border-radius: 9px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.6;
+  margin: 10px 0; overflow-x: auto;
+}
+
+.fm-secao-nav { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 15px; }
+
+/* ranking */
+.fm-rank { display: flex; align-items: center; gap: 11px; padding: 9px 0; border-bottom: 1px solid #eef1f4; }
+.fm-rank:last-child { border-bottom: 0; }
+.fm-rank__pos { width: 24px; height: 24px; border-radius: 7px; background: var(--rna-graphite); color: #fff;
+  display: grid; place-items: center; font-size: 11.5px; font-weight: 700; flex: 0 0 auto; }
+.fm-rank__nome { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fm-rank__valor { font-size: 13px; font-weight: 700; }
+.fm-rank__pct { font-size: 11px; color: var(--rna-gray); }
+.fm-rank__barra { height: 4px; background: #eef1f4; border-radius: 3px; overflow: hidden; margin-top: 4px; }
+.fm-rank__barra i { display: block; height: 100%; background: var(--rna-yellow); }
+
+/* ------------------------------------------------------------ responsivo */
+@media (max-width: 900px) {
+  .fm-form { grid-template-columns: repeat(2, 1fr); }
+  .fm-form__campo--4 { grid-column: span 2; }
+  .fm-header__acoes { margin-left: 0; width: 100%; }
+  .fm-header select { width: 100%; }
+}
+@media (max-width: 560px) {
+  .fm-form { grid-template-columns: 1fr; }
+  .fm-form__campo--2, .fm-form__campo--4 { grid-column: span 1; }
+  .fm-cards { grid-template-columns: 1fr; }
+  .fm-header__mes { font-size: 21px; }
+  .fm-cruz { max-width: 100%; }
+}
+
+/* ------------------------------------------------------------ impressão */
+/* §39 — o PDF sai daqui: só o documento da prévia é impresso. */
+@media print {
+  .rna-sidebar, .rna-topbar, .no-print, .fm-header__acoes, .fm-secao-nav, .admin-tabs { display: none !important; }
+  .rna-main, .rna-content { margin: 0 !important; padding: 0 !important; }
+  .fm-doc { display: block !important; }
+  .fm-doc__slide { page-break-after: always; break-after: page; padding: 0; }
+  .fm-doc__slide:last-child { page-break-after: auto; }
+  .rna-card { box-shadow: none !important; border: 1px solid #ddd !important; }
+  /* cabeçalho de tabela não pode ser sticky na impressão: sobrepõe o conteúdo */
+  .rna-table thead th { position: static !important; }
+  a[href]::after { content: ''; }
+}
+
+/* documento de impressão (fica oculto na tela) */
+.fm-doc { display: none; }
+.fm-doc__slide { margin-bottom: 26px; }
+.fm-doc__cab { display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 3px solid var(--rna-yellow); padding-bottom: 7px; margin-bottom: 13px; }
+.fm-doc__cab h2 { font-size: 17px; font-weight: 700; margin: 0; }
+.fm-doc__cab span { font-size: 11.5px; color: var(--rna-gray); }
+.fm-doc__marca { position: fixed; top: 42%; left: 0; right: 0; text-align: center;
+  font-size: 62px; font-weight: 800; color: rgba(0,0,0,.07); transform: rotate(-24deg); pointer-events: none; }

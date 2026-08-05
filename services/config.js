@@ -80,6 +80,10 @@ export const MODULES = [
      é de RBAC (abaixo), então vale para o menu E para a abertura direta da URL —
      mountShell consulta o mesmo `can()` antes de renderizar a página. */
   { id:'rel_dim_producao', label:'Rel. Dimensionais de Produção', short:'Rel. Dim. de Produção', page:'rel-dimensionais-producao.html', icon:'bi-clipboard2-pulse', group:'Administração', color:'red', desc:'Documento de apoio operacional derivado dos relatórios dimensionais, com valores dentro dos limites aprovados. Uso em treinamento, demonstração e planejamento — não substitui o registro oficial de medição.' },
+  /* [FECHAMENTO MENSAL] Consolidação mensal dos indicadores da Qualidade e
+     geração da "Apresentação Qualidade — Planta RJ". Vive em Qualidade porque
+     é operado pela Garantia da Qualidade, não pela Administração. */
+  { id:'fechamento',    label:'Fechamento Mensal',    short:'Fechamento Mensal',   page:'fechamento-mensal.html', icon:'bi-calendar2-check', group:'Qualidade', color:'yellow', desc:'Consolidação mensal da Qualidade: PPM externo e interno, ocorrências, Cruz da Qualidade, custos, CARE, quebras, planos 5W2H e geração da apresentação oficial.' },
   { id:'ocorrencias',   label:'Não Conformidades',    short:'Ocorrências',         page:'ocorrencias.html',   icon:'bi-exclamation-octagon',group:'Qualidade',  color:'red',    desc:'Abertura e tratativa de não conformidades.' },
   { id:'planos',        label:'Plano de Ação',        short:'Planos',              page:'planos-acao.html',   icon:'bi-diagram-3',         group:'Qualidade',   color:'yellow', desc:'Ações corretivas 5W2H vinculadas a NCs.' },
   { id:'powerbi',       label:'Power BI',             short:'Power BI',            page:'dashboard.html#bi',  icon:'bi-bar-chart-line',    group:'Gestão',      color:'orange', desc:'Relatórios corporativos embarcados.' },
@@ -113,6 +117,9 @@ const CARGO_MEDICAO_RBAC = {
   biblioteca:['view','export'],
   gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view','create','edit','execute','export'], op_pendencias:['view','create'], op_historico:['view'],
   consulta_dim:['view','export'], rel_dim_producao:[], admin_monitor:[],
+  /* [FECHAMENTO MENSAL] §43 "Auditor": registra ocorrências e CARE, anexa
+     evidências e consulta os indicadores. Não aprova, não fecha, não configura. */
+  fechamento:['view','create','edit','export'],
   ocorrencias:[], planos:[],
   powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
 };
@@ -128,6 +135,11 @@ export const RBAC = {
     biblioteca:['view','create','edit','export'],
     gestao_op:['view'], op_plantao:[], op_rotinas:[], op_checklists:[], op_auditorias:['view','export'], op_pendencias:['view'], op_historico:['view'],
     consulta_dim:['view','export'], rel_dim_producao:[], admin_monitor:[],
+    /* [FECHAMENTO MENSAL] §43 "Gestor da Qualidade" — este é o único módulo em
+       que o Supervisor escreve e aprova: ele é o dono do fechamento (revisa,
+       devolve para correção, aprova, gera a apresentação e conclui). Configurar
+       metas/critérios/slides e reabrir competência seguem exclusivos do admin. */
+    fechamento:['view','create','edit','approve','export'],
     ocorrencias:RO, planos:['view','export'],
     powerbi:['view'], comunicados:['view'], documentos:['view','export'],
     treinamentos:['view'], admin:[], usuarios:[], perfil:['view','edit']
@@ -140,6 +152,7 @@ export const RBAC = {
     biblioteca:['view','export'],
     gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view','create','edit','execute','export'], op_pendencias:['view','create'], op_historico:['view'],
     consulta_dim:['view','export'], rel_dim_producao:[], admin_monitor:[],
+    fechamento:['view','create','edit','export'],   // [FECHAMENTO MENSAL] §43 Auditor
     ocorrencias:[], planos:[],
     powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },
@@ -153,6 +166,11 @@ export const RBAC = {
   visitante: {
     dashboard:[], monitoramento:[], diario:[],
     auditorias:[], biblioteca:[], ocorrencias:[], planos:[], powerbi:[], comunicados:[],
+    /* [FECHAMENTO MENSAL] §43 — visitante só enxerga competências FECHADAS, e
+       quem garante isso é o RLS (fm_comp_read). Na prática o shell já redireciona
+       o visitante para home.html; a permissão fica aqui para o dia em que o
+       portal institucional publicar indicadores fechados. */
+    fechamento:['view'],
     documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view']
   }
 };

@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "rna-static",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["--yes", "http-server", ".", "-p", "5599", "-c-1", "--silent"],
-      "port": 5599
+      "name": "rna-one",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tools/servidor-estatico.mjs", "5566"],
+      "port": 5566
     }
   ]
 }
