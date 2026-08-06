@@ -8,6 +8,15 @@ import { db } from './db.js';
 import { pecaAtendeTipo, tiposDaPeca, semTiposConfigurados, normalizarSlug,
          validarTiposInspecao as validarTiposInspecaoInterno,
          normalizarParaGravar as normalizarParaGravarInterno } from './tipos-inspecao.js';
+import { normalizarCodigo, validarCodigo, acharConflito, escaparLike,
+         CodigoDuplicadoError, ehErroCodigoDuplicado } from './biblioteca-codigo.js';
+
+/* Regra do código da peça (normalização + unicidade) reexportada: as telas já
+   importam este módulo e não devem ter uma segunda definição de "mesmo código"
+   (§12 — fonte única). A definição canônica vive em biblioteca-codigo.js. */
+export { normalizarCodigo, validarCodigo, codigosIguais, acharConflito,
+         ehErroCodigoDuplicado, CodigoDuplicadoError,
+         MSG_CODIGO_DUPLICADO, MSG_CODIGO_OBRIGATORIO } from './biblioteca-codigo.js';
 
 /* Reexporta os helpers de tipo de inspeção: as páginas da Biblioteca já importam
    este módulo, e reexportar evita que cada tela vá buscar a lista noutro lugar
@@ -77,22 +86,99 @@ export function checarColunaTipos() {
   return _preflight;
 }
 
-/** Cria a peça garantindo a validação do vínculo (§3, camada de serviço).
-    Quando a coluna não existe, a peça é gravada mesmo assim (não se perde o
-    cadastro), mas o retorno vem marcado com `tipos_nao_gravados` para a tela
-    reportar o que realmente aconteceu. */
+/* ------------------------------------------------- unicidade do código -----
+   O banco tem o índice único `bib_pecas_codigo_uidx` (sobre `lower(codigo)`) e
+   ele CONTINUA sendo a autoridade — nada aqui o substitui. O que se resolve
+   nesta camada é o que o usuário vê: em vez do texto do PostgreSQL
+   ("duplicate key value violates unique constraint …"), uma frase acionável.
+   Dupla proteção porque a consulta prévia não é garantia: entre consultar e
+   gravar, outro usuário pode ter cadastrado o mesmo código, e RLS pode esconder
+   a linha conflitante de quem consulta. Por isso o 23505 também é traduzido. */
+
+/** Linhas candidatas ao código (id + codigo). Filtra no banco quando possível e
+    deixa a comparação exata para `acharConflito`, que normaliza dos dois lados.
+    O `%…%` é de propósito: pega também variantes com espaço/caixa diferentes,
+    que a comparação normalizada depois confirma ou descarta. */
+async function candidatosPorCodigo(codigo) {
+  const alvo = normalizarCodigo(codigo);
+  if (!alvo) return [];
+  try {
+    const { SUPABASE } = await import('./config.js');
+    if (SUPABASE.enabled) {
+      const { getSupabase } = await import('./supabaseClient.js');
+      const sb = await getSupabase();
+      const { data, error } = await sb.from('bib_pecas').select('id, codigo')
+        .ilike('codigo', `%${escaparLike(alvo)}%`);
+      if (!error) return data || [];
+      console.warn('[BIB] consulta de código duplicado falhou; caindo para varredura local:', error?.message || error);
+    }
+  } catch (e) {
+    console.warn('[BIB] consulta de código duplicado indisponível; caindo para varredura local:', e?.message || e);
+  }
+  try {
+    return (await db.list('bib_pecas')).map(p => ({ id: p.id, codigo: p.codigo }));
+  } catch (e) {
+    /* Esta checagem é ADVISORY: quem garante a unicidade é o índice do banco.
+       Se nem a varredura funciona (rede/RLS), não se pode BLOQUEAR um cadastro
+       legítimo por não ter conseguido consultar — segue para a gravação, e o
+       banco recusa (com mensagem traduzida) se realmente houver duplicidade. */
+    console.warn('[BIB] não foi possível verificar duplicidade do código; a gravação decide:', e?.message || e);
+    return [];
+  }
+}
+
+/** Peça que já ocupa o código, ou null. `exceto` = id da peça em edição (uma
+    peça nunca conflita consigo mesma — este era o caminho que virava erro de
+    chave duplicada ao salvar uma peça existente). */
+export async function conflitoDeCodigo(codigo, { exceto = null } = {}) {
+  const alvo = normalizarCodigo(codigo);
+  if (!alvo) return null;
+  return acharConflito(alvo, await candidatosPorCodigo(alvo), exceto);
+}
+
+/** Normaliza + valida + garante que o código está livre. Devolve o código
+    canônico (o MESMO valor que será gravado). Lança CodigoDuplicadoError. */
+async function prepararCodigo(codigo, exceto = null) {
+  const alvo = normalizarCodigo(codigo);
+  const erro = validarCodigo(alvo);
+  if (erro) throw new Error(erro);
+  const dono = await conflitoDeCodigo(alvo, { exceto });
+  if (dono) throw new CodigoDuplicadoError(alvo);
+  return alvo;
+}
+
+/** Executa a gravação traduzindo a violação de unicidade do banco. O texto do
+    PostgreSQL fica no console; ao usuário vai a mensagem acionável. */
+async function comCodigoUnico(codigo, fn) {
+  try { return await fn(); }
+  catch (e) {
+    if (!ehErroCodigoDuplicado(e)) throw e;
+    console.error('[BIB] violação de unicidade do código da peça', {
+      codigo: normalizarCodigo(codigo), code: e?.code, message: e?.message, details: e?.details, hint: e?.hint
+    });
+    throw new CodigoDuplicadoError(codigo, e);
+  }
+}
+
+/** Cria a peça garantindo a validação do vínculo (§3, camada de serviço) e a
+    unicidade do código. Quando a coluna do vínculo não existe, a peça é gravada
+    mesmo assim (não se perde o cadastro), mas o retorno vem marcado com
+    `tipos_nao_gravados` para a tela reportar o que realmente aconteceu. */
 export async function inserirPeca(row) {
   const erro = validarTiposInspecaoInterno(row?.tipos_inspecao);
   if (erro) throw new Error(erro);
-  const payload = { ...row, tipos_inspecao: normalizarParaGravarInterno(row.tipos_inspecao) };
+  const codigo = await prepararCodigo(row?.codigo);
+  const payload = { ...row, codigo, tipos_inspecao: normalizarParaGravarInterno(row.tipos_inspecao) };
   const degradado = async e => {
     if (e) avisarColunaAusente(e);
     const p = await db.insert('bib_pecas', semTipos(payload));
     return { ...p, tipos_nao_gravados: true };
   };
-  if (_semColunaTipos) return degradado(null);
-  try { return await db.insert('bib_pecas', payload); }
-  catch (e) { if (!ehErroDeColuna(e)) throw e; return degradado(e); }
+  return comCodigoUnico(codigo, async () => {
+    if (_semColunaTipos) return degradado(null);
+    try { return await db.insert('bib_pecas', payload); }
+    catch (e) { if (!ehErroDeColuna(e)) throw e; return degradado(e); }
+  });
 }
 
 /* ------------------------------------------------------------- consultas --- */
@@ -384,8 +470,16 @@ export function diffPeca(antes, depois) {
  * Retorna a peça atualizada.
  */
 export async function salvarRevisao(pecaId, patch, usuario) {
+  if (!pecaId) throw new Error('Peça não encontrada');
   const antes = await db.get('bib_pecas', pecaId);
   if (!antes) throw new Error('Peça não encontrada');
+  /* Editar é sempre UPDATE do MESMO id: o código é normalizado e checado contra
+     as OUTRAS peças (`exceto: pecaId`). Sem o `exceto`, a própria peça apareceria
+     como conflito e o salvamento de uma edição comum — inclusive só acrescentar
+     uma cota — falharia acusando código duplicado. */
+  if ('codigo' in patch) {
+    patch = { ...patch, codigo: await prepararCodigo(patch.codigo, pecaId) };
+  }
   // §3 — a obrigatoriedade também é garantida na camada de serviço, não só no
   // formulário: nenhum caminho de gravação deixa a peça sem vínculo.
   if ('tipos_inspecao' in patch) {
@@ -399,7 +493,7 @@ export async function salvarRevisao(pecaId, patch, usuario) {
   // revisao (compat) e revisao_cadastro (novo nome explícito) caminham juntas.
   const payload = { ...patch, revisao: novaRev, revisao_cadastro: novaRev, updated_at: hoje() };
   let degradado = false;
-  const gravar = async () => {
+  const gravar = () => comCodigoUnico(payload.codigo ?? antes.codigo, async () => {
     if (_semColunaTipos) { degradado = true; return db.update('bib_pecas', pecaId, semTipos(payload)); }
     try { return await db.update('bib_pecas', pecaId, payload); }
     catch (e) {
@@ -407,7 +501,7 @@ export async function salvarRevisao(pecaId, patch, usuario) {
       avisarColunaAusente(e); degradado = true;
       return db.update('bib_pecas', pecaId, semTipos(payload));
     }
-  };
+  });
 
   /* O snapshot da versão anterior e a trilha do histórico não dependem do
      resultado do UPDATE (usam `antes`/`mudancas`, já em memória). Rodavam em
@@ -454,17 +548,31 @@ export async function restaurarVersao(pecaId, versaoId, usuario) {
 }
 
 /* ------------------------------------------------------ duplicar/arquivar -- */
+/** Primeiro código de cópia livre: `X-COPIA`, `X-COPIA-2`, `X-COPIA-3`…
+    Duplicar duas vezes a mesma peça gerava o mesmo código e batia no índice
+    único — o usuário via o erro do banco por uma ação de um clique. */
+async function codigoDeCopiaLivre(codigoBase) {
+  const raiz = `${normalizarCodigo(codigoBase) || 'PECA'}-COPIA`;
+  const usados = new Set((await candidatosPorCodigo(raiz)).map(r => normalizarCodigo(r.codigo)));
+  for (let n = 1; n <= 99; n++) {
+    const tentativa = n === 1 ? raiz : `${raiz}-${n}`;
+    if (!usados.has(tentativa)) return tentativa;
+  }
+  throw new CodigoDuplicadoError(raiz);
+}
+
 export async function duplicar(pecaId, usuario) {
   const f = await ficha(pecaId);
   if (!f) throw new Error('Peça não encontrada');
   const { id, ...base } = f.peca;
-  const nova = await db.insert('bib_pecas', {
+  const codigo = await codigoDeCopiaLivre(base.codigo);
+  const nova = await comCodigoUnico(codigo, () => db.insert('bib_pecas', {
     ...base,
-    codigo: `${base.codigo}-COPIA`,
+    codigo,
     nome: `${base.nome} (cópia)`,
     status: 'Em revisão', revisao: 1, ativo: true,
     created_at: hoje(), updated_at: hoje(), created_by: usuario?.id || null
-  });
+  }));
   for (const m of f.metricas) { const { id:_i, peca_id:_p, ...r } = m; await db.insert('bib_metricas', { ...r, peca_id: nova.id }); }
   for (const p of f.pontos)   { const { id:_i, peca_id:_p, ...r } = p; await db.insert('bib_pontos_inspecao', { ...r, peca_id: nova.id }); }
   await registrarCriacao(nova.id, usuario);

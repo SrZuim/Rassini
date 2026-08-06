@@ -12,5 +12,7 @@ await import('./fechamento/permissoes.test.mjs');
 await import('./fechamento/pendencias.test.mjs');
 await import('./fechamento/apresentacao.test.mjs');
 await import('./quem-mede.test.mjs');
+await import('./biblioteca-codigo.test.mjs');
+await import('./biblioteca-peca-fluxo.test.mjs');
 
 process.exit(relatorio());

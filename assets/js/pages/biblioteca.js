@@ -8,6 +8,9 @@ import { db } from '../../../services/db.js';
 import { can } from '../../../services/config.js';
 import * as BIB from '../../../services/biblioteca.js';
 import * as DATA from '../../../services/biblioteca-data.js';
+/* Plano de gravação das cotas (inserir/atualizar/remover por diferença) — puro
+   e testado em tests/biblioteca-codigo.test.mjs. */
+import { planejarSincronizacao } from '../../../services/biblioteca-cotas.js';
 import { fmtMedida } from '../../../services/formato.js';
 const TIPO_ESPEC = DATA.BIB_TIPO_ESPEC;
 const TIPO_ESPEC_MAP = DATA.BIB_TIPO_ESPEC_MAP;
@@ -549,6 +552,14 @@ async function renderEditor() {
   let p = { status: 'Em revisão', revisao: 1, ativo: true, galeria: [] };
   let f = null;
   if (!isNew) { f = await BIB.ficha(state.pecaId); if (!f) { state.view = 'catalogo'; return render(); } p = f.peca; }
+  /* MODO DO FORMULÁRIO — criação ou edição. Fica num objeto (e não numa
+     constante capturada pelos handlers) porque o modo MUDA no meio do
+     salvamento: assim que a peça é criada, existe um id válido e todo salvamento
+     seguinte é edição. Era exatamente isso que faltava: depois de uma criação
+     que falhou numa etapa posterior (cotas/imagem/documento), o formulário
+     continuava "novo" e o próximo clique tentava INSERIR a mesma peça de novo —
+     o que o índice único recusa com "duplicate key … bib_pecas_codigo_uidx". */
+  const edCtx = { isNew, p, f };
   await loadCatalogos();
   // enriquece especificações com nomes resolvidos (para os combos)
   edMetricas = f ? f.metricas.map(m => ({
@@ -602,7 +613,7 @@ async function renderEditor() {
   mount(`
     <div class="rna-card mb-3"><div class="rna-card__body d-flex align-items-center gap-2">
       <i class="bi bi-pencil-square" style="font-size:20px;color:var(--rna-yellow-600)"></i>
-      <b>${isNew ? 'Nova peça' : `Editar ${p.codigo}`}</b>
+      <b id="ed-modo">${isNew ? 'Nova peça' : `Editar ${p.codigo}`}</b>
       ${!isNew ? `<span class="rna-badge badge-na ms-1">Cadastro Rev ${String(p.revisao_cadastro ?? p.revisao ?? 1).padStart(2, '0')} → salvar cria Rev ${String((p.revisao_cadastro ?? p.revisao ?? 1) + 1).padStart(2, '0')}</span>` : ''}
     </div></div>
 
@@ -646,8 +657,10 @@ async function renderEditor() {
   $('#ed-doc-drop').addEventListener('click', () => dropInput.click());
   dropInput.addEventListener('change', () => { edDocsNovos.push(...[...dropInput.files]); dropInput.value = ''; renderDocList(); });
 
-  $('#ed-cancel').addEventListener('click', () => { if (isNew) { state.view = 'catalogo'; } else { state.view = 'ficha'; } render(); });
-  $('#ed-save').addEventListener('click', () => salvar(isNew, p, f, upImg));
+  /* Ambos leem `edCtx` na hora do clique: se a peça já foi criada nesta sessão
+     do formulário, cancelar volta para a ficha dela — não para o catálogo. */
+  $('#ed-cancel').addEventListener('click', () => { state.view = edCtx.isNew ? 'catalogo' : 'ficha'; render(); });
+  $('#ed-save').addEventListener('click', () => salvar(edCtx, upImg));
 }
 
 /* ==================================== CAMPO "IMAGEM PRINCIPAL" DA PEÇA
@@ -1100,11 +1113,16 @@ function renderDocList() {
    (ou um Enter no formulário) entrava de novo e duplicava toda a gravação. */
 let salvandoPeca = false;
 
-async function salvar(isNew, p, f, upImg) {
+async function salvar(edCtx, upImg) {
   if (salvandoPeca) return;
   salvandoPeca = true;
+  /* `criando` é o modo desta tentativa; `edCtx.isNew` muda assim que a peça
+     nasce. `criouAgora` marca que a peça foi criada NESTA tentativa — usado só
+     para dizer a verdade ao usuário se uma etapa posterior falhar. */
+  const criando = edCtx.isNew;
+  let criouAgora = false;
   const btn = $('#ed-save');
-  const btnHtml = btn.innerHTML;
+  let btnHtml = btn.innerHTML;             // vira "Salvar revisão" quando a peça é criada
   btn.disabled = true; btn.setAttribute('aria-busy', 'true');
   btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Salvando…';
   const soltarBotao = () => {
@@ -1115,7 +1133,19 @@ async function salvar(isNew, p, f, upImg) {
   try {
     const patch = {};
     $$('[data-p]').forEach(i => { patch[i.dataset.p] = i.value.trim(); });
-    if (!patch.codigo || !patch.nome) { toast('Código e Nome são obrigatórios.', { type: 'warn' }); soltarBotao(); return; }
+
+    /* CÓDIGO — normalizado ANTES de consultar, inserir ou atualizar (fonte única
+       em services/biblioteca-codigo.js). O campo é reescrito com o valor
+       canônico para o usuário ver exatamente o que vai para o banco. */
+    const codigo = BIB.normalizarCodigo(patch.codigo);
+    const erroCodigo = BIB.validarCodigo(codigo);
+    if (erroCodigo || !patch.nome) {
+      toast(erroCodigo || 'Código e Nome são obrigatórios.', { type: 'warn' });
+      focarCampo('codigo'); soltarBotao(); return;
+    }
+    patch.codigo = codigo;
+    const inpCodigo = $('[data-p="codigo"]');
+    if (inpCodigo && inpCodigo.value !== codigo) inpCodigo.value = codigo;
 
     /* Tipos de inspeção aplicáveis: obrigatório (§3). Valida ANTES do envio, com
        destaque no próprio campo; a camada de serviço revalida em salvarPeca. */
@@ -1128,6 +1158,18 @@ async function salvar(isNew, p, f, upImg) {
     }
     patch.tipos_inspecao = tiposNormalizados;
 
+    /* Duplicidade verificada antes de gravar — em edição, ignorando a própria
+       peça (é o caso que hoje falha: acrescentar uma cota a uma peça existente).
+       Vem depois das validações locais para não gastar uma consulta quando o
+       formulário já está incompleto. O índice único do banco segue sendo a
+       garantia; isto existe para o usuário receber uma frase acionável em vez do
+       erro do PostgreSQL. */
+    const jaExiste = await BIB.conflitoDeCodigo(codigo, { exceto: edCtx.isNew ? null : edCtx.p.id });
+    if (jaExiste) {
+      toast(BIB.MSG_CODIGO_DUPLICADO, { type: 'warn', title: 'Código já cadastrado', timeout: 10000 });
+      focarCampo('codigo'); soltarBotao(); return;
+    }
+
     /* ---------------------------------------------- IMAGEM PRINCIPAL (§C02)
        ORDEM OBRIGATÓRIA: grava o registro (para existir um id de verdade) →
        envia o arquivo para `biblioteca/pecas/{id}/` → grava a URL → e SÓ ENTÃO
@@ -1139,20 +1181,28 @@ async function salvar(isNew, p, f, upImg) {
        antes ela era reescrita a cada revisão, e bastava uma leitura incompleta
        de `p` para zerar a imagem da peça. */
     const intencaoImg = upImg.intencao();
-    const imagemAnterior = p.imagem || null;
+    const imagemAnterior = edCtx.p.imagem || null;
     // 'manter' → a coluna nem é enviada. 'remover' → null explícito.
     const patchImagem = intencaoImg === 'remover' ? { imagem: null } : {};
 
     let peca;
-    if (isNew) {
+    if (edCtx.isNew) {
       // via serviço: revalida o vínculo e tolera banco sem a coluna nova.
       peca = await BIB.inserirPeca({
         ...patch, revisao: 1, revisao_cadastro: 1, ativo: patch.status !== 'Arquivado',
         imagem: null, galeria: [], created_at: BIB.hoje(), updated_at: BIB.hoje(), created_by: USER.id
       });
+      /* A PEÇA JÁ EXISTE NO BANCO A PARTIR DAQUI. O formulário vira edição no
+         mesmo instante — antes de qualquer outra etapa poder falhar. Assim, um
+         novo "Salvar" ATUALIZA este id em vez de tentar criar a peça de novo
+         (era a origem do erro de chave duplicada em cadastro parcial). */
+      virarModoEdicao(edCtx, peca);
+      criouAgora = true;
+      btnHtml = '<i class="bi bi-check2"></i> Salvar revisão';
       await BIB.registrarCriacao(peca.id, USER);
     } else {
-      peca = await BIB.salvarRevisao(p.id, { ...patch, ...patchImagem, ativo: patch.status !== 'Arquivado' }, USER);
+      peca = await BIB.salvarRevisao(edCtx.p.id, { ...patch, ...patchImagem, ativo: patch.status !== 'Arquivado' }, USER);
+      edCtx.p = peca;
     }
 
     if (intencaoImg === 'substituir') {
@@ -1198,6 +1248,11 @@ async function salvar(isNew, p, f, upImg) {
       specsRows.push({
         // `id` só existe em linha que já estava no banco — é a chave do diff.
         id: m.id || null,
+        /* Rascunho de origem: `sincronizarMetricas` grava nele o id devolvido
+           pelo INSERT. Sem isso, salvar de novo depois de uma falha trataria a
+           mesma cota como nova e ela seria inserida duas vezes. Campos "_" não
+           vão para o banco (ver services/biblioteca-cotas.js). */
+        _draft: m,
         peca_id: peca.id, cota: numOrNull(m.cota), quadrante: (m.quadrante || '').trim() || null,
         tipo_especificacao: m.tipo_especificacao || 'TOLERANCIA',
         caracteristica_id: await resolveCat('car', m.caracteristica_nome),
@@ -1226,7 +1281,11 @@ async function salvar(isNew, p, f, upImg) {
       ...edDocsNovos.map(async file => {
         const doc = await uploadArquivo(file, peca.id);
         try {
-          return await db.insert('bib_documentos', { peca_id: peca.id, nome: file.name, categoria: 'Outro', versao: '—', data: BIB.hoje(), responsavel: USER.nome, descricao: '', url: doc.url, tipo: (file.name.split('.').pop() || '').toLowerCase(), tamanho: fmtBytes(file.size) });
+          const row = await db.insert('bib_documentos', { peca_id: peca.id, nome: file.name, categoria: 'Outro', versao: '—', data: BIB.hoje(), responsavel: USER.nome, descricao: '', url: doc.url, tipo: (file.name.split('.').pop() || '').toLowerCase(), tamanho: fmtBytes(file.size) });
+          /* Documento já vinculado sai da fila de envio: se outra etapa falhar e
+             o usuário salvar de novo, ele não é enviado nem registrado de novo. */
+          edDocsNovos = edDocsNovos.filter(f => f !== file);
+          return row;
         } catch (e) {
           await MIDIA.removeLibraryImage(doc.path);
           console.error('[biblioteca] documento enviado mas não vinculado', { message: e?.message, code: e?.code, details: e?.details, hint: e?.hint, tabela: 'bib_documentos', path: doc.path });
@@ -1244,7 +1303,8 @@ async function salvar(isNew, p, f, upImg) {
       /* §Classe da NC — o sucesso só é anunciado quando TUDO gravou, inclusive a
          classe. Se a coluna classe_nc não existir, sincronizarMetricas lança
          ERRO_CLASSE_NC e o fluxo cai no catch (nunca chega aqui como "sucesso"). */
-      toast(isNew ? 'Peça cadastrada com sucesso.' : `Revisão salva (Rev ${String(peca.revisao).padStart(2, '0')}).`, { type: 'ok', title: 'Biblioteca' });
+      toast(criando ? 'Peça cadastrada com sucesso.' : 'Peça e especificações atualizadas com sucesso. ' +
+        `(Rev ${String(peca.revisao).padStart(2, '0')})`, { type: 'ok', title: 'Biblioteca' });
     }
     state.view = 'ficha'; state.pecaId = peca.id; render();
   } catch (err) {
@@ -1252,11 +1312,42 @@ async function salvar(isNew, p, f, upImg) {
     /* Erro de mídia (MidiaError) já vem traduzido com a causa real e o detalhe
        técnico — reembrulhar em "Erro ao salvar." esconderia a instrução. */
     upImg?.status?.('');
-    toast(err?.amigavel ? err.message : ('Não foi possível salvar o cadastro. ' + (err?.message || '')),
-      { type: 'crit', title: 'Biblioteca', timeout: 10000 });
+    renderDocList();                       // reflete os documentos que já subiram
+    /* Chave duplicada NUNCA chega ao usuário com o texto do banco: vira a frase
+       acionável (o detalhe técnico já foi para o console, acima). */
+    let msg = BIB.ehErroCodigoDuplicado(err) ? BIB.MSG_CODIGO_DUPLICADO
+      : (err?.amigavel ? err.message : ('Não foi possível salvar o cadastro. ' + (err?.message || '')));
+    /* §4.8 — não se anuncia o que não aconteceu. A peça FOI criada; dizer
+       "nenhuma alteração foi mantida" seria falso e faria o usuário tentar
+       cadastrar de novo. O formulário já está em modo de edição: salvar de novo
+       completa o cadastro, sem duplicar nada. */
+    if (criouAgora) {
+      msg += ' A peça foi criada, mas o cadastro não foi concluído. ' +
+        'O formulário já está em modo de EDIÇÃO desta peça: corrija o que faltou e salve novamente — nada será duplicado.';
+    }
+    toast(msg, { type: 'crit', title: 'Biblioteca', timeout: 12000 });
   } finally {
     soltarBotao();
   }
+}
+
+/* Passa o formulário de "nova peça" para "editar peça" sem recarregar a tela:
+   o id passa a existir, o cabeçalho e o botão passam a dizer edição, e o
+   `state` aponta para a peça (cancelar volta para a ficha dela). */
+function virarModoEdicao(edCtx, peca) {
+  edCtx.isNew = false;
+  edCtx.p = peca;
+  state.pecaId = peca.id;
+  const titulo = $('#ed-modo');
+  if (titulo) titulo.textContent = `Editar ${peca.codigo}`;
+}
+
+/* Leva o foco (e a atenção) ao campo que impediu o salvamento. */
+function focarCampo(campo) {
+  const alvo = $(`[data-p="${campo}"]`);      // `el` é import do ui.js — não sombrear
+  if (!alvo) return;
+  alvo.focus();
+  if (typeof alvo.select === 'function') alvo.select();
 }
 
 /* Sincroniza as especificações da peça por DIFERENÇA, em vez de apagar todas e
@@ -1268,37 +1359,23 @@ async function salvar(isNew, p, f, upImg) {
    INSERT; removida vira DELETE — e tudo em paralelo. */
 async function sincronizarMetricas(pecaId, linhas) {
   const existentes = await db.list('bib_metricas', { filter: { peca_id: pecaId } });
-  const porId = new Map(existentes.map(r => [r.id, r]));
-  const mantidos = new Set();
-  const ops = [];
+  const plano = planejarSincronizacao(existentes, linhas);
 
-  linhas.forEach((linha, i) => {
-    const { id, ...campos } = linha;
-    campos.ordem = i + 1;
-    const atual = id ? porId.get(id) : null;
-    if (!atual) { ops.push(inserirTolerante('bib_metricas', campos)); return; }
-    mantidos.add(id);
-    if (mudou(atual, campos)) ops.push(atualizarTolerante('bib_metricas', id, campos));
-  });
-  for (const r of existentes) if (!mantidos.has(r.id)) ops.push(db.remove('bib_metricas', r.id));
+  const ops = [
+    /* Cota nova: o id devolvido volta para o rascunho do formulário. É o que
+       impede a duplicação quando o usuário salva outra vez depois de uma falha
+       em qualquer etapa — na segunda passada esta linha já tem id e é
+       ATUALIZADA, não inserida de novo. */
+    ...plano.inserir.map(({ linha, campos }) =>
+      inserirTolerante('bib_metricas', campos).then(r => {
+        if (linha._draft && r?.id) linha._draft.id = r.id;
+        return r;
+      })),
+    ...plano.atualizar.map(({ id, campos }) => atualizarTolerante('bib_metricas', id, campos)),
+    ...plano.remover.map(id => db.remove('bib_metricas', id))
+  ];
 
   await Promise.all(ops);
-}
-
-/* Compara só os campos que serão gravados: o registro do banco traz colunas
-   extras (created_at, etc.) que não devem contar como alteração.
-   `''` e `null` são o MESMO "vazio" aqui — o formulário devolve string vazia
-   onde o banco guarda null, e tratá-los como diferentes faria toda linha parecer
-   alterada, anulando o ganho do diff. */
-function mudou(atual, campos) {
-  const vazio = v => v == null || v === '';
-  return Object.keys(campos).some(k => {
-    const a = atual[k], b = campos[k];
-    if (vazio(a) && vazio(b)) return false;
-    if (vazio(a) !== vazio(b)) return true;
-    if (typeof a === 'number' || typeof b === 'number') return Number(a) !== Number(b);
-    return JSON.stringify(a) !== JSON.stringify(b);
-  });
 }
 
 /* Tolerância a banco atrás das migrations no insert/update das especificações.
