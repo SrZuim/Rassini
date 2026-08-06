@@ -81,11 +81,53 @@ function configurarPermissoes(user) {
   };
 }
 
-async function iniciar() {
-  const prefs = lerPrefs();
-  state.aba = prefs.aba || 'dashboard';
-  state.secao = prefs.secao || 'reclamacoes';
+/* ------------------------------------------------------------ guarda de rota
+   §8 — antes de carregar QUALQUER coisa: sessão válida, cadastro ativo e
+   aprovado, perfil administrador. mountShell já recusa o módulo pelo RBAC; esta
+   é a segunda barreira, específica do fechamento, e a que emite a mensagem
+   exigida pelo requisito. A terceira e definitiva é o RLS (fm_is_admin). */
+function bloquearAcesso() {
+  document.title = 'Acesso não autorizado · RNA One';
+  $('#rna-content').innerHTML = `
+    <div class="rna-page-head"><div>
+      <div class="rna-breadcrumb"><a href="index.html">Portal</a></div>
+      <h1>Acesso não autorizado</h1></div></div>
+    ${UI.aviso(`<b>Acesso não autorizado. Esta área está disponível exclusivamente para administradores.</b>
+      <div style="margin-top:10px"><a class="rna-btn rna-btn-primary rna-btn-sm" href="index.html">
+        <i class="bi bi-house-door"></i> Voltar ao portal</a></div>`, 'erro')}`;
+}
 
+async function iniciar() {
+  if (!SCHEMA.podeAcessarFechamento(USER)) { bloquearAcesso(); return; }
+
+  const prefs = lerPrefs();
+  /* A âncora da URL manda mais que a preferência salva: é como o submenu da
+     sidebar e os links compartilhados chegam numa área específica. */
+  state.aba = areaDaURL() || prefs.aba || 'dashboard';
+  state.secao = prefs.secao || 'reclamacoes';
+  /* A URL passa a identificar a área desde o primeiro render — sem isso,
+     recarregar a página cairia no Dashboard mesmo vindo de "#custos". */
+  history.replaceState(null, '', `#${state.aba}`);
+
+  window.addEventListener('hashchange', () => {
+    const a = areaDaURL();
+    if (a && a !== state.aba) { state.aba = a; salvarPrefs(); render(); }
+  });
+
+  await verificarEstrutura();
+}
+
+/** Lê a área a partir de `fechamento-mensal.html#custos`. */
+function areaDaURL() {
+  const h = (location.hash || '').replace(/^#/, '').trim();
+  return SCHEMA.areaPorId(h) ? h : null;
+}
+
+/**
+ * Verifica a estrutura e, se estiver tudo certo, abre o módulo.
+ * Usada no arranque e pelo botão "Verificar estrutura novamente" (§20).
+ */
+async function verificarEstrutura({ renovar = false } = {}) {
   /* Desenha a moldura ANTES de consultar o banco: o diagnóstico e a lista de
      competências são idas ao servidor, e deixar a área de conteúdo em branco
      durante isso parece uma tela quebrada. */
@@ -93,40 +135,121 @@ async function iniciar() {
     `<div id="fm-corpo">${UI.skeletonCartoes(6)}</div>`;
   ligarAbas();
 
+  if (renovar) await CORE.renovarSessao();
+
   const diag = await CORE.diagnostico();
-  if (!diag.ok) {
-    $('#rna-content').innerHTML = cabecalho() + UI.aviso(
-      `<b>Estrutura do módulo ausente no banco.</b><br>${esc(diag.mensagem)}<br>
-       <span style="font-size:12px">Enquanto isso o módulo não pode ser usado: nenhum dado seria gravado.</span>`,
-      'erro');
-    return;
-  }
+  if (CORE.ehDesenvolvimento?.()) console.info('[FM] diagnóstico da estrutura:', diag);
+
+  if (!diag.ok) { telaDiagnostico(diag); return; }
 
   state.competencias = await CORE.listarCompetencias().catch(() => []);
+  const prefs = lerPrefs();
   state.competenciaId = prefs.competenciaId && state.competencias.some(c => c.id === prefs.competenciaId)
     ? prefs.competenciaId
     : (state.competencias[0]?.id || null);
   await render();
 }
 
+/** Tela de erro ESPECÍFICA por tipo de falha (§13/§19). */
+function telaDiagnostico(diag) {
+  const sessao = diag.tipo === CORE.DIAG.SESSAO;
+  const semEstrutura = diag.tipo === CORE.DIAG.SEM_ESTRUTURA;
+
+  const ficha = `<table class="fm-memoria-tabela" style="margin-top:12px">
+      <tr><td>Projeto Supabase</td><td><b>${esc(diag.projeto || '—')}</b></td></tr>
+      <tr><td>Host</td><td>${esc(diag.host || '—')}</td></tr>
+      <tr><td>Schema</td><td>${esc(diag.schema)}</td></tr>
+      ${diag.faltando?.length ? `<tr><td>Tabelas ausentes</td><td>${esc(diag.faltando.join(', '))}</td></tr>` : ''}
+    </table>
+    <div class="fm-form__hint" style="margin-top:8px">
+      Confira se este é o mesmo projeto em que o SQL foi executado. Nenhuma chave é exibida aqui.</div>`;
+
+  const orientacao = semEstrutura
+    ? `<div style="margin-top:12px;font-size:12.5px">
+        Rode <code>database/fechamento_mensal.sql</code> e depois
+        <code>database/fix_fechamento_mensal_admin.sql</code> no SQL Editor deste projeto e
+        finalize com <code>notify pgrst, 'reload schema';</code>.</div>` : '';
+
+  $('#rna-content').innerHTML = cabecalho() + UI.aviso(
+    `<b>${esc(diag.titulo)}</b><br>${esc(diag.mensagem)}
+     ${diag.detalhe ? `<div class="fm-form__hint" style="margin-top:6px">${esc(diag.detalhe)}</div>` : ''}
+     ${semEstrutura ? ficha + orientacao : ''}
+     <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+       <button class="rna-btn rna-btn-primary rna-btn-sm" id="fm-reverificar">
+         <i class="bi bi-arrow-clockwise"></i> Verificar estrutura novamente</button>
+       ${sessao ? `<a class="rna-btn rna-btn-ghost rna-btn-sm" href="login.html">
+         <i class="bi bi-box-arrow-in-right"></i> Entrar novamente</a>` : ''}
+     </div>`,
+    diag.tipo === CORE.DIAG.SEM_PERMISSAO ? 'alerta' : 'erro');
+
+  /* Uma verificação por clique, e o botão desabilita enquanto roda: sem isso um
+     duplo clique dispara duas rodadas de 9 consultas cada. */
+  const btn = $('#fm-reverificar');
+  btn?.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Verificando...';
+    try { await verificarEstrutura({ renovar: true }); }
+    catch (e) {
+      console.error('[FM] falha ao reverificar', e);
+      toast(esc(e?.message || 'Falha ao verificar.'), { type: 'crit' });
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Verificar estrutura novamente';
+    }
+  });
+}
+
 /* ---------------------------------------------------------------- moldura */
 const ABAS_ORDEM = SCHEMA.AREAS;
 
 function cabecalho() {
+  const area = SCHEMA.areaPorId(state.aba);
   return `<div class="rna-page-head"><div>
-      <div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i> Qualidade
-        <i class="bi bi-chevron-right"></i> Fechamento Mensal</div>
+      <div class="rna-breadcrumb"><a href="index.html">Portal</a><i class="bi bi-chevron-right"></i>
+        <a href="fechamento-mensal.html#dashboard">Fechamento Mensal</a>
+        ${area ? `<i class="bi bi-chevron-right"></i> ${esc(area.label)}` : ''}</div>
       <h1>Fechamento Mensal</h1>
       <p>Consolidação dos indicadores da Qualidade e geração da apresentação oficial da planta.</p>
     </div></div>
-    <div class="admin-tabs no-print">${ABAS_ORDEM.map(a =>
-      `<button class="rna-chip ${a.id === state.aba ? 'active' : ''}" data-aba="${a.id}">
-        <i class="bi ${a.icone}"></i> ${esc(a.label)}</button>`).join('')}</div>`;
+    ${navAreas()}`;
+}
+
+/** Navegação interna agrupada nas 6 seções do módulo (§3). */
+function navAreas() {
+  return `<div class="fm-nav no-print">${SCHEMA.AREAS_GRUPOS.map(g => {
+    const itens = ABAS_ORDEM.filter(a => a.grupo === g);
+    if (!itens.length) return '';
+    return `<div class="fm-nav__grupo">
+      <span class="fm-nav__titulo">${esc(g)}</span>
+      <div class="fm-nav__itens">${itens.map(a =>
+        `<button class="rna-chip ${a.id === state.aba ? 'active' : ''}" data-aba="${a.id}">
+          <i class="bi ${a.icone}"></i> ${esc(a.label)}</button>`).join('')}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+/** Mantém o submenu da sidebar espelhando a aba aberta (inclusive quando ela
+    veio da preferência salva, e não da âncora da URL). */
+function sincronizarSidebar() {
+  const alvo = `fechamento-mensal.html#${state.aba}`;
+  $$('.rna-nav__sublink').forEach(a => {
+    const ativo = a.getAttribute('href') === alvo;
+    a.classList.toggle('active', ativo);
+    if (ativo) {
+      const g = a.closest('.rna-nav__subgroup');
+      g?.classList.add('is-open');
+      g?.querySelector('.rna-nav__subtoggle')?.setAttribute('aria-expanded', 'true');
+    }
+  });
 }
 
 function ligarAbas() {
+  sincronizarSidebar();
   $$('[data-aba]').forEach(b => b.addEventListener('click', () => {
     state.aba = b.dataset.aba;
+    /* Mantém a âncora em dia (link compartilhável e submenu da sidebar).
+       replaceState em vez de location.hash: trocar o hash dispararia o
+       hashchange e provocaria um render duplicado. */
+    history.replaceState(null, '', `#${state.aba}`);
     salvarPrefs();
     render();
   }));

@@ -73,36 +73,54 @@ export function podeTransicionar(de, para) {
   return (TRANSICOES[de] || []).includes(para);
 }
 
-/* Papéis do fechamento (§43) mapeados sobre os perfis REAIS do RNA One.
-   Não criamos perfil novo: `supervisor` exerce o papel de Gestor da Qualidade. */
+/* [ADMIN-ONLY] Papel de cada perfil da plataforma DENTRO do fechamento.
+   O módulo passou a ser exclusivo da administração: os demais perfis continuam
+   mapeados aqui — com "Sem acesso" — para que nenhum perfil novo entre no
+   sistema sem uma decisão explícita sobre o que ele enxerga no fechamento. */
 export const PAPEIS = {
   admin:      'Administrador',
-  supervisor: 'Gestor da Qualidade',
-  auditor:    'Auditor / Responsável de área',
-  auditor_recebimento: 'Auditor / Responsável de área',
-  eng_processos:       'Auditor / Responsável de área',
-  laboratorio:         'Auditor / Responsável de área',
-  visitante:  'Visitante'
+  supervisor: 'Sem acesso ao Fechamento Mensal',
+  auditor:    'Sem acesso ao Fechamento Mensal',
+  auditor_recebimento: 'Sem acesso ao Fechamento Mensal',
+  eng_processos:       'Sem acesso ao Fechamento Mensal',
+  laboratorio:         'Sem acesso ao Fechamento Mensal',
+  visitante:  'Sem acesso ao Fechamento Mensal'
 };
 
-/** §43/§44 — quem pode fazer o quê no fechamento. Espelha as funções SQL
-    fm_is_admin / fm_is_gestor / fm_is_operacional: a interface nunca é a única
-    barreira, mas também não deve oferecer o que o banco vai recusar. */
+/** Quem pode fazer o quê no fechamento — ADMINISTRADOR E MAIS NINGUÉM.
+    Espelha a função SQL `fm_is_admin()`, que é quem realmente decide: a
+    interface não é a barreira, apenas evita oferecer o que o banco recusaria.
+    Fonte única: mudar aqui muda menu, botões e guardas da página. */
 export const ACOES_FECHAMENTO = {
-  configurar:   ['admin'],                                    // metas, critérios, slides, cruz
-  importar:     ['admin', 'supervisor'],
-  revisar:      ['admin', 'supervisor'],
-  aprovar:      ['admin', 'supervisor'],
-  fechar:       ['admin', 'supervisor'],
-  reabrir:      ['admin'],
-  excluir:      ['admin'],
-  gerar:        ['admin', 'supervisor'],
-  lancar:       ['admin', 'supervisor', 'auditor', 'auditor_recebimento', 'eng_processos', 'laboratorio'],
-  ver:          ['admin', 'supervisor', 'auditor', 'auditor_recebimento', 'eng_processos', 'laboratorio', 'visitante']
+  configurar: ['admin'],   // metas, critérios, slides, regras da cruz
+  importar:   ['admin'],
+  revisar:    ['admin'],
+  aprovar:    ['admin'],
+  fechar:     ['admin'],
+  reabrir:    ['admin'],
+  excluir:    ['admin'],
+  gerar:      ['admin'],
+  lancar:     ['admin'],
+  ver:        ['admin']
 };
 
 export function podeFechamento(role, acao) {
   return (ACOES_FECHAMENTO[acao] || []).includes(role);
+}
+
+/**
+ * §5/§8 — o usuário pode entrar no módulo?
+ * Autenticado + ativo + aprovado + administrador. Fail-closed: qualquer campo
+ * ausente que não seja o legado `status` derruba o acesso.
+ * Cadastros anteriores ao módulo de usuários não têm `status` — tratados como
+ * 'aprovado', mesma regra do login (services/auth.js).
+ */
+export function podeAcessarFechamento(user) {
+  if (!user || !user.id && !user.email) return false;
+  if (user.ativo === false) return false;
+  const status = (user.status || 'aprovado').toLowerCase();
+  if (!['aprovado', 'approved'].includes(status)) return false;
+  return podeFechamento(user.role, 'ver');
 }
 
 /* --------------------------------------------------------------- domínio --- */
@@ -539,25 +557,40 @@ export function colunaCompetencia(secaoId) {
 }
 
 /* ==================================================== ÁREAS DO MÓDULO (§2) */
+/* `grupo` organiza as áreas nas 6 seções do módulo (Visão Geral, Indicadores,
+   Gestão da Qualidade, Dados, Apresentação, Configurações). A mesma divisão
+   aparece no submenu da sidebar (services/config.js → MODULES.submenu) e na
+   navegação interna da página. `id` é também a âncora da URL
+   (fechamento-mensal.html#custos) — não renomeie sem migrar os links. */
 export const AREAS = [
-  { id: 'dashboard',    label: 'Dashboard',              icone: 'bi-speedometer2' },
-  { id: 'competencias', label: 'Competências',           icone: 'bi-calendar3' },
-  { id: 'externos',     label: 'Indicadores Externos',   icone: 'bi-megaphone' },
-  { id: 'internos',     label: 'Indicadores Internos',   icone: 'bi-exclamation-diamond' },
-  { id: 'cruz',         label: 'Cruz da Qualidade',      icone: 'bi-plus-square' },
-  { id: 'seguranca',    label: 'Segurança do Trabalho',  icone: 'bi-shield-check' },
-  { id: 'quebras',      label: 'Farol de Quebras',       icone: 'bi-cone-striped' },
-  { id: 'custos',       label: 'Custos da Qualidade',    icone: 'bi-cash-coin' },
-  { id: 'care',         label: 'Inspeção CARE',          icone: 'bi-clipboard-check' },
-  { id: 'planos',       label: 'Planos de Ação 5W2H',    icone: 'bi-diagram-3' },
-  { id: 'importacoes',  label: 'Importações',            icone: 'bi-file-earmark-arrow-up' },
-  { id: 'pendencias',   label: 'Pendências',             icone: 'bi-exclamation-circle' },
-  { id: 'previa',       label: 'Prévia da Apresentação', icone: 'bi-easel' },
-  { id: 'aprovacao',    label: 'Aprovação',              icone: 'bi-check2-square' },
-  { id: 'geradas',      label: 'Apresentações Geradas',  icone: 'bi-collection' },
-  { id: 'historico',    label: 'Histórico',              icone: 'bi-clock-history' },
-  { id: 'config',       label: 'Configurações',          icone: 'bi-sliders' }
+  { id: 'dashboard',    label: 'Dashboard',              icone: 'bi-speedometer2',            grupo: 'Visão Geral' },
+  { id: 'competencias', label: 'Competências',           icone: 'bi-calendar3',               grupo: 'Visão Geral' },
+  { id: 'pendencias',   label: 'Pendências',             icone: 'bi-exclamation-circle',      grupo: 'Visão Geral' },
+  { id: 'externos',     label: 'Indicadores Externos',   icone: 'bi-megaphone',               grupo: 'Indicadores' },
+  { id: 'internos',     label: 'Indicadores Internos',   icone: 'bi-exclamation-diamond',     grupo: 'Indicadores' },
+  { id: 'cruz',         label: 'Cruz da Qualidade',      icone: 'bi-plus-square',             grupo: 'Indicadores' },
+  { id: 'seguranca',    label: 'Segurança do Trabalho',  icone: 'bi-shield-check',            grupo: 'Indicadores' },
+  { id: 'quebras',      label: 'Farol de Quebras',       icone: 'bi-cone-striped',            grupo: 'Gestão da Qualidade' },
+  { id: 'custos',       label: 'Custos da Qualidade',    icone: 'bi-cash-coin',               grupo: 'Gestão da Qualidade' },
+  { id: 'care',         label: 'Inspeção CARE',          icone: 'bi-clipboard-check',         grupo: 'Gestão da Qualidade' },
+  { id: 'planos',       label: 'Planos de Ação 5W2H',    icone: 'bi-diagram-3',               grupo: 'Gestão da Qualidade' },
+  { id: 'importacoes',  label: 'Importações',            icone: 'bi-file-earmark-arrow-up',   grupo: 'Dados' },
+  { id: 'historico',    label: 'Histórico',              icone: 'bi-clock-history',           grupo: 'Dados' },
+  { id: 'previa',       label: 'Prévia da Apresentação', icone: 'bi-easel',                   grupo: 'Apresentação' },
+  { id: 'aprovacao',    label: 'Aprovação',              icone: 'bi-check2-square',           grupo: 'Apresentação' },
+  { id: 'geradas',      label: 'Apresentações Geradas',  icone: 'bi-collection',              grupo: 'Apresentação' },
+  { id: 'config',       label: 'Configurações',          icone: 'bi-sliders',                 grupo: 'Configurações' }
 ];
+
+/** Ordem das seções na navegação interna e no submenu da sidebar. */
+export const AREAS_GRUPOS = [
+  'Visão Geral', 'Indicadores', 'Gestão da Qualidade', 'Dados', 'Apresentação', 'Configurações'
+];
+
+/** Área pelo id — usado pelo breadcrumb e pela leitura da âncora da URL. */
+export function areaPorId(id) {
+  return AREAS.find(a => a.id === id) || null;
+}
 
 /* Seções que compõem o percentual de conclusão da competência (§3).
    Uma seção conta como "iniciada" quando tem pelo menos um registro. */

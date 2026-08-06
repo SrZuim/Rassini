@@ -112,6 +112,39 @@ a { text-decoration: none; color: inherit; }
 .rna-nav__link.active { box-shadow: inset 3px 0 0 var(--rna-yellow); }
 .rna-nav__badge { margin-left: auto; background: var(--rna-crit); color:#fff; font-size: 10px; font-weight:700; padding: 1px 7px; border-radius: 20px; }
 
+/* grupos recolhíveis da sidebar --------------------------------------------
+   O cabeçalho do grupo virou <button> (acessível por teclado) mantendo a
+   aparência do rótulo antigo. `.is-open` no grupo revela os itens. */
+.rna-nav__toggle {
+  display: flex; align-items: center; justify-content: space-between; width: calc(100% - 24px);
+  background: none; border: 0; cursor: pointer; text-align: left; padding: 0;
+}
+.rna-nav__toggle i { font-size: 11px; transition: transform .18s; }
+.rna-nav__toggle:hover { color: #aeb5bd; }
+.rna-nav__group.is-open > .rna-nav__toggle i { transform: rotate(180deg); }
+.rna-nav__itens { display: none; }
+.rna-nav__group.is-open > .rna-nav__itens { display: block; }
+
+/* submenu do módulo (2º nível) */
+.rna-nav__sub { margin: 2px 0 8px 14px; border-left: 1px solid rgba(255,255,255,.08); padding-left: 8px; }
+.rna-nav__subtoggle {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  background: none; border: 0; cursor: pointer; color: #9aa1a9;
+  font-size: 12.4px; font-weight: 600; padding: 6px 8px; border-radius: 7px; text-align: left;
+}
+.rna-nav__subtoggle:hover { background: rgba(255,255,255,.05); color: #fff; }
+.rna-nav__subtoggle i { font-size: 12px; }
+.rna-nav__subtoggle .bi-chevron-down { margin-left: auto; font-size: 10px; transition: transform .18s; }
+.rna-nav__subgroup.is-open > .rna-nav__subtoggle .bi-chevron-down { transform: rotate(180deg); }
+.rna-nav__subitens { display: none; }
+.rna-nav__subgroup.is-open > .rna-nav__subitens { display: block; }
+.rna-nav__sublink {
+  display: block; padding: 6px 8px 6px 29px; border-radius: 7px;
+  color: #b3bac1; font-size: 12.6px; font-weight: 500;
+}
+.rna-nav__sublink:hover { background: rgba(255,255,255,.05); color: #fff; }
+.rna-nav__sublink.active { color: #fff; background: var(--rna-yellow-soft); box-shadow: inset 2px 0 0 var(--rna-yellow); }
+
 /* main */
 .rna-main { flex: 1; margin-left: var(--rna-sidebar-w); display: flex; flex-direction: column; min-width: 0; }
 

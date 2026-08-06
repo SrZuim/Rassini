@@ -9,6 +9,7 @@ await import('./fechamento/calculos.test.mjs');
 await import('./fechamento/importacao.test.mjs');
 await import('./fechamento/clientes.test.mjs');
 await import('./fechamento/permissoes.test.mjs');
+await import('./fechamento/diagnostico.test.mjs');
 await import('./fechamento/pendencias.test.mjs');
 await import('./fechamento/apresentacao.test.mjs');
 await import('./quem-mede.test.mjs');

@@ -14,7 +14,7 @@
    ========================================================================== */
 import { db } from '../db.js';
 import { SUPABASE, PLANTAS } from '../config.js';
-import { getSupabase } from '../supabaseClient.js';
+import { getSupabase, ehDesenvolvimento, projetoSupabase } from '../supabaseClient.js';
 import { agoraISO, hojeBR } from '../datahora.js';
 import {
   STATUS_COMPETENCIA, MESES, podeTransicionar, podeFechamento,
@@ -501,37 +501,181 @@ export async function decidirAjuste(ajuste_id, aprovado, { parecer = '', user } 
   return row;
 }
 
-/* -------------------------------------------------------------- DIAGNÓSTICO */
+/* ========================================================================== */
+/* DIAGNÓSTICO DA ESTRUTURA                                                    */
+/* ========================================================================== */
+/* Antes, QUALQUER falha ao ler uma tabela virava "estrutura ausente no banco" —
+   inclusive RLS negando, sessão expirada e queda de rede. Isso mandava o
+   administrador rodar de novo uma migration que já estava aplicada, escondendo
+   o problema real. Agora o erro é CLASSIFICADO e cada caso tem sua conduta. */
+
+/** Tabelas mínimas que o módulo exige para abrir. */
+export const TABELAS_OBRIGATORIAS = [
+  'fm_competencias', 'fm_reclamacoes', 'fm_ocorrencias', 'fm_producao',
+  'fm_fornecimento', 'fm_criterios', 'fm_metas', 'fm_pendencias', 'fm_memoria'
+];
+
+export const DIAG = {
+  OK: 'ok',
+  SEM_ESTRUTURA: 'sem_estrutura',
+  SEM_PERMISSAO: 'sem_permissao',
+  SESSAO: 'sessao',
+  CONEXAO: 'conexao',
+  CACHE: 'cache',
+  DESCONHECIDO: 'desconhecido'
+};
 
 /**
- * Verifica se o módulo está apto a funcionar no banco atual. Denuncia migration
- * pendente em vez de deixar a tela falhar com erro genérico — lição registrada
- * em "Banco de produção atrás das migrations".
+ * Classifica UM erro do PostgREST/Supabase/fetch.
+ * A ordem importa: 'schema cache' aparece tanto em tabela ausente (PGRST205)
+ * quanto em coluna/função fora do cache (PGRST202/PGRST204) — por isso o código
+ * é consultado antes do texto.
  */
-export async function diagnostico() {
-  const tabelas = ['fm_competencias', 'fm_reclamacoes', 'fm_ocorrencias', 'fm_producao',
-    'fm_fornecimento', 'fm_criterios', 'fm_metas', 'fm_pendencias', 'fm_memoria'];
+export function classificarErro(e) {
+  if (!e) return DIAG.OK;
+  const code = String(e.code ?? e.status ?? '');
+  const msg  = String(e.message ?? e ?? '');
+  const nome = String(e.name ?? '');
 
-  /* Em paralelo: em Supabase são 9 idas ao servidor e, em sequência, a tela do
-     usuário ficaria vários segundos em branco só para descobrir se o módulo
-     está instalado. */
-  const resultados = await Promise.all(tabelas.map(async t => {
-    try { await db.list(t); return null; }
-    catch (e) {
-      const ausente = e?.code === '42P01' || e?.code === 'PGRST205' ||
-                      /does not exist|schema cache/i.test(String(e?.message));
-      return ausente ? t : `${t} (${e?.message || 'erro'})`;
-    }
-  }));
-  const faltando = resultados.filter(Boolean);
-  return {
-    modo: db.mode,
-    ok: faltando.length === 0,
-    faltando,
-    mensagem: faltando.length
-      ? `Tabelas ausentes no banco: ${faltando.join(', ')}. Rode database/fechamento_mensal.sql no Supabase.`
-      : 'Estrutura do Fechamento Mensal disponível.'
-  };
+  /* Rede: o fetch nem chegou ao PostgREST — não há código nenhum. */
+  if (nome === 'TypeError' && /fetch/i.test(msg)) return DIAG.CONEXAO;
+  if (/failed to fetch|networkerror|network request failed|load failed|timeout|abort/i.test(msg)
+      && !code) return DIAG.CONEXAO;
+
+  /* Sessão. */
+  if (code === '401' || code === 'PGRST301' ||
+      /jwt (expired|invalid)|invalid (jwt|token)|session (missing|not found)|no api key/i.test(msg)) {
+    return DIAG.SESSAO;
+  }
+
+  /* Tabela/função inexistente. PGRST202 = função (RPC) fora do schema cache —
+     na prática, a migration não rodou neste banco. */
+  if (code === '42P01' || code === 'PGRST205' || code === 'PGRST202' ||
+      /relation .* does not exist|could not find the table|could not find the function/i.test(msg)) {
+    return DIAG.SEM_ESTRUTURA;
+  }
+
+  /* Permissão / RLS. */
+  if (code === '42501' || code === '403' ||
+      /permission denied|row-level security|violates row-level|not authorized|acesso não autorizado/i.test(msg)) {
+    return DIAG.SEM_PERMISSAO;
+  }
+
+  /* Estrutura existe, mas a API ainda não recarregou o schema. */
+  if (code === 'PGRST204' || /schema cache/i.test(msg)) return DIAG.CACHE;
+
+  return DIAG.DESCONHECIDO;
 }
 
-export { hojeBR };
+const TITULOS = {
+  [DIAG.SEM_ESTRUTURA]: 'Estrutura do Fechamento Mensal não instalada.',
+  [DIAG.SEM_PERMISSAO]: 'Acesso restrito.',
+  [DIAG.SESSAO]:        'Sessão expirada.',
+  [DIAG.CONEXAO]:       'Falha de conexão com o banco.',
+  [DIAG.CACHE]:         'Estrutura existe, mas a API não atualizou o schema.',
+  [DIAG.DESCONHECIDO]:  'Não foi possível verificar a estrutura do módulo.'
+};
+
+const MENSAGENS = {
+  [DIAG.SEM_ESTRUTURA]: 'As tabelas necessárias ainda não estão disponíveis no banco configurado para este ambiente.',
+  [DIAG.SEM_PERMISSAO]: 'Este módulo está disponível exclusivamente para administradores.',
+  [DIAG.SESSAO]:        'Sua sessão expirou. Entre novamente.',
+  [DIAG.CONEXAO]:       'Não foi possível consultar o Supabase. Verifique a conexão e tente novamente.',
+  [DIAG.CACHE]:         'A estrutura existe, mas a API ainda não atualizou o schema. Recarregue o cache do Supabase (notify pgrst, \'reload schema\').',
+  [DIAG.DESCONHECIDO]:  'O banco respondeu com um erro que não corresponde a nenhum caso conhecido.'
+};
+
+/** Identificação do projeto Supabase em uso — sem expor chave alguma. */
+export function ambiente() {
+  const { host, ref } = projetoSupabase();
+  return { modo: db.mode, projeto: ref, host, schema: 'public' };
+}
+
+/**
+ * Verifica se o módulo está apto a funcionar no banco atual.
+ *
+ * Estratégia: primeiro a RPC `fm_check_structure()` — uma única ida ao servidor
+ * que responde pela EXISTÊNCIA das tabelas sem se misturar com RLS (a função é
+ * security definer e valida administrador por dentro). Se a RPC não existir
+ * (banco anterior a esta correção), cai para a sondagem tabela a tabela, agora
+ * com os erros classificados.
+ */
+export async function diagnostico() {
+  const env = ambiente();
+  const base = { ...env, faltando: [], detalhe: null };
+
+  if (!SUPABASE.enabled) {
+    return { ...base, ok: true, tipo: DIAG.OK, titulo: null,
+      mensagem: 'Modo demonstração: as tabelas do módulo vivem no navegador.' };
+  }
+
+  /* ---- 1) caminho preferencial: RPC ---- */
+  try {
+    const sb = await getSupabase();
+    const { data, error } = await sb.rpc('fm_check_structure');
+    if (error) throw error;
+    if (data && typeof data === 'object') {
+      const tabelas = data.tabelas || data;
+      const faltando = Object.entries(tabelas)
+        .filter(([, existe]) => existe === false).map(([t]) => t);
+      return faltando.length
+        ? { ...base, ok: false, tipo: DIAG.SEM_ESTRUTURA, faltando,
+            titulo: TITULOS[DIAG.SEM_ESTRUTURA], mensagem: MENSAGENS[DIAG.SEM_ESTRUTURA],
+            detalhe: `Ausentes: ${faltando.join(', ')}.` }
+        : { ...base, ok: true, tipo: DIAG.OK, titulo: null,
+            mensagem: 'Estrutura do Fechamento Mensal disponível.', via: 'rpc' };
+    }
+  } catch (e) {
+    const tipo = classificarErro(e);
+    /* PGRST202 (função ausente) NÃO é veredito: pode ser só esta correção que
+       ainda não foi aplicada, com as tabelas todas no lugar. Cai para a
+       sondagem. Os demais tipos são conclusivos e param aqui. */
+    if (tipo !== DIAG.SEM_ESTRUTURA) {
+      return { ...base, ok: false, tipo, titulo: TITULOS[tipo], mensagem: MENSAGENS[tipo],
+        detalhe: e?.message || null };
+    }
+  }
+
+  /* ---- 2) sondagem tabela a tabela ---- */
+  /* Em paralelo: em sequência seriam 9 idas ao servidor e a tela ficaria vários
+     segundos em branco só para descobrir se o módulo está instalado. */
+  const achados = await Promise.all(TABELAS_OBRIGATORIAS.map(async t => {
+    try { await db.list(t); return { t, tipo: DIAG.OK }; }
+    catch (e) { return { t, tipo: classificarErro(e), erro: e }; }
+  }));
+
+  /* Prioridade do veredito: um 403 em UMA tabela é acesso negado ao módulo —
+     jamais "tabela ausente". Foi exatamente essa confusão que mandava rodar a
+     migration de novo quando o problema era permissão. */
+  for (const tipo of [DIAG.SESSAO, DIAG.SEM_PERMISSAO, DIAG.CONEXAO, DIAG.CACHE, DIAG.DESCONHECIDO]) {
+    const hit = achados.find(a => a.tipo === tipo);
+    if (hit) {
+      return { ...base, ok: false, tipo, titulo: TITULOS[tipo], mensagem: MENSAGENS[tipo],
+        detalhe: `${hit.t}: ${hit.erro?.message || 'sem detalhe'}` };
+    }
+  }
+
+  const faltando = achados.filter(a => a.tipo === DIAG.SEM_ESTRUTURA).map(a => a.t);
+  return faltando.length
+    ? { ...base, ok: false, tipo: DIAG.SEM_ESTRUTURA, faltando,
+        titulo: TITULOS[DIAG.SEM_ESTRUTURA], mensagem: MENSAGENS[DIAG.SEM_ESTRUTURA],
+        detalhe: `Ausentes: ${faltando.join(', ')}.` }
+    : { ...base, ok: true, tipo: DIAG.OK, titulo: null,
+        mensagem: 'Estrutura do Fechamento Mensal disponível.', via: 'sondagem' };
+}
+
+/** Renova a sessão antes de reverificar (§20 do requisito de correção). */
+export async function renovarSessao() {
+  if (!SUPABASE.enabled) return true;
+  try {
+    const sb = await getSupabase();
+    const { data, error } = await sb.auth.refreshSession();
+    if (error) throw error;
+    return Boolean(data?.session);
+  } catch (e) {
+    console.warn('[FM] sessão não renovada:', e?.message);
+    return false;
+  }
+}
+
+export { hojeBR, ehDesenvolvimento, projetoSupabase };

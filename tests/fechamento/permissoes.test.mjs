@@ -10,12 +10,14 @@
    ========================================================================== */
 import { suite, teste, esperar } from '../runner.mjs';
 import {
-  podeFechamento, podeTransicionar, TRANSICOES, STATUS_COMPETENCIA,
-  ACOES_FECHAMENTO, PAPEIS
+  podeFechamento, podeAcessarFechamento, podeTransicionar, TRANSICOES,
+  STATUS_COMPETENCIA, ACOES_FECHAMENTO, PAPEIS, AREAS, AREAS_GRUPOS, areaPorId
 } from '../../services/fechamento/fm-schema.js';
-import { RBAC, can } from '../../services/config.js';
+import { RBAC, can, MODULES, GRUPOS_ORDEM } from '../../services/config.js';
 
-suite('§43 — permissões por perfil', () => {
+const NAO_ADMIN = ['supervisor', 'auditor', 'auditor_recebimento', 'eng_processos', 'laboratorio', 'visitante'];
+
+suite('§5/§43 — o módulo é exclusivo do administrador', () => {
 
   teste('administrador pode tudo', () => {
     for (const acao of Object.keys(ACOES_FECHAMENTO)) {
@@ -23,49 +25,24 @@ suite('§43 — permissões por perfil', () => {
     }
   });
 
-  teste('gestor da qualidade (supervisor) revisa, aprova, fecha e gera', () => {
-    for (const acao of ['revisar', 'aprovar', 'fechar', 'gerar', 'importar', 'lancar', 'ver']) {
-      esperar(podeFechamento('supervisor', acao)).verdadeiro(`supervisor deveria poder "${acao}"`);
+  teste('NENHUM outro perfil pode NADA — nem ver', () => {
+    for (const role of NAO_ADMIN) {
+      for (const acao of Object.keys(ACOES_FECHAMENTO)) {
+        esperar(podeFechamento(role, acao)).falso(`"${role}" não deveria poder "${acao}"`);
+      }
     }
   });
 
-  teste('gestor NÃO configura metas/critérios nem reabre competência', () => {
-    esperar(podeFechamento('supervisor', 'configurar')).falso();
-    esperar(podeFechamento('supervisor', 'reabrir')).falso();
-    esperar(podeFechamento('supervisor', 'excluir')).falso();
-  });
-
-  teste('auditor lança dados mas NÃO aprova (§44.3)', () => {
-    esperar(podeFechamento('auditor', 'lancar')).verdadeiro();
-    esperar(podeFechamento('auditor', 'ver')).verdadeiro();
-    esperar(podeFechamento('auditor', 'aprovar')).falso();
-    esperar(podeFechamento('auditor', 'fechar')).falso();
-    esperar(podeFechamento('auditor', 'importar')).falso();
-    esperar(podeFechamento('auditor', 'reabrir')).falso();
-  });
-
-  teste('cargos de medição têm o mesmo alcance do auditor', () => {
-    for (const cargo of ['auditor_recebimento', 'eng_processos', 'laboratorio']) {
-      esperar(podeFechamento(cargo, 'lancar')).verdadeiro(`${cargo} deveria lançar`);
-      esperar(podeFechamento(cargo, 'aprovar')).falso(`${cargo} não deveria aprovar`);
+  teste('toda ação do módulo lista apenas "admin"', () => {
+    for (const [acao, perfis] of Object.entries(ACOES_FECHAMENTO)) {
+      esperar(perfis).profundo(['admin'], `ação "${acao}" liberada para além do admin`);
     }
-  });
-
-  teste('visitante apenas visualiza (§44.2 não edita)', () => {
-    esperar(podeFechamento('visitante', 'ver')).verdadeiro();
-    esperar(podeFechamento('visitante', 'lancar')).falso();
-    esperar(podeFechamento('visitante', 'aprovar')).falso();
-    esperar(podeFechamento('visitante', 'gerar')).falso();
   });
 
   teste('perfil desconhecido não recebe nenhuma permissão (fail-closed)', () => {
     esperar(podeFechamento('hacker', 'ver')).falso();
     esperar(podeFechamento(undefined, 'lancar')).falso();
     esperar(podeFechamento(null, 'aprovar')).falso();
-  });
-
-  teste('reabertura é exclusiva do administrador (§46)', () => {
-    esperar(ACOES_FECHAMENTO.reabrir).profundo(['admin']);
   });
 
   teste('todo perfil do sistema tem um papel mapeado no fechamento', () => {
@@ -75,7 +52,42 @@ suite('§43 — permissões por perfil', () => {
   });
 });
 
-suite('§2/§43 — RBAC do módulo na navegação', () => {
+suite('§7 — quem pode ENTRAR no módulo (sessão + ativo + aprovado + admin)', () => {
+  const admin = { id: 'u1', role: 'admin', ativo: true, status: 'aprovado' };
+
+  teste('administrador ativo e aprovado entra', () => {
+    esperar(podeAcessarFechamento(admin)).verdadeiro();
+  });
+
+  teste('administrador INATIVO é bloqueado', () => {
+    esperar(podeAcessarFechamento({ ...admin, ativo: false })).falso();
+  });
+
+  teste('administrador NÃO aprovado é bloqueado', () => {
+    for (const status of ['pendente', 'recusado', 'bloqueado']) {
+      esperar(podeAcessarFechamento({ ...admin, status })).falso(`status "${status}" deveria bloquear`);
+    }
+  });
+
+  teste('cadastro legado sem status é tratado como aprovado (mesma regra do login)', () => {
+    esperar(podeAcessarFechamento({ id: 'u1', role: 'admin', ativo: true })).verdadeiro();
+  });
+
+  teste('sem sessão não entra', () => {
+    esperar(podeAcessarFechamento(null)).falso();
+    esperar(podeAcessarFechamento(undefined)).falso();
+    esperar(podeAcessarFechamento({})).falso();
+  });
+
+  teste('nenhum outro perfil entra, mesmo ativo e aprovado', () => {
+    for (const role of NAO_ADMIN) {
+      esperar(podeAcessarFechamento({ id: 'u9', role, ativo: true, status: 'aprovado' }))
+        .falso(`"${role}" não deveria entrar`);
+    }
+  });
+});
+
+suite('§2/§3 — RBAC e posição do módulo na navegação', () => {
 
   teste('o módulo "fechamento" existe no RBAC de todos os perfis', () => {
     for (const role of Object.keys(RBAC)) {
@@ -83,21 +95,45 @@ suite('§2/§43 — RBAC do módulo na navegação', () => {
     }
   });
 
-  teste('admin e supervisor podem aprovar pelo RBAC de módulo', () => {
-    esperar(can('admin', 'fechamento', 'approve')).verdadeiro();
-    esperar(can('supervisor', 'fechamento', 'approve')).verdadeiro();
+  teste('somente o admin tem qualquer ação de módulo no fechamento', () => {
+    for (const acao of ['view', 'create', 'edit', 'delete', 'approve', 'export']) {
+      esperar(can('admin', 'fechamento', acao)).verdadeiro(`admin deveria ter "${acao}"`);
+      for (const role of NAO_ADMIN) {
+        esperar(can(role, 'fechamento', acao)).falso(`"${role}" não deveria ter "${acao}"`);
+      }
+    }
   });
 
-  teste('auditor vê e cria, mas não aprova nem exclui', () => {
-    esperar(can('auditor', 'fechamento', 'view')).verdadeiro();
-    esperar(can('auditor', 'fechamento', 'create')).verdadeiro();
-    esperar(can('auditor', 'fechamento', 'approve')).falso();
-    esperar(can('auditor', 'fechamento', 'delete')).falso();
+  teste('menu vazio para não-admin: RBAC.fechamento é lista vazia', () => {
+    for (const role of NAO_ADMIN) {
+      esperar(RBAC[role].fechamento).tamanho(0, `"${role}" ainda enxerga o módulo`);
+    }
   });
 
-  teste('visitante só visualiza', () => {
-    esperar(can('visitante', 'fechamento', 'view')).verdadeiro();
-    esperar(can('visitante', 'fechamento', 'edit')).falso();
+  teste('§3 — Fechamento Mensal é grupo principal próprio, fora de Qualidade', () => {
+    const mod = MODULES.find(m => m.id === 'fechamento');
+    esperar(mod).naoNulo();
+    esperar(mod.group).igual('Fechamento Mensal');
+    esperar(GRUPOS_ORDEM.includes('Fechamento Mensal')).verdadeiro();
+    /* Entre Qualidade e Administração, como pede o requisito. */
+    esperar(GRUPOS_ORDEM.indexOf('Fechamento Mensal') > GRUPOS_ORDEM.indexOf('Qualidade')).verdadeiro();
+    esperar(GRUPOS_ORDEM.indexOf('Fechamento Mensal') < GRUPOS_ORDEM.indexOf('Administração')).verdadeiro();
+  });
+
+  teste('§3 — o submenu cobre as 6 seções e só aponta para áreas existentes', () => {
+    const mod = MODULES.find(m => m.id === 'fechamento');
+    esperar(mod.submenu.map(g => g.label)).profundo(AREAS_GRUPOS);
+    for (const g of mod.submenu) {
+      for (const i of g.itens) {
+        esperar(areaPorId(i.hash)).naoNulo(`submenu aponta para área inexistente: #${i.hash}`);
+      }
+    }
+  });
+
+  teste('§3 — toda área do módulo está em algum grupo declarado', () => {
+    for (const a of AREAS) {
+      esperar(AREAS_GRUPOS.includes(a.grupo)).verdadeiro(`área "${a.id}" com grupo inválido: ${a.grupo}`);
+    }
   });
 
   teste('nenhum módulo pré-existente perdeu permissões (§51.30)', () => {

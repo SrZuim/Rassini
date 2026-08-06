@@ -406,12 +406,15 @@ export const auth = {
     sessionStorage.removeItem(SESSION_KEY);
   },
 
-  async logout() {
+  /** Encerra a sessão. `motivo` vira query na tela de login (ex.: 'bloqueado'),
+      para que o usuário saiba por que foi desconectado em vez de achar que a
+      plataforma simplesmente o expulsou. */
+  async logout(motivo = null) {
     const u = this.current();
-    if (u) this._logAcesso({ nome: u.nome, email: u.email, perfil: u.role, evento: 'logout' });
+    if (u) this._logAcesso({ nome: u.nome, email: u.email, perfil: u.role, evento: 'logout', motivo });
     if (SUPABASE.enabled) { try { const sb = await getSupabase(); await sb.auth.signOut(); } catch {} }
     this._clear();
-    location.href = 'login.html';
+    location.href = motivo ? `login.html?${encodeURIComponent(motivo)}=1` : 'login.html';
   },
 
   /** Protege uma página: exige sessão válida (não expirada). Retorna o usuário. */

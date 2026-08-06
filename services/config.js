@@ -81,9 +81,41 @@ export const MODULES = [
      mountShell consulta o mesmo `can()` antes de renderizar a página. */
   { id:'rel_dim_producao', label:'Rel. Dimensionais de Produção', short:'Rel. Dim. de Produção', page:'rel-dimensionais-producao.html', icon:'bi-clipboard2-pulse', group:'Administração', color:'red', desc:'Documento de apoio operacional derivado dos relatórios dimensionais, com valores dentro dos limites aprovados. Uso em treinamento, demonstração e planejamento — não substitui o registro oficial de medição.' },
   /* [FECHAMENTO MENSAL] Consolidação mensal dos indicadores da Qualidade e
-     geração da "Apresentação Qualidade — Planta RJ". Vive em Qualidade porque
-     é operado pela Garantia da Qualidade, não pela Administração. */
-  { id:'fechamento',    label:'Fechamento Mensal',    short:'Fechamento Mensal',   page:'fechamento-mensal.html', icon:'bi-calendar2-check', group:'Qualidade', color:'yellow', desc:'Consolidação mensal da Qualidade: PPM externo e interno, ocorrências, Cruz da Qualidade, custos, CARE, quebras, planos 5W2H e geração da apresentação oficial.' },
+     geração da "Apresentação Qualidade — Planta RJ".
+     MÓDULO PRINCIPAL PRÓPRIO (não pertence a Qualidade): o grupo tem o mesmo
+     nome do módulo e carrega o submenu das áreas internas. EXCLUSIVO DO
+     ADMINISTRADOR — o bloqueio é de RBAC (abaixo), portanto vale para o menu E
+     para a abertura direta da URL (mountShell consulta `can()` antes de
+     renderizar a página). */
+  { id:'fechamento',    label:'Fechamento Mensal',    short:'Fechamento Mensal',   page:'fechamento-mensal.html', icon:'bi-calendar2-check', group:'Fechamento Mensal', color:'yellow', desc:'Consolidação mensal da Qualidade: PPM externo e interno, ocorrências, Cruz da Qualidade, custos, CARE, quebras, planos 5W2H e geração da apresentação oficial. Exclusivo da administração.',
+    /* Submenu recolhível da sidebar — espelha FM_NAV de fm-schema.js. O destino
+       é a MESMA página com âncora da área (#dashboard, #custos, ...), porque a
+       plataforma é multipágina estática: cada área é uma aba, não uma rota. */
+    submenu: [
+      { label:'Visão Geral',        icon:'bi-speedometer2', itens:[
+        { label:'Dashboard',    hash:'dashboard' },
+        { label:'Competências', hash:'competencias' },
+        { label:'Pendências',   hash:'pendencias' } ] },
+      { label:'Indicadores',        icon:'bi-graph-up', itens:[
+        { label:'Externos',            hash:'externos' },
+        { label:'Internos',            hash:'internos' },
+        { label:'Cruz da Qualidade',   hash:'cruz' },
+        { label:'Segurança do Trabalho', hash:'seguranca' } ] },
+      { label:'Gestão da Qualidade', icon:'bi-clipboard-data', itens:[
+        { label:'Farol de Quebras', hash:'quebras' },
+        { label:'Custos',           hash:'custos' },
+        { label:'CARE',             hash:'care' },
+        { label:'5W2H',             hash:'planos' } ] },
+      { label:'Dados',              icon:'bi-database', itens:[
+        { label:'Importações', hash:'importacoes' },
+        { label:'Histórico',   hash:'historico' } ] },
+      { label:'Apresentação',       icon:'bi-easel', itens:[
+        { label:'Prévia',                hash:'previa' },
+        { label:'Aprovação',             hash:'aprovacao' },
+        { label:'Apresentações Geradas', hash:'geradas' } ] },
+      { label:'Configurações',      icon:'bi-sliders', itens:[
+        { label:'Configurações', hash:'config' } ] }
+    ] },
   { id:'ocorrencias',   label:'Não Conformidades',    short:'Ocorrências',         page:'ocorrencias.html',   icon:'bi-exclamation-octagon',group:'Qualidade',  color:'red',    desc:'Abertura e tratativa de não conformidades.' },
   { id:'planos',        label:'Plano de Ação',        short:'Planos',              page:'planos-acao.html',   icon:'bi-diagram-3',         group:'Qualidade',   color:'yellow', desc:'Ações corretivas 5W2H vinculadas a NCs.' },
   { id:'powerbi',       label:'Power BI',             short:'Power BI',            page:'dashboard.html#bi',  icon:'bi-bar-chart-line',    group:'Gestão',      color:'orange', desc:'Relatórios corporativos embarcados.' },
@@ -98,6 +130,14 @@ export const MODULES = [
   /* [MÓDULO USUÁRIOS] Administração de Usuários — cadastro, aprovação e gestão (só admin). */
   { id:'usuarios',      label:'Administração de Usuários', short:'Usuários',        page:'admin-usuarios.html',icon:'bi-people',            group:'Administração', color:'red', desc:'Solicitações de acesso, aprovação, cargos e bloqueios.' },
   { id:'perfil',        label:'Meu Perfil',           short:'Perfil',              page:'perfil.html',        icon:'bi-person-circle',     group:'Gestão',      color:'gray',   desc:'Seus dados, plantões e produtividade.' }
+];
+
+/* Ordem dos grupos na sidebar. Sem isto a ordem seria a da primeira aparição em
+   MODULES — e "Fechamento Mensal", por estar no meio da lista, cairia depois de
+   Administração. O módulo é principal e fica logo após Qualidade.
+   Grupo que não estiver aqui vai para o fim, na ordem em que aparecer. */
+export const GRUPOS_ORDEM = [
+  'Operação', 'Operações', 'Qualidade', 'Fechamento Mensal', 'Administração', 'Gestão'
 ];
 
 /* ----------------------------------------------------------------- RBAC ---
@@ -117,9 +157,11 @@ const CARGO_MEDICAO_RBAC = {
   biblioteca:['view','export'],
   gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view','create','edit','execute','export'], op_pendencias:['view','create'], op_historico:['view'],
   consulta_dim:['view','export'], rel_dim_producao:[], admin_monitor:[],
-  /* [FECHAMENTO MENSAL] §43 "Auditor": registra ocorrências e CARE, anexa
-     evidências e consulta os indicadores. Não aprova, não fecha, não configura. */
-  fechamento:['view','create','edit','export'],
+  /* [FECHAMENTO MENSAL · ADMIN-ONLY] O módulo passou a ser exclusivo do
+     administrador. Lista vazia = o item não é renderizado no menu E a abertura
+     direta de fechamento-mensal.html é recusada por mountShell. O RLS do banco
+     (fm_is_admin) repete a regra no servidor. */
+  fechamento:[],
   ocorrencias:[], planos:[],
   powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
 };
@@ -135,11 +177,10 @@ export const RBAC = {
     biblioteca:['view','create','edit','export'],
     gestao_op:['view'], op_plantao:[], op_rotinas:[], op_checklists:[], op_auditorias:['view','export'], op_pendencias:['view'], op_historico:['view'],
     consulta_dim:['view','export'], rel_dim_producao:[], admin_monitor:[],
-    /* [FECHAMENTO MENSAL] §43 "Gestor da Qualidade" — este é o único módulo em
-       que o Supervisor escreve e aprova: ele é o dono do fechamento (revisa,
-       devolve para correção, aprova, gera a apresentação e conclui). Configurar
-       metas/critérios/slides e reabrir competência seguem exclusivos do admin. */
-    fechamento:['view','create','edit','approve','export'],
+    /* [FECHAMENTO MENSAL · ADMIN-ONLY] O Supervisor era o "Gestor da Qualidade"
+       do fechamento (revisava, aprovava e gerava a apresentação). O módulo
+       passou a ser exclusivo do administrador — nenhuma permissão aqui. */
+    fechamento:[],
     ocorrencias:RO, planos:['view','export'],
     powerbi:['view'], comunicados:['view'], documentos:['view','export'],
     treinamentos:['view'], admin:[], usuarios:[], perfil:['view','edit']
@@ -152,7 +193,7 @@ export const RBAC = {
     biblioteca:['view','export'],
     gestao_op:[], op_plantao:['view','create','execute'], op_rotinas:['view','execute'], op_checklists:['view','execute'], op_auditorias:['view','create','edit','execute','export'], op_pendencias:['view','create'], op_historico:['view'],
     consulta_dim:['view','export'], rel_dim_producao:[], admin_monitor:[],
-    fechamento:['view','create','edit','export'],   // [FECHAMENTO MENSAL] §43 Auditor
+    fechamento:[],                                  // [FECHAMENTO MENSAL] admin-only
     ocorrencias:[], planos:[],
     powerbi:[], comunicados:[], documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view','edit']
   },
@@ -166,11 +207,10 @@ export const RBAC = {
   visitante: {
     dashboard:[], monitoramento:[], diario:[],
     auditorias:[], biblioteca:[], ocorrencias:[], planos:[], powerbi:[], comunicados:[],
-    /* [FECHAMENTO MENSAL] §43 — visitante só enxerga competências FECHADAS, e
-       quem garante isso é o RLS (fm_comp_read). Na prática o shell já redireciona
-       o visitante para home.html; a permissão fica aqui para o dia em que o
-       portal institucional publicar indicadores fechados. */
-    fechamento:['view'],
+    /* [FECHAMENTO MENSAL · ADMIN-ONLY] O visitante chegava a enxergar
+       competências fechadas. Não enxerga mais nada — nem no menu, nem por URL,
+       nem pelas tabelas (o RLS agora exige fm_is_admin em todo fm_*). */
+    fechamento:[],
     documentos:[], treinamentos:[], admin:[], usuarios:[], perfil:['view']
   }
 };

@@ -9,7 +9,7 @@
    ========================================================================== */
 import { auth } from '../../services/auth.js';
 import { db } from '../../services/db.js';
-import { MODULES, ROLES, RBAC, can, BRAND } from '../../services/config.js';
+import { MODULES, ROLES, RBAC, can, BRAND, GRUPOS_ORDEM } from '../../services/config.js';
 import { $, $$, el, initials, toast } from './ui.js';
 import { subscribe } from '../../services/integrations/realtime.js';   // [MÓDULO USUÁRIOS]
 
@@ -26,6 +26,15 @@ export async function mountShell() {
 
   // Visitante não acessa a plataforma interna — apenas a tela institucional.
   if (user.role === 'visitante') { location.href = 'home.html'; return null; }
+
+  /* Cadastro suspenso/bloqueado não entra, mesmo com sessão válida no navegador.
+     A sessão guarda status/ativo vindos de `usuarios` no login; um usuário
+     bloqueado DEPOIS do login continuava navegando até a sessão expirar.
+     Registros anteriores ao módulo de usuários não têm status → 'aprovado'. */
+  if (user.ativo === false || (user.status && user.status !== 'aprovado')) {
+    auth.logout('bloqueado');
+    return null;
+  }
 
   const moduleId = page.dataset.module || 'dashboard';
   const title = page.dataset.title || 'RNA One';
@@ -45,10 +54,23 @@ export async function mountShell() {
     (groups[m.group] = groups[m.group] || []).push(m);
   });
 
-  const navHtml = Object.entries(groups).map(([grp, mods]) => `
-    <div class="rna-nav__section">${grp}</div>
-    ${mods.map(m => navLink(m, moduleId)).join('')}
-  `).join('');
+  /* Ordem explícita (GRUPOS_ORDEM); o que não estiver listado vai para o fim. */
+  const abertos = gruposAbertos();
+  const navHtml = Object.entries(groups)
+    .sort(([a], [b]) => ordemGrupo(a) - ordemGrupo(b))
+    .map(([grp, mods]) => {
+      const temAtivo = mods.some(m => m.id === moduleId);
+      /* Grupo recolhível: aberto por padrão, salvo escolha do usuário. O grupo
+         da página atual abre sempre — recolher o próprio contexto esconderia
+         onde a pessoa está. */
+      const aberto = temAtivo || abertos[grp] !== false;
+      return `<div class="rna-nav__group${aberto ? ' is-open' : ''}" data-grupo="${escAttr(grp)}">
+        <button type="button" class="rna-nav__section rna-nav__toggle" aria-expanded="${aberto}">
+          <span>${grp}</span><i class="bi bi-chevron-down"></i></button>
+        <div class="rna-nav__itens">
+          ${mods.map(m => navLink(m, moduleId) + subMenu(m, moduleId)).join('')}
+        </div></div>`;
+    }).join('');
 
   const notifs = await db.list('notificacoes').catch(() => []);
   const unread = notifs.filter(n => !n.lida).length;
@@ -117,9 +139,65 @@ function navLink(m, active) {
   return `<a class="${cls}" href="${m.page}"><i class="bi ${m.icon}"></i> ${m.short || m.label} ${badge}</a>`;
 }
 
+const escAttr = s => String(s ?? '').replace(/"/g, '&quot;');
+
+/** Posição do grupo na sidebar. Grupo não listado vai para o fim. */
+function ordemGrupo(nome) {
+  const i = GRUPOS_ORDEM.indexOf(nome);
+  return i === -1 ? GRUPOS_ORDEM.length : i;
+}
+
+/* Estado recolhido/expandido dos grupos — preferência de navegação por
+   navegador, nunca dado de negócio. Falha silenciosa em modo privado. */
+const NAV_KEY = 'rna_nav_grupos';
+function gruposAbertos() {
+  try { return JSON.parse(localStorage.getItem(NAV_KEY) || '{}'); } catch { return {}; }
+}
+function salvarGrupo(nome, aberto) {
+  try {
+    const st = gruposAbertos(); st[nome] = aberto;
+    localStorage.setItem(NAV_KEY, JSON.stringify(st));
+  } catch { /* modo privado: seguir sem persistir */ }
+}
+
+/**
+ * Submenu do módulo (áreas internas), recolhível em dois níveis.
+ * Só é renderizado quando o módulo é o da página atual: em outras páginas a
+ * lista completa deixaria a barra longa demais sem ajudar em nada — e o clique
+ * no próprio módulo já traz a pessoa para cá.
+ * O destino é `pagina.html#area`; a página escuta `hashchange` e troca de aba.
+ */
+function subMenu(m, active) {
+  if (!m.submenu || m.id !== active) return '';
+  /* Sem âncora a página abre no Dashboard — o submenu precisa refletir isso,
+     senão a barra aparece com tudo recolhido e nada marcado. */
+  const hash = (location.hash || '').replace('#', '') || m.submenu[0]?.itens[0]?.hash;
+  return `<div class="rna-nav__sub">${m.submenu.map(g => {
+    const temAtivo = g.itens.some(i => i.hash === hash);
+    return `<div class="rna-nav__subgroup${temAtivo ? ' is-open' : ''}" data-subgrupo="${escAttr(g.label)}">
+      <button type="button" class="rna-nav__subtoggle" aria-expanded="${temAtivo}">
+        <i class="bi ${g.icon}"></i><span>${g.label}</span><i class="bi bi-chevron-down ms-auto"></i></button>
+      <div class="rna-nav__subitens">${g.itens.map(i =>
+        `<a class="rna-nav__sublink${i.hash === hash ? ' active' : ''}" href="${m.page}#${i.hash}">${i.label}</a>`
+      ).join('')}</div></div>`;
+  }).join('')}</div>`;
+}
+
 function wireShell(user, notifs) {
   // logout
   $('#rna-logout')?.addEventListener('click', (e) => { e.preventDefault(); auth.logout(); });
+
+  // grupos recolhíveis da sidebar (1º e 2º nível)
+  $$('.rna-nav__toggle').forEach(btn => btn.addEventListener('click', () => {
+    const grupo = btn.closest('.rna-nav__group');
+    const aberto = grupo.classList.toggle('is-open');
+    btn.setAttribute('aria-expanded', String(aberto));
+    salvarGrupo(grupo.dataset.grupo, aberto);
+  }));
+  $$('.rna-nav__subtoggle').forEach(btn => btn.addEventListener('click', () => {
+    const g = btn.closest('.rna-nav__subgroup');
+    btn.setAttribute('aria-expanded', String(g.classList.toggle('is-open')));
+  }));
 
   // mobile nav
   const sb = $('#rna-sidebar'), bd = $('#rna-backdrop');

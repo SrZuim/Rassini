@@ -54,6 +54,34 @@
 create extension if not exists "pgcrypto";
 
 -- ============================================================================
+-- 0-PRE. PRÉ-REQUISITOS (falha cedo, com o nome do que falta)
+-- ============================================================================
+-- O SQL Editor do Supabase roda o script inteiro em UMA transação: um erro em
+-- qualquer linha desfaz TUDO — inclusive os `create table` que já tinham
+-- passado. É assim que se termina com "rodei o SQL" e nenhuma tabela criada.
+-- Este bloco falha na primeira linha, dizendo exatamente qual arquivo rodar
+-- antes, em vez de estourar no meio com "function ... does not exist".
+do $$
+begin
+  if to_regclass('public.usuarios') is null then
+    raise exception 'Rode database/schema.sql antes: a tabela public.usuarios não existe.';
+  end if;
+  if to_regproc('public.auth_email') is null then
+    raise exception 'Rode database/rls.sql (ou fix_auth_usuarios.sql) antes: a função auth_email() não existe.';
+  end if;
+  if to_regproc('public.current_perfil') is null then
+    raise exception 'Rode database/rls.sql (ou fix_auth_usuarios.sql) antes: a função current_perfil() não existe.';
+  end if;
+  -- O perfil do usuário mora em usuarios.role (enum perfil_tipo), NÃO em
+  -- usuarios.perfil. Se um dia a coluna for renomeada, fm_is_admin() liberaria
+  -- geral ou ninguém — melhor recusar a migration aqui.
+  if not exists (select 1 from information_schema.columns
+                  where table_schema='public' and table_name='usuarios' and column_name='role') then
+    raise exception 'public.usuarios não tem a coluna "role" — a autorização do módulo depende dela.';
+  end if;
+end $$;
+
+-- ============================================================================
 -- 0. HELPERS
 -- ============================================================================
 
@@ -74,23 +102,45 @@ create or replace function fm_user_id() returns text as $$
   limit 1;
 $$ language sql stable security definer;
 
--- Perfis que administram o módulo (configuram metas, critérios, slides, reabrem).
-create or replace function fm_is_admin() returns boolean as $$
-  select coalesce(current_perfil() = 'admin', false);
-$$ language sql stable;
+-- ---------------------------------------------------------------------------
+-- AUTORIZAÇÃO DO MÓDULO — ADMINISTRADOR E MAIS NINGUÉM.
+--
+-- O perfil real NÃO fica em `usuarios.perfil`: a coluna é `usuarios.role`, do
+-- tipo enum `perfil_tipo`, e o valor do administrador é 'admin' (minúsculo).
+-- Ativo/aprovado são exigidos: um admin bloqueado ou ainda pendente de
+-- aprovação não pode ler nem escrever nada do módulo.
+--
+-- security definer + search_path fixo: a função precisa ler `usuarios` mesmo
+-- com o RLS de `usuarios` ativo, e não pode ser desviada por um search_path
+-- adulterado. `stable` permite ao planner avaliá-la uma vez por consulta em vez
+-- de uma vez por linha — é o que mantém o RLS barato nas tabelas grandes.
+--
+-- Esta é a ÚNICA função de autorização do módulo. fm_is_gestor e
+-- fm_is_operacional continuam existindo apenas para não quebrar objetos
+-- antigos que as referenciam — ambas delegam aqui.
+-- ---------------------------------------------------------------------------
+create or replace function fm_is_admin() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1
+      from usuarios u
+     where (u.auth_id = auth.uid() or lower(u.email) = auth_email())
+       and lower(u.role::text) = 'admin'
+       and coalesce(u.ativo, true) = true
+       and lower(coalesce(u.status::text, 'aprovado')) in ('aprovado','approved')
+  );
+$$;
 
--- Gestor da Qualidade — no RBAC do RNA One corresponde ao perfil `supervisor`
--- (revisa, devolve, aprova e conclui o fechamento). Não criamos um perfil novo:
--- o requisito §43 é atendido mapeando papéis do fechamento sobre os perfis
--- existentes (admin / supervisor / auditor+cargos / visitante).
+-- Compatibilidade: o módulo era operado por supervisor (Gestor da Qualidade) e
+-- auditor. Passou a ser exclusivo do administrador — as duas funções agora
+-- respondem exatamente como fm_is_admin(). Mantidas para que nenhuma policy ou
+-- trigger legado fique apontando para função inexistente.
 create or replace function fm_is_gestor() returns boolean as $$
-  select coalesce(current_perfil() in ('admin','supervisor'), false);
+  select fm_is_admin();
 $$ language sql stable;
 
--- Responsável de área / auditor — pode lançar dados nas seções operacionais.
 create or replace function fm_is_operacional() returns boolean as $$
-  select coalesce(current_perfil() in
-    ('admin','supervisor','auditor','auditor_recebimento','eng_processos','laboratorio'), false);
+  select fm_is_admin();
 $$ language sql stable;
 
 -- §44.1 — Usuário só acessa plantas autorizadas.
@@ -950,184 +1000,89 @@ end $$;
 -- 22. RLS (§44)
 -- ============================================================================
 
--- 22.1 Competências, seções e histórico
-alter table fm_competencias enable row level security;
-alter table fm_secoes       enable row level security;
-alter table fm_status_hist  enable row level security;
+-- MODELO: uma regra só, aplicada a TODAS as tabelas fm_* — `fm_is_admin()`.
+-- As regras por perfil (visitante lê competência fechada, auditor lança,
+-- supervisor aprova) foram REMOVIDAS: o módulo é exclusivo do administrador e
+-- policies concorrentes em RLS são OR, não AND — bastaria uma sobra permissiva
+-- para furar o bloqueio. Por isso o passo 22.1 apaga toda policy existente em
+-- fm_* antes de recriar.
+--
+-- O que continua valendo além do perfil: competência FECHADA é somente leitura,
+-- inclusive para o administrador (a reabertura é formal, §46). Isso não é
+-- permissão, é regra de negócio — por isso entra no INSERT/UPDATE das tabelas
+-- de lançamento, não em quem pode fazer o quê.
 
-drop policy if exists "fm_comp_read" on fm_competencias;
--- §43 Visitante: só competências FECHADAS. Demais perfis: plantas autorizadas.
-create policy "fm_comp_read" on fm_competencias for select to authenticated
-  using (
-    case when current_perfil() = 'visitante' then status = 'Fechado'
-         else fm_planta_autorizada(planta) end
-  );
+-- 22.1 Estado limpo: RLS ligada em toda tabela fm_* e nenhuma policy antiga.
+do $$
+declare r record;
+begin
+  for r in select tablename from pg_tables
+            where schemaname = 'public' and tablename like 'fm\_%' loop
+    execute format('alter table public.%I enable row level security;', r.tablename);
+  end loop;
 
-drop policy if exists "fm_comp_insert" on fm_competencias;
-create policy "fm_comp_insert" on fm_competencias for insert to authenticated
-  with check (fm_is_gestor() and fm_planta_autorizada(planta));
+  for r in select tablename, policyname from pg_policies
+            where schemaname = 'public' and tablename like 'fm\_%' loop
+    execute format('drop policy if exists %I on public.%I;', r.policyname, r.tablename);
+  end loop;
+end $$;
 
-drop policy if exists "fm_comp_update" on fm_competencias;
-create policy "fm_comp_update" on fm_competencias for update to authenticated
-  using (fm_is_gestor() and fm_planta_autorizada(planta))
-  with check (fm_is_gestor() and fm_planta_autorizada(planta));
+-- 22.2 Regra padrão: administrador faz tudo; qualquer outro perfil não vê nada.
+--      `to authenticated` + fm_is_admin(): anon nem chega a ser avaliado.
+do $$
+declare r record;
+begin
+  for r in select tablename from pg_tables
+            where schemaname = 'public' and tablename like 'fm\_%'
+              and tablename <> 'fm_logs' loop          -- fm_logs tem regra própria (22.4)
+    execute format($f$create policy "fm_admin_select_%1$s" on public.%1$I
+      for select to authenticated using (fm_is_admin());$f$, r.tablename);
+    execute format($f$create policy "fm_admin_insert_%1$s" on public.%1$I
+      for insert to authenticated with check (fm_is_admin());$f$, r.tablename);
+    execute format($f$create policy "fm_admin_update_%1$s" on public.%1$I
+      for update to authenticated using (fm_is_admin()) with check (fm_is_admin());$f$, r.tablename);
+    execute format($f$create policy "fm_admin_delete_%1$s" on public.%1$I
+      for delete to authenticated using (fm_is_admin());$f$, r.tablename);
+  end loop;
+end $$;
 
-drop policy if exists "fm_comp_delete" on fm_competencias;
-create policy "fm_comp_delete" on fm_competencias for delete to authenticated
-  using (fm_is_admin());
-
-drop policy if exists "fm_secoes_read" on fm_secoes;
-create policy "fm_secoes_read" on fm_secoes for select to authenticated using (true);
-drop policy if exists "fm_secoes_write" on fm_secoes;
-create policy "fm_secoes_write" on fm_secoes for all to authenticated
-  using (fm_is_operacional() and fm_competencia_editavel(competencia_id))
-  with check (fm_is_operacional() and fm_competencia_editavel(competencia_id));
-
-drop policy if exists "fm_hist_read" on fm_status_hist;
-create policy "fm_hist_read" on fm_status_hist for select to authenticated using (true);
-drop policy if exists "fm_hist_insert" on fm_status_hist;
-create policy "fm_hist_insert" on fm_status_hist for insert to authenticated with check (true);
-
--- 22.2 Tabelas de lançamento — leitura para autenticados (menos visitante em
---      competência aberta), escrita para operacionais em competência editável,
---      exclusão apenas para administrador (§44.7).
+-- 22.3 Trava da competência fechada (§15/§44.5) — substitui INSERT/UPDATE das
+--      tabelas de lançamento por versões que exigem competência editável.
+--      Vale para o administrador também: fechada é fechada.
 do $$
 declare t text;
-  -- fm_acoes / fm_acao_updates ficam FORA do laço: a coluna de competência tem
-  -- outro nome (competencia_origem_id) e as policies delas vêm logo abaixo.
   tabelas text[] := array[
-    'fm_reclamacoes','fm_ocorrencias','fm_producao','fm_fornecimento','fm_resultados',
-    'fm_custos','fm_retrabalho','fm_sucata','fm_care','fm_quebras','fm_seguranca',
-    'fm_cruz_dias','fm_pendencias','fm_memoria'];
+    'fm_secoes','fm_reclamacoes','fm_ocorrencias','fm_producao','fm_fornecimento',
+    'fm_resultados','fm_custos','fm_retrabalho','fm_sucata','fm_care','fm_quebras',
+    'fm_seguranca','fm_cruz_dias','fm_pendencias','fm_memoria'];
 begin
   foreach t in array tabelas loop
-    execute format('alter table %I enable row level security;', t);
-
-    execute format('drop policy if exists "fm_read_%1$s" on %1$s;', t);
-    execute format($f$create policy "fm_read_%1$s" on %1$s for select to authenticated
-      using (current_perfil() <> 'visitante' or exists (
-        select 1 from fm_competencias c where c.id = %1$s.competencia_id and c.status = 'Fechado'));$f$, t);
-
-    execute format('drop policy if exists "fm_ins_%1$s" on %1$s;', t);
-    execute format($f$create policy "fm_ins_%1$s" on %1$s for insert to authenticated
-      with check (fm_is_operacional() and fm_competencia_editavel(competencia_id));$f$, t);
-
-    execute format('drop policy if exists "fm_upd_%1$s" on %1$s;', t);
-    execute format($f$create policy "fm_upd_%1$s" on %1$s for update to authenticated
-      using (fm_is_operacional() and fm_competencia_editavel(competencia_id))
-      with check (fm_is_operacional() and fm_competencia_editavel(competencia_id));$f$, t);
-
-    execute format('drop policy if exists "fm_del_%1$s" on %1$s;', t);
-    execute format($f$create policy "fm_del_%1$s" on %1$s for delete to authenticated
-      using (fm_is_admin());$f$, t);
+    if to_regclass('public.' || t) is null then continue; end if;
+    execute format('drop policy if exists "fm_admin_insert_%1$s" on public.%1$I;', t);
+    execute format($f$create policy "fm_admin_insert_%1$s" on public.%1$I for insert to authenticated
+      with check (fm_is_admin() and fm_competencia_editavel(competencia_id));$f$, t);
+    execute format('drop policy if exists "fm_admin_update_%1$s" on public.%1$I;', t);
+    execute format($f$create policy "fm_admin_update_%1$s" on public.%1$I for update to authenticated
+      using (fm_is_admin() and fm_competencia_editavel(competencia_id))
+      with check (fm_is_admin() and fm_competencia_editavel(competencia_id));$f$, t);
   end loop;
 end $$;
 
--- fm_acoes / fm_acao_updates — policies próprias (§23: a ação atravessa meses,
--- por isso o UPDATE não é travado pela competência de origem; o que trava é o
--- status da própria ação).
-alter table fm_acoes        enable row level security;
-alter table fm_acao_updates enable row level security;
+-- fm_acoes: a ação 5W2H atravessa meses (§23). O INSERT respeita a competência
+-- de ORIGEM; o UPDATE não, senão fechar o mês congelaria o acompanhamento das
+-- ações que continuam abertas.
+drop policy if exists "fm_admin_insert_fm_acoes" on fm_acoes;
+create policy "fm_admin_insert_fm_acoes" on fm_acoes for insert to authenticated
+  with check (fm_is_admin() and fm_competencia_editavel(competencia_origem_id));
 
-drop policy if exists "fm_del_fm_acoes" on fm_acoes;
-create policy "fm_del_fm_acoes" on fm_acoes for delete to authenticated using (fm_is_admin());
-drop policy if exists "fm_del_fm_acao_updates" on fm_acao_updates;
-create policy "fm_del_fm_acao_updates" on fm_acao_updates for delete to authenticated using (fm_is_admin());
-
-drop policy if exists "fm_ins_fm_acoes" on fm_acoes;
-create policy "fm_ins_fm_acoes" on fm_acoes for insert to authenticated
-  with check (fm_is_operacional() and fm_competencia_editavel(competencia_origem_id));
-drop policy if exists "fm_upd_fm_acoes" on fm_acoes;
-create policy "fm_upd_fm_acoes" on fm_acoes for update to authenticated
-  using (fm_is_operacional()) with check (fm_is_operacional());
-drop policy if exists "fm_read_fm_acoes" on fm_acoes;
-create policy "fm_read_fm_acoes" on fm_acoes for select to authenticated
-  using (current_perfil() <> 'visitante');
-
-drop policy if exists "fm_ins_fm_acao_updates" on fm_acao_updates;
-create policy "fm_ins_fm_acao_updates" on fm_acao_updates for insert to authenticated
-  with check (fm_is_operacional());
-drop policy if exists "fm_upd_fm_acao_updates" on fm_acao_updates;
-create policy "fm_upd_fm_acao_updates" on fm_acao_updates for update to authenticated
-  using (fm_is_gestor()) with check (fm_is_gestor());
-drop policy if exists "fm_read_fm_acao_updates" on fm_acao_updates;
-create policy "fm_read_fm_acao_updates" on fm_acao_updates for select to authenticated
-  using (current_perfil() <> 'visitante');
-
--- 22.3 Configuração (metas, critérios, aliases, templates, slides, config):
---      leitura para autenticados; escrita SOMENTE admin (§43).
-do $$
-declare t text;
-  tabelas text[] := array['fm_criterios','fm_metas','fm_clientes_alias',
-    'fm_apres_templates','fm_apres_secoes','fm_config'];
-begin
-  foreach t in array tabelas loop
-    execute format('alter table %I enable row level security;', t);
-    execute format('drop policy if exists "fm_cfg_read_%1$s" on %1$s;', t);
-    execute format('create policy "fm_cfg_read_%1$s" on %1$s for select to authenticated using (true);', t);
-    execute format('drop policy if exists "fm_cfg_write_%1$s" on %1$s;', t);
-    execute format($f$create policy "fm_cfg_write_%1$s" on %1$s for all to authenticated
-      using (fm_is_admin()) with check (fm_is_admin());$f$, t);
-  end loop;
-end $$;
-
--- 22.4 Importações — só gestor/admin importam (§43).
-do $$
-declare t text;
-  tabelas text[] := array['fm_importacoes','fm_import_linhas','fm_import_versoes'];
-begin
-  foreach t in array tabelas loop
-    execute format('alter table %I enable row level security;', t);
-    execute format('drop policy if exists "fm_imp_read_%1$s" on %1$s;', t);
-    execute format($f$create policy "fm_imp_read_%1$s" on %1$s for select to authenticated
-      using (current_perfil() <> 'visitante');$f$, t);
-    execute format('drop policy if exists "fm_imp_write_%1$s" on %1$s;', t);
-    execute format($f$create policy "fm_imp_write_%1$s" on %1$s for all to authenticated
-      using (fm_is_gestor()) with check (fm_is_gestor());$f$, t);
-  end loop;
-end $$;
-
--- 22.5 Apresentação gerada e arquivos — geração por gestor; leitura ampla
---      (visitante lê apenas o que pertence a competência fechada, §43).
-alter table fm_apres_versoes enable row level security;
-alter table fm_arquivos      enable row level security;
-
-drop policy if exists "fm_apresv_read" on fm_apres_versoes;
-create policy "fm_apresv_read" on fm_apres_versoes for select to authenticated
-  using (current_perfil() <> 'visitante' or exists (
-    select 1 from fm_competencias c where c.id = competencia_id and c.status = 'Fechado'));
-drop policy if exists "fm_apresv_write" on fm_apres_versoes;
-create policy "fm_apresv_write" on fm_apres_versoes for all to authenticated
-  using (fm_is_gestor()) with check (fm_is_gestor());
-
-drop policy if exists "fm_arq_read" on fm_arquivos;
-create policy "fm_arq_read" on fm_arquivos for select to authenticated
-  using (current_perfil() <> 'visitante' or exists (
-    select 1 from fm_competencias c where c.id = competencia_id and c.status = 'Fechado'));
-drop policy if exists "fm_arq_write" on fm_arquivos;
-create policy "fm_arq_write" on fm_arquivos for all to authenticated
-  using (fm_is_gestor()) with check (fm_is_gestor());
-
--- 22.6 Ajustes de campo calculado (§30): qualquer operacional SOLICITA;
---      somente gestor DECIDE.
-alter table fm_ajustes enable row level security;
-drop policy if exists "fm_aj_read" on fm_ajustes;
-create policy "fm_aj_read" on fm_ajustes for select to authenticated
-  using (current_perfil() <> 'visitante');
-drop policy if exists "fm_aj_insert" on fm_ajustes;
-create policy "fm_aj_insert" on fm_ajustes for insert to authenticated
-  with check (fm_is_operacional() and status = 'Pendente');
-drop policy if exists "fm_aj_update" on fm_ajustes;
-create policy "fm_aj_update" on fm_ajustes for update to authenticated
-  using (fm_is_gestor()) with check (fm_is_gestor());
-
--- 22.7 Trilha de auditoria: append-only. Leitura restrita a admin/gestor.
-alter table fm_logs enable row level security;
+-- 22.4 Trilha de auditoria: append-only, leitura só do administrador.
+--      O INSERT não pode exigir fm_is_admin(): a trilha registra também a
+--      tentativa de quem não é admin — e sem policy de UPDATE/DELETE nenhuma
+--      linha pode ser alterada ou apagada, nem por ele.
 drop policy if exists "fm_logs_insert" on fm_logs;
 create policy "fm_logs_insert" on fm_logs for insert to authenticated with check (true);
 drop policy if exists "fm_logs_read" on fm_logs;
-create policy "fm_logs_read" on fm_logs for select to authenticated using (fm_is_gestor());
--- Sem policy de UPDATE/DELETE: a trilha não pode ser alterada nem apagada.
+create policy "fm_logs_read" on fm_logs for select to authenticated using (fm_is_admin());
 
 -- ============================================================================
 -- 23. SEED DE CATÁLOGOS (configuração — nunca dados de resultado)
@@ -1226,6 +1181,83 @@ begin
      where not exists (
        select 1 from fm_clientes_alias a where lower(a.nome_oficial) = lower(c.nome));
   end if;
+end $$;
+
+-- ============================================================================
+-- 24. VERIFICADOR DE ESTRUTURA (consumido pelo frontend)
+-- ============================================================================
+-- O front NÃO deve descobrir se o módulo está instalado fazendo
+-- `select * from fm_competencias limit 1`: essa consulta mistura existência da
+-- tabela, RLS, sessão e rede num erro só — foi exatamente o que produzia o
+-- falso "Estrutura do módulo ausente no banco" quando o problema era outro.
+--
+-- Esta função responde SÓ pela existência (to_regclass não depende de RLS) e
+-- separa o caso "não é administrador" num erro 42501 identificável.
+create or replace function fm_check_structure()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_tabelas jsonb := '{}'::jsonb;
+  t text;
+  obrigatorias text[] := array[
+    'fm_competencias','fm_reclamacoes','fm_ocorrencias','fm_producao',
+    'fm_fornecimento','fm_criterios','fm_metas','fm_pendencias','fm_memoria'];
+begin
+  if not fm_is_admin() then
+    raise exception 'Acesso não autorizado. Esta área está disponível exclusivamente para administradores.'
+      using errcode = '42501';
+  end if;
+
+  foreach t in array obrigatorias loop
+    v_tabelas := v_tabelas || jsonb_build_object(t, to_regclass('public.' || t) is not null);
+  end loop;
+
+  return jsonb_build_object(
+    'tabelas', v_tabelas,
+    'schema',  'public',
+    'banco',   current_database(),
+    'total_fm', (select count(*) from pg_tables
+                  where schemaname = 'public' and tablename like 'fm\_%'),
+    'verificado_em', now()
+  );
+end $$;
+
+revoke all on function fm_check_structure() from public;
+grant execute on function fm_check_structure() to authenticated;
+
+-- ============================================================================
+-- 25. CACHE DO POSTGREST + CONFERÊNCIA FINAL
+-- ============================================================================
+-- Sem isto o PostgREST continua respondendo PGRST205 ("could not find the
+-- table in the schema cache") para tabelas que ACABARAM de ser criadas.
+notify pgrst, 'reload schema';
+
+do $$
+declare
+  v_faltando text[];
+  t text;
+  obrigatorias text[] := array[
+    'fm_competencias','fm_reclamacoes','fm_ocorrencias','fm_producao',
+    'fm_fornecimento','fm_criterios','fm_metas','fm_pendencias','fm_memoria'];
+begin
+  v_faltando := '{}';
+  foreach t in array obrigatorias loop
+    if to_regclass('public.' || t) is null then v_faltando := v_faltando || t; end if;
+  end loop;
+
+  if array_length(v_faltando, 1) > 0 then
+    -- Exceção, não aviso: no SQL Editor um NOTICE passa despercebido e o
+    -- administrador sai achando que instalou o módulo.
+    raise exception 'FECHAMENTO MENSAL: faltaram as tabelas % — a migration não concluiu.', v_faltando;
+  end if;
+
+  raise notice 'FECHAMENTO MENSAL: % tabelas fm_* no schema public, % policies, RLS ativa. OK.',
+    (select count(*) from pg_tables  where schemaname='public' and tablename like 'fm\_%'),
+    (select count(*) from pg_policies where schemaname='public' and tablename like 'fm\_%');
 end $$;
 
 -- =============================================================================

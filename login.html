@@ -80,6 +80,9 @@
     // Mensagens via querystring (sessão expirada / acesso protegido).
     const qs = new URLSearchParams(location.search);
     if (qs.get('expired')) { info.textContent = 'Sua sessão expirou. Faça login novamente.'; info.style.display = 'inline-flex'; }
+    // Cadastro suspenso DEPOIS do login: a sessão do navegador é encerrada na
+    // primeira página que o usuário abrir, e ele precisa saber por quê.
+    else if (qs.get('bloqueado')) { info.textContent = 'Seu acesso está inativo ou aguardando aprovação. Procure o administrador.'; info.style.display = 'inline-flex'; }
     else if (qs.get('perfil') === '0') { info.textContent = 'Perfil não encontrado. Verifique o cadastro do usuário.'; info.style.display = 'inline-flex'; }
     else if (qs.get('next')) { info.textContent = 'Faça login para acessar essa página.'; info.style.display = 'inline-flex'; }
 

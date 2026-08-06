@@ -250,6 +250,17 @@ tr.fm-linha--ignorada { opacity: .5; text-decoration: line-through; }
 
 .fm-secao-nav { display: flex; gap: 7px; flex-wrap: wrap; margin-bottom: 15px; }
 
+/* Navegação interna do módulo, agrupada nas 6 seções (Visão Geral, Indicadores,
+   Gestão da Qualidade, Dados, Apresentação, Configurações). 17 chips numa fila
+   só viravam uma parede — o rótulo do grupo dá onde se apoiar. */
+.fm-nav { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 18px; }
+.fm-nav__grupo { display: flex; flex-direction: column; gap: 5px; }
+.fm-nav__titulo {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1.2px;
+  color: var(--rna-gray-300, #97a0a8); font-weight: 700;
+}
+.fm-nav__itens { display: flex; gap: 6px; flex-wrap: wrap; }
+
 /* ranking */
 .fm-rank { display: flex; align-items: center; gap: 11px; padding: 9px 0; border-bottom: 1px solid #eef1f4; }
 .fm-rank:last-child { border-bottom: 0; }
@@ -279,7 +290,7 @@ tr.fm-linha--ignorada { opacity: .5; text-decoration: line-through; }
 /* ------------------------------------------------------------ impressão */
 /* §39 — o PDF sai daqui: só o documento da prévia é impresso. */
 @media print {
-  .rna-sidebar, .rna-topbar, .no-print, .fm-header__acoes, .fm-secao-nav, .admin-tabs { display: none !important; }
+  .rna-sidebar, .rna-topbar, .no-print, .fm-header__acoes, .fm-secao-nav, .admin-tabs, .fm-nav { display: none !important; }
   .rna-main, .rna-content { margin: 0 !important; padding: 0 !important; }
   .fm-doc { display: block !important; }
   .fm-doc__slide { page-break-after: always; break-after: page; padding: 0; }

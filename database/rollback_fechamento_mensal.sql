@@ -84,6 +84,7 @@ drop table if exists fm_competencias    cascade;
 drop table if exists fm_config          cascade;
 
 -- 3. Funções do módulo
+drop function if exists fm_check_structure();
 drop function if exists fm_criar_proxima_competencia(text);
 drop function if exists fm_reabrir_competencia(text, text, text);
 drop function if exists fm_mudar_status(text, text, text);
@@ -99,6 +100,16 @@ drop function if exists fm_user_id();
 drop function if exists fm_competencia_label(int, int);
 drop function if exists fm_touch();
 drop function if exists fm_hoje();
+
+-- 4. Storage (opcional — apaga também os arquivos do bucket!)
+--    Deixado COMENTADO de propósito: `delete from storage.objects` é
+--    irreversível e o rollback do módulo não deveria destruir evidências.
+-- drop policy if exists "fm_storage_select" on storage.objects;
+-- drop policy if exists "fm_storage_insert" on storage.objects;
+-- drop policy if exists "fm_storage_update" on storage.objects;
+-- drop policy if exists "fm_storage_delete" on storage.objects;
+-- delete from storage.objects where bucket_id = 'fechamento-mensal';
+-- delete from storage.buckets where id = 'fechamento-mensal';
 
 -- =============================================================================
 -- Rollback do FRONTEND (opcional, se quiser remover o módulo por completo):
